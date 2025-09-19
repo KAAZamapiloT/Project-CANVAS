@@ -1,0 +1,49 @@
+# Unreal Engine 5 .gitignore
+
+# General
+.DS_Store
+.idea/
+.vs/
+*.VC.db
+*.suo
+*.sln
+*.VC.opendb
+Thumbs.db
+desktop.ini
+
+# Binaries
+Binaries/
+
+# Build files
+Build/
+
+# Derived Data
+DerivedDataCache/
+
+# Intermediate files
+Intermediate/
+
+# Saved files (Logs, Configs specific to a machine, etc.)
+Saved/
+
+# Local files
+.vscode/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.user
+*.userprefs
+
+# Cache files
+obj/
+
+# Mac specific
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+__MACOSX
+
+# Rider specific
+.idea/
