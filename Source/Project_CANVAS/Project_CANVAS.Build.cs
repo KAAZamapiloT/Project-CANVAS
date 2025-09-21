@@ -18,7 +18,13 @@ public class Project_CANVAS : ModuleRules
 			"StateTreeModule",
 			"GameplayStateTreeModule",
 			"UMG",
-			"Slate"
+			"Slate",
+			"SlateCore",
+			"HTTP",
+			"Json",
+			"JsonUtilities",
+			"GameplayTasks",
+			"GameplayTasks"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
