@@ -24,7 +24,8 @@ public class Project_CANVAS : ModuleRules
 			"Json",
 			"JsonUtilities",
 			"GameplayTasks",
-			"GameplayTasks"
+			"GameplayTags",
+			"GameplayAbilities"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
