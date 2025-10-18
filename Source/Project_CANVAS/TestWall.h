@@ -32,5 +32,5 @@ public:
 	class USceneBuilder* MySceneBuilder;
 
 	UFUNCTION(Blueprintcallable)
-	void ChangeColor(FColor Color);
+	void ChangeColor(FColor Color,FString TextureName);
 };

@@ -23,16 +23,25 @@ void ATestWall::BeginPlay()
 	MySceneBuilder = NewObject<USceneBuilder>();
     FString FilePath = FPaths::ProjectContentDir() + TEXT("TestWall.json");
 	FString JsonString;
-	FFileHelper::LoadFileToString(JsonString, *FilePath);
-
-	FEnhancedScenePlan MyPlan = Parser->CreatePlan(JsonString);
-   // FEnhancedScenePlan MyPlan;
-	//MyPlan.BackgroundColor = FColor::Green;
-	//MyPlan.TextColor = FColor::Green;
-//	MyPlan.ThemeName = FString("TestWall");
-	if (MySceneBuilder)
+	if (FFileHelper::LoadFileToString(JsonString, *FilePath))
 	{
-		MySceneBuilder->BuildScene(MyPlan, GetWorld());
+		// 3. SUCCESS: The file was found and read into JsonString
+		UE_LOG(LogTemp, Log, TEXT("File loaded successfully from: %s"), *FilePath);
+
+		// 4. Now, call the parser with the valid string
+		FEnhancedScenePlan MyPlan = Parser->CreatePlan(JsonString);
+
+		// 5. Call the SceneBuilder
+		if (MySceneBuilder)
+		{
+			MySceneBuilder->BuildScene(MyPlan, GetWorld());
+		}
+	}
+	else
+	{
+		// 3. FAILURE: The file was NOT found
+		UE_LOG(LogTemp, Error, TEXT("FATAL ERROR: Failed to load file at path: %s"), *FilePath);
+		UE_LOG(LogTemp, Error, TEXT("Make sure 'TestWall.json' is in your project's 'Content' folder!"));
 	}
 	
 }
@@ -44,13 +53,13 @@ void ATestWall::Tick(float DeltaTime)
 }
 
 // just  a test function
-
-void ATestWall::ChangeColor(FColor Color)
+void ATestWall::ChangeColor(FColor Color,FString TextureName)
 {
 	FEnhancedScenePlan MyPlan;
 	MyPlan.BackgroundColor = Color;
 	MyPlan.TextColor = FColor::Green;
 	MyPlan.ThemeName = FString("TestWall");
+	MyPlan.TextureName=TextureName;
 	if (MySceneBuilder)
 	{
 		MySceneBuilder->BuildScene(MyPlan, GetWorld());

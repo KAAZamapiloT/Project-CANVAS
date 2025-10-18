@@ -28,6 +28,10 @@ struct FEnhancedScenePlan
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FColor TextColor;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString TextureName;
+	
 	
 };
 

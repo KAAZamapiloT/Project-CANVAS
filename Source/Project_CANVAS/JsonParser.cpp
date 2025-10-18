@@ -18,6 +18,7 @@ bool UJsonParser::bScehmaValidation(FString& JsonContext)
 
 FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
 {
+	UE_LOG(LogTemp, Warning, TEXT("Parser received this string: ---%s---"), *JsonContext);
 FEnhancedScenePlan Plan;
     // a pointer that holds our parsed data
 	TSharedPtr<FJsonObject> JsonObject;
@@ -64,6 +65,12 @@ FEnhancedScenePlan Plan;
 		{
 			Plan.ThemeName = JsonObject->GetStringField(TEXT("ThemeName"));
 		}
+
+		if (JsonObject->HasField(TEXT("TextureName")))
+		{
+			Plan.TextureName = JsonObject->GetStringField(TEXT("TextureName"));
+		}
+		UE_LOG(LogTemp, Warning, TEXT("PARSER: Extracted TextureName: %s"), *Plan.TextureName);
 		FString LogName=Plan.ThemeName;
 		UE_LOG(LogTemp, Display, TEXT("%s"), *LogName);
 		return Plan;
