@@ -2,12 +2,3 @@
 
 
 #include "ScenePlan.h"
-
-
-ScenePlan::ScenePlan()
-{
-}
-
-ScenePlan::~ScenePlan()
-{
-}
