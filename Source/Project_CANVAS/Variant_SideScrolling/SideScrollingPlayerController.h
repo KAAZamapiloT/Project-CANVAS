@@ -24,9 +24,7 @@ class ASideScrollingPlayerController : public APlayerController
 
 
 public:
-	// REFRENCE TO PROMPT WIDGET
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
-	TSubclassOf<UUserWidget> PromptWidgetClass;
+	
 protected:
 
 	/** Input mapping context for this player */
@@ -63,26 +61,28 @@ protected:
 	UFUNCTION()
 	void OnPawnDestroyed(AActor* DestroyedActor);
 
-    /**TOGGLOING USER PROMPT **/
+    /**TOGGLOING USER PROMPT 
 	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
 	TObjectPtr<UInputAction> TogglePromptAction;
 
 	UPROPERTY()
-	TObjectPtr<UGenAISystem> MyGenAISystem;
-
-	UPROPERTY()
-	TObjectPtr<USceneBuilder> MySceneBuilder;
-
+	//TObjectPtr<UGenAISystem> MyGenAISystem;
+//
+	//UPROPERTY()
+	//TObjectPtr<USceneBuilder> MySceneBuilder;
+	// REFRENCE TO PROMPT WIDGET
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
+	TSubclassOf<UUserWidget> PromptWidgetClass;
 private:
 	UPROPERTY()
 	TObjectPtr<UUserWidget> PromptWidgetInstance;
 
 	//function when we press input key
-	void TogglePromptUI();
+//	void TogglePromptUI();
 
-	UFUNCTION()
-	void OnPromptSubmitted(const FString& PromptText);
+	//UFUNCTION()
+	//void OnPromptSubmitted(const FString& PromptText);
 
-	UFUNCTION()
-	void OnThemeDataReady(const FEnhancedScenePlan& Plan);
+	//UFUNCTION()
+	//void OnThemeDataReady(const FEnhancedScenePlan& Plan);**/
 };

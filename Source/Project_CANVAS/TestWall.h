@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "SceneBuilder.h"
 #include "ScenePlan.h"
+
 //#include"JsonParser.h"
 #include "TestWall.generated.h"
 
@@ -21,7 +22,9 @@ public:
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
-
+private:
+	UFUNCTION()
+	void OnThemeDataReadyHandler(const FEnhancedScenePlan& Plan);
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
@@ -31,6 +34,11 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	class USceneBuilder* MySceneBuilder;
 
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	class UGenAISystem* MyGen;
 	UFUNCTION(Blueprintcallable)
 	void ChangeColor(FColor Color,FString TextureName);
+
+	UFUNCTION(blueprintCallable)
+	void GivePrompt(FString UserPrompt);
 };

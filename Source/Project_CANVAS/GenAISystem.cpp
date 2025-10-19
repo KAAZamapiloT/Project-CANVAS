@@ -28,9 +28,10 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt)
 
 	// 4. Create the JSON payload for Ollama
 	FString Payload = FString::Printf(TEXT(
-		"{\"model\": \"llama3\", \"prompt\": \"%s\", \"stream\": false}"
+		"{\"model\": \"phi3:mini\", \"prompt\": \"%s\", \"stream\": false}"
 	), *MasterPrompt.Replace(TEXT("\""), TEXT("\\\""))); // Escape quotes in the prompt
 
+	
 	Request->SetContentAsString(Payload);
 
 	// 5. Bind the callback function (what to do when we get a response)
@@ -49,7 +50,7 @@ void UGenAISystem::OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpRespon
 		return;
 	}
 	FString ResponseString = Response->GetContentAsString();
-
+	UE_LOG(LogTemp, Warning, TEXT("RAW OLLAMA RESPONSE:\n%s"), *ResponseString);
 	// 2. We need to parse the OLLAMA's JSON to get the LLM's JSON response
 	TSharedPtr<FJsonObject> OllamaJsonObject;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseString);

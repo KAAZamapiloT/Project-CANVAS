@@ -4,6 +4,7 @@
 #include "TestWall.h"
 #include "JsonParser.h" // Your parser class
 #include "HAL/PlatformFileManager.h"
+#include"GenAISystem.h"
 #include "Misc/Paths.h"
 
 // Sets default values
@@ -43,7 +44,35 @@ void ATestWall::BeginPlay()
 		UE_LOG(LogTemp, Error, TEXT("FATAL ERROR: Failed to load file at path: %s"), *FilePath);
 		UE_LOG(LogTemp, Error, TEXT("Make sure 'TestWall.json' is in your project's 'Content' folder!"));
 	}
+
+	MyGen = NewObject<UGenAISystem>(this); // <-- CREATE THE GenAISystem INSTANCE
+
+	// --- Bind GenAISystem Event ---
+	if (MyGen)
+	{
+		MyGen->OnThemeDataReady.AddDynamic(this, &ATestWall::OnThemeDataReadyHandler);
+		UE_LOG(LogTemp, Log, TEXT("ATestWall: Bound to MyGen's OnThemeDataReady event."));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("ATestWall: Failed to create MyGen (GenAISystem)!"));
+	}
+
 	
+}
+
+void ATestWall::OnThemeDataReadyHandler(const FEnhancedScenePlan& Plan)
+{
+	UE_LOG(LogTemp, Warning, TEXT("ATestWall: Received Theme Data via event! Building scene... Theme: %s"), *Plan.ThemeName);
+	if (MySceneBuilder)
+	{
+		// Call the SceneBuilder with the plan received from the event
+		MySceneBuilder->BuildScene(Plan, GetWorld());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("ATestWall: Cannot build scene, SceneBuilder is invalid."));
+	}
 }
 
 // Called every frame
@@ -64,5 +93,11 @@ void ATestWall::ChangeColor(FColor Color,FString TextureName)
 	{
 		MySceneBuilder->BuildScene(MyPlan, GetWorld());
 	}
+}
+
+void ATestWall::GivePrompt(FString UserPrompt)
+{
+	MyGen->RequestSceneChange(UserPrompt);
+	
 }
 
