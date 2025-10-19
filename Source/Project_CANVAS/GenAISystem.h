@@ -21,8 +21,9 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnThemeDataReady OnThemeDataReady;
 
-	UPROPERTY(BlueprintCallable)
-	void RequestSceneChange();
+	UFUNCTION(BlueprintCallable)
+	void RequestSceneChange(FString UserPrompt);
+	
 	// --- Internal HTTP Callback ---
 	void OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 

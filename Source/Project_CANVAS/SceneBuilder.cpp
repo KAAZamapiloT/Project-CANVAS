@@ -6,7 +6,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Texture2D.h"
-void USceneBuilder::BuildScene(struct FEnhancedScenePlan& Plan,UWorld* WorldContext)
+void USceneBuilder::BuildScene(const struct FEnhancedScenePlan& Plan,UWorld* WorldContext)
 {
 if (!WorldContext)
 {

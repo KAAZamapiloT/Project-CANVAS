@@ -19,5 +19,5 @@ class PROJECT_CANVAS_API USceneBuilder : public UObject
 	GENERATED_BODY()
 	public:
 	UFUNCTION(BlueprintCallable)
-	void BuildScene(struct FEnhancedScenePlan& Plan,UWorld* WorldContext);
+	void BuildScene(const struct FEnhancedScenePlan& Plan,UWorld* WorldContext);
 };

@@ -5,11 +5,13 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "EnhancedInput/Public/InputAction.h"
+#include "ScenePlan.h"
 #include "SideScrollingPlayerController.generated.h"
 
 class ASideScrollingCharacter;
 class UInputMappingContext;
-
+class UGenAISystem; 
+class USceneBuilder; 
 /**
  *  A simple Side Scrolling Player Controller
  *  Manages input mappings
@@ -19,7 +21,12 @@ UCLASS(abstract)
 class ASideScrollingPlayerController : public APlayerController
 {
 	GENERATED_BODY()
-	
+
+
+public:
+	// REFRENCE TO PROMPT WIDGET
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
+	TSubclassOf<UUserWidget> PromptWidgetClass;
 protected:
 
 	/** Input mapping context for this player */
@@ -56,4 +63,26 @@ protected:
 	UFUNCTION()
 	void OnPawnDestroyed(AActor* DestroyedActor);
 
+    /**TOGGLOING USER PROMPT **/
+	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
+	TObjectPtr<UInputAction> TogglePromptAction;
+
+	UPROPERTY()
+	TObjectPtr<UGenAISystem> MyGenAISystem;
+
+	UPROPERTY()
+	TObjectPtr<USceneBuilder> MySceneBuilder;
+
+private:
+	UPROPERTY()
+	TObjectPtr<UUserWidget> PromptWidgetInstance;
+
+	//function when we press input key
+	void TogglePromptUI();
+
+	UFUNCTION()
+	void OnPromptSubmitted(const FString& PromptText);
+
+	UFUNCTION()
+	void OnThemeDataReady(const FEnhancedScenePlan& Plan);
 };

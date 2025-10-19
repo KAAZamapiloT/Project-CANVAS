@@ -15,6 +15,7 @@
 /*
  * OUR SCENE BUILDER WILL FOLLOW THIS TO MAKE MODIFICATION IN OUR SCENE
  */
+
 USTRUCT(BlueprintType)
 struct FEnhancedScenePlan
 {
