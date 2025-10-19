@@ -24,9 +24,17 @@ class ASideScrollingPlayerController : public APlayerController
 
 
 public:
-	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite,Category = "UI")
+	TSubclassOf<UUserWidget> PromptWidgetClass;
 protected:
-
+	UPROPERTY(EditAnywhere, Category="Input|Input Actions") // Changed category slightly
+	TObjectPtr<UInputAction> TogglePromptAction;
+	UPROPERTY()
+    TObjectPtr<UUserWidget> PromptWidgetInstance;
+	UPROPERTY()
+	TObjectPtr<UGenAISystem> MyGenAISystem;
+	UPROPERTY()
+	TObjectPtr<USceneBuilder> MySceneBuilder;
 	/** Input mapping context for this player */
 	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
 	TArray<UInputMappingContext*> DefaultMappingContexts;
@@ -40,12 +48,18 @@ protected:
 	TSubclassOf<UUserWidget> MobileControlsWidgetClass;
 
 	/** Pointer to the mobile controls widget */
+	UPROPERTY(EditAnywhere, Category="Input|Touch Controls")
 	TObjectPtr<UUserWidget> MobileControlsWidget;
 
 	/** Character class to respawn when the possessed pawn is destroyed */
 	UPROPERTY(EditAnywhere, Category="Respawn")
 	TSubclassOf<ASideScrollingCharacter> CharacterClass;
-
+private:
+	void TogglePromptUI();
+	UFUNCTION()
+	void OnPromptSubmitted(const FString& PromptText);
+	UFUNCTION()
+	void OnThemeDataReady(const FEnhancedScenePlan& Plan);
 protected:
 
 	/** Gameplay initialization */
@@ -60,29 +74,7 @@ protected:
 	/** Called if the possessed pawn is destroyed */
 	UFUNCTION()
 	void OnPawnDestroyed(AActor* DestroyedActor);
-
-    /**TOGGLOING USER PROMPT 
-	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
-	TObjectPtr<UInputAction> TogglePromptAction;
-
-	UPROPERTY()
-	//TObjectPtr<UGenAISystem> MyGenAISystem;
-//
-	//UPROPERTY()
-	//TObjectPtr<USceneBuilder> MySceneBuilder;
-	// REFRENCE TO PROMPT WIDGET
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
-	TSubclassOf<UUserWidget> PromptWidgetClass;
-private:
-	UPROPERTY()
-	TObjectPtr<UUserWidget> PromptWidgetInstance;
-
-	//function when we press input key
-//	void TogglePromptUI();
-
-	//UFUNCTION()
-	//void OnPromptSubmitted(const FString& PromptText);
-
-	//UFUNCTION()
-	//void OnThemeDataReady(const FEnhancedScenePlan& Plan);**/
+   
+	
+    
 };

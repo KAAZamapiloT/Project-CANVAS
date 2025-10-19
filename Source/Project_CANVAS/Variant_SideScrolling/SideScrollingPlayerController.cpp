@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "SideScrollingPlayerController.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputMappingContext.h"
@@ -14,15 +13,32 @@
 #include "Widgets/Input/SVirtualJoystick.h"
 #include "Components/EditableText.h"
 #include "GenAISystem.h"
-#include"SceneBuilder.h"
+#include "SceneBuilder.h"
 #include "EnhancedInputComponent.h"
-
 #include "UObject/UObjectGlobals.h" 
 #include "UObject/Class.h"
+
 void ASideScrollingPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 	
+	MyGenAISystem = NewObject<UGenAISystem>(this);
+	MySceneBuilder = NewObject<USceneBuilder>(this);
+
+	if (MyGenAISystem)
+	{
+		MyGenAISystem->OnThemeDataReady.AddDynamic(this, &ASideScrollingPlayerController::OnThemeDataReady);
+		UE_LOG(LogTemp, Log, TEXT("BeginPlay: Bound to GenAISystem's OnThemeDataReady event."));
+	}
+	else
+	{
+		UE_LOG(LogProject_CANVAS, Error, TEXT("BeginPlay: Failed to create GenAISystem!"));
+	}
+
+	if (!MySceneBuilder)
+	{
+		UE_LOG(LogProject_CANVAS, Error, TEXT("BeginPlay: Failed to create SceneBuilder!"));
+	}
 	
 	// only spawn touch controls on local player controllers
 	if (SVirtualJoystick::ShouldDisplayTouchInterface() && IsLocalPlayerController())
@@ -34,45 +50,80 @@ void ASideScrollingPlayerController::BeginPlay()
 		{
 			// add the controls to the player screen
 			MobileControlsWidget->AddToPlayerScreen(0);
-
-		} else {
-
-			UE_LOG(LogProject_CANVAS, Error, TEXT("Could not spawn mobile controls widget."));
-
 		}
-
+		else
+		{
+			UE_LOG(LogProject_CANVAS, Error, TEXT("Could not spawn mobile controls widget."));
+		}
 	}
-	
 }
 
 void ASideScrollingPlayerController::SetupInputComponent()
 {
+	Super::SetupInputComponent(); // CRITICAL: Call parent first!
+	
 	UE_LOG(LogTemp, Warning, TEXT("!!! SetupInputComponent START !!! InputComponent Valid? %s"), InputComponent ? TEXT("Yes") : TEXT("NO"));
-	// only add IMCs for local player controllers
+	
+	// Force creation if still null (shouldn't be needed but safety check)
+	if (!InputComponent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetupInputComponent: InputComponent is NULL after Super call! This is abnormal."));
+		return;
+	}
+
+	// Bind the toggle prompt action here
+	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		if (TogglePromptAction)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetupInputComponent: Binding TogglePromptAction..."));
+			EnhancedInputComponent->BindAction(TogglePromptAction, ETriggerEvent::Triggered, this, &ASideScrollingPlayerController::TogglePromptUI);
+			UE_LOG(LogTemp, Warning, TEXT("SetupInputComponent: TogglePromptAction BOUND successfully!"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetupInputComponent: TogglePromptAction is NULL! Check Blueprint defaults."));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetupInputComponent: Failed to cast to EnhancedInputComponent!"));
+	}
+
+	// Add input mapping contexts - only for local player controllers
 	if (IsLocalPlayerController())
 	{
-		UE_LOG(LogTemp,Warning,TEXT(" IS LOCAL PLAYER CONTROLER BRANCH IS GETTIG ENTERED 	"))
-		// add the input mapping context
+		UE_LOG(LogTemp, Warning, TEXT("SetupInputComponent: IS LOCAL PLAYER CONTROLLER"));
+		
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
 		{
+			// Add default mapping contexts
 			for (UInputMappingContext* CurrentContext : DefaultMappingContexts)
 			{
-				Subsystem->AddMappingContext(CurrentContext, 0);
+				if (CurrentContext)
+				{
+					Subsystem->AddMappingContext(CurrentContext, 0);
+					UE_LOG(LogTemp, Log, TEXT("SetupInputComponent: Added Default IMC: %s"), *GetNameSafe(CurrentContext));
+				}
 			}
 
-			// only add these IMCs if we're not using mobile touch input
+			// Only add these IMCs if we're not using mobile touch input
 			if (!SVirtualJoystick::ShouldDisplayTouchInterface())
 			{
 				for (UInputMappingContext* CurrentContext : MobileExcludedMappingContexts)
 				{
-					Subsystem->AddMappingContext(CurrentContext, 0);
+					if (CurrentContext)
+					{
+						Subsystem->AddMappingContext(CurrentContext, 0);
+						UE_LOG(LogTemp, Log, TEXT("SetupInputComponent: Added Mobile Excluded IMC: %s"), *GetNameSafe(CurrentContext));
+					}
 				}
-
-				
 			}
-			
 		}
-	
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetupInputComponent: Failed to get EnhancedInputLocalPlayerSubsystem!"));
+		}
 	}
 }
 
@@ -82,64 +133,30 @@ void ASideScrollingPlayerController::OnPossess(APawn* InPawn)
 
 	UE_LOG(LogTemp, Warning, TEXT("ASideScrollingPlayerController::OnPossess - Possessing Pawn: %s"), *GetNameSafe(InPawn));
 
-	// Make sure we have a valid Pawn
 	if (InPawn == nullptr)
 	{
 		UE_LOG(LogTemp, Error, TEXT("OnPossess: InPawn is NULL!"));
 		return;
 	}
 
-	// Get the Enhanced Input Component - It SHOULD exist now
-    // NOTE: We need to ensure the Input Component is created if it wasn't.
-    // APlayerController::InitInputSystem() usually does this. Let's ensure it runs.
-    InitInputSystem(); // Explicitly ensure input system is initialized
-
-	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
+	// InputComponent setup should have been done in SetupInputComponent
+	// We're just logging status here
+	if (InputComponent)
 	{
-		// --- Bind the Toggle Prompt Action ---
+		UE_LOG(LogTemp, Log, TEXT("OnPossess: InputComponent is valid!"));
 		
-
-        // --- Add Input Mapping Context ---
-        // This also needs to happen after input system is ready
-        if (IsLocalPlayerController())
-        {
-            if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
-            {
-                // It's generally safer to clear before adding, though BeginPlay might also do this.
-                // Subsystem->ClearAllMappings(); 
-                for (UInputMappingContext* CurrentContext : DefaultMappingContexts)
-                {
-                    Subsystem->AddMappingContext(CurrentContext, 0);
-                     UE_LOG(LogTemp, Log, TEXT("OnPossess: Added IMC %s"), *GetNameSafe(CurrentContext));
-                }
-                if (!SVirtualJoystick::ShouldDisplayTouchInterface())
-                {
-                    for (UInputMappingContext* CurrentContext : MobileExcludedMappingContexts)
-                    {
-                        Subsystem->AddMappingContext(CurrentContext, 0);
-                        UE_LOG(LogTemp, Log, TEXT("OnPossess: Added Mobile Excluded IMC %s"), *GetNameSafe(CurrentContext));
-                    }
-                }
-            }
-        }
-
+		if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(InputComponent))
+		{
+			UE_LOG(LogTemp, Log, TEXT("OnPossess: EnhancedInputComponent is valid!"));
+		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("OnPossess: Failed to Cast InputComponent to UEnhancedInputComponent!"));
-        // If InputComponent itself is null, log that too
-        if(InputComponent == nullptr)
-        {
-             UE_LOG(LogTemp, Error, TEXT("OnPossess: InputComponent is NULL even after InitInputSystem!"));
-        }
+		UE_LOG(LogTemp, Error, TEXT("OnPossess: InputComponent is STILL NULL! Something is very wrong."));
 	}
 
-
-	// --- Existing OnDestroyed Binding ---
-	if (InPawn) // Double check after potential logging
-	{
-		InPawn->OnDestroyed.AddDynamic(this, &ASideScrollingPlayerController::OnPawnDestroyed);
-	}
+	// Pawn destruction binding
+	InPawn->OnDestroyed.AddDynamic(this, &ASideScrollingPlayerController::OnPawnDestroyed);
 }
 
 void ASideScrollingPlayerController::OnPawnDestroyed(AActor* DestroyedActor)
@@ -161,4 +178,107 @@ void ASideScrollingPlayerController::OnPawnDestroyed(AActor* DestroyedActor)
 	}
 }
 
+void ASideScrollingPlayerController::TogglePromptUI()
+{
+	UE_LOG(LogProject_CANVAS, Warning, TEXT("TogglePromptUI Function Called"));
 
+	// --- HIDE ---
+	if (PromptWidgetInstance && PromptWidgetInstance->IsInViewport())
+	{
+		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Hiding widget."));
+		PromptWidgetInstance->RemoveFromParent();
+		FInputModeGameOnly InputMode;
+		SetInputMode(InputMode);
+		bShowMouseCursor = false;
+		UGameplayStatics::SetGamePaused(GetWorld(), false);
+		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Game Unpaused."));
+		PromptWidgetInstance = nullptr;
+	}
+	// --- SHOW ---
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Showing widget."));
+		if (!PromptWidgetClass)
+		{
+			UE_LOG(LogTemp, Error, TEXT("TogglePromptUI: PromptWidgetClass is NULL! Check Player Controller Blueprint defaults."));
+			return;
+		}
+
+		PromptWidgetInstance = CreateWidget<UUserWidget>(this, PromptWidgetClass);
+		if (!PromptWidgetInstance)
+		{
+			UE_LOG(LogTemp, Error, TEXT("TogglePromptUI: CreateWidget FAILED!"));
+			return;
+		}
+
+		PromptWidgetInstance->AddToViewport();
+		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Widget added to viewport."));
+
+		FInputModeUIOnly InputMode;
+		SetInputMode(InputMode);
+		bShowMouseCursor = true;
+		UGameplayStatics::SetGamePaused(GetWorld(), true);
+		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Game Paused."));
+
+		// Bind UI Event
+		FMulticastDelegateProperty* DispatcherProp = FindFieldChecked<FMulticastDelegateProperty>(
+			PromptWidgetInstance->GetClass(), FName("OnPromptSubmitted")
+		);
+		if (DispatcherProp)
+		{
+			FScriptDelegate Delegate;
+			Delegate.BindUFunction(this, FName("OnPromptSubmitted"));
+			DispatcherProp->AddDelegate(Delegate, PromptWidgetInstance);
+			UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Successfully bound OnPromptSubmitted event."));
+		}
+		else
+		{
+			UE_LOG(LogProject_CANVAS, Error, TEXT("TogglePromptUI: Could not find Event Dispatcher 'OnPromptSubmitted' on widget class %s"), *PromptWidgetClass->GetName());
+		}
+
+		// Set Focus
+		if (UEditableText* TextBox = Cast<UEditableText>(PromptWidgetInstance->GetWidgetFromName(TEXT("InputTextBox"))))
+		{
+			UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Setting keyboard focus to InputTextBox."));
+			TextBox->SetKeyboardFocus();
+			InputMode.SetWidgetToFocus(TextBox->TakeWidget());
+			SetInputMode(InputMode);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("TogglePromptUI: Could not find EditableText named 'InputTextBox'."));
+			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			SetInputMode(InputMode);
+		}
+	}
+}
+
+void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText)
+{
+	UE_LOG(LogTemp, Warning, TEXT("PlayerController: UI Submitted: %s"), *PromptText);
+
+	if (MyGenAISystem)
+	{
+		MyGenAISystem->RequestSceneChange(PromptText);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("OnPromptSubmitted: MyGenAISystem is invalid!"));
+	}
+
+	// Automatically close the UI after submitting
+	TogglePromptUI();
+}
+
+void ASideScrollingPlayerController::OnThemeDataReady(const FEnhancedScenePlan& Plan)
+{
+	UE_LOG(LogTemp, Warning, TEXT("PlayerController: Received Theme Data! Building scene... Theme: %s"), *Plan.ThemeName);
+	if (MySceneBuilder)
+	{
+		MySceneBuilder->BuildScene(Plan, GetWorld());
+	}
+	else
+	{
+		UE_LOG(LogProject_CANVAS, Error, TEXT("OnThemeDataReady: SceneBuilder is invalid!"));
+	}
+}
