@@ -28,7 +28,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt)
 
 	// 4. Create the JSON payload for Ollama
 	FString Payload = FString::Printf(TEXT(
-		"{\"model\": \"phi3:mini\", \"prompt\": \"%s\", \"stream\": false}"
+		"{\"model\": \"gemma:2b\", \"prompt\": \"%s\", \"stream\": false}"
 	), *MasterPrompt.Replace(TEXT("\""), TEXT("\\\""))); // Escape quotes in the prompt
 
 	
