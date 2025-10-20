@@ -1,0 +1,36 @@
+﻿// Fill out your copyright notice in the Description page of Project Settings.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "UObject/Object.h"
+#include"AssetIndexer.h"
+#include "SceneStateTracker.generated.h"
+class UGenAISystem;
+class USceneBuilder;
+/**
+ * 
+ */
+UCLASS()
+class PROJECT_CANVAS_API USceneStateTracker : public UGameInstance
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY()
+	UAssetIndexer* AssetIndexer;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Scene Data")
+	TArray<FString> TargetableActorTags;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Scene Data")
+	TArray<FString> TargetablePostProcessMaterials;
+	virtual void Init() override;
+	// ADD THESE TWO:
+	UPROPERTY()
+	UGenAISystem* GenAISystem;
+    
+	UPROPERTY()
+	USceneBuilder* SceneBuilder;
+	UFUNCTION() // Must be a UFUNCTION to bind to a delegate
+	void OnAssetScanFinished();
+	UFUNCTION()
+	void OnPlanReceived(const FEnhancedScenePlan& Plan);
+};

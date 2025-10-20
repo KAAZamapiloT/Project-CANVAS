@@ -4,30 +4,22 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "SceneBuilder.h"
-#include "ScenePlan.h"
-
-//#include"JsonParser.h"
-#include "TestWall.generated.h"
+#include "SideWalls.generated.h"
 
 UCLASS()
-class PROJECT_CANVAS_API ATestWall : public AActor
+class PROJECT_CANVAS_API ASideWalls : public AActor
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this actor's properties
-	ATestWall();
+	ASideWalls();
 
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
-private:
-	
+
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
-
-
-
 };

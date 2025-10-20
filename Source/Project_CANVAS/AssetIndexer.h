@@ -6,36 +6,83 @@
 #include "UObject/Object.h"
 #include "AssetIndexer.generated.h"
 
-/**
- * 
- */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAssetScanComplete);
+
 UCLASS()
 class PROJECT_CANVAS_API UAssetIndexer : public UObject
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
+
 public:
-	UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
-	void ScanForTextures(FString ScanPath);
-	UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
-	TArray<FString>  GetDiscoveredTexturesName() const;
+    // === SCAN FUNCTIONS ===
+    
+    /** Kicks off an async scan for ALL asset types */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    void ScanAllAssetsAsync(UWorld* WorldContext);
+    
+    /** Scan only textures (your current implementation) */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    void ScanForTexturesAsync(FString ScanPath = TEXT("/Game/DATABASE/textures"));
+    
+    /** Scan for particle systems */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    void ScanForParticlesAsync(FString ScanPath = TEXT("/Game/DATABASE/particles"));
+    
+    /** Scan for post-process materials */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    void ScanForPostProcessMaterialsAsync(FString ScanPath = TEXT("/Game/DATABASE/postprocess"));
+    
+    /** Scan for actor tags in the current level */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    void ScanActorTagsInLevel(UWorld* WorldContext);
+
+    // === GETTERS ===
+    
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    TArray<FString> GetDiscoveredTextureNames() const { return DiscoveredTextureNames; }
+    
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    TArray<FString> GetDiscoveredParticleNames() const { return DiscoveredParticleNames; }
+    
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    TArray<FString> GetDiscoveredPostProcessNames() const { return DiscoveredPostProcessNames; }
+    
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    TArray<FString> GetDiscoveredActorTags() const { return DiscoveredActorTags; }
+    
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    bool IsScanComplete() const { return bIsScanComplete; }
+
+    // === DELEGATE ===
+    
+    UPROPERTY(BlueprintAssignable, Category = "AssetIndexer")
+    FOnAssetScanComplete OnScanComplete;
+
 private:
-	UPROPERTY()
-	TArray<FString> DiscoveredTextureNames;
-	/**
-	 *MIGHT BE FUTURE WORK
-	 
+    // Internal scan counter
+    int32 PendingScans = 0;
+    
+    void CheckAllScansComplete();
+    void ScanAssetsOfType(const UClass* AssetClass, FString ScanPath, TArray<FString>& OutArray);
 
-	UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
-	FString GetDiscoveredMaterialsName();
-
-	UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
-	FString GetDiscoveredModelsName();
-
-	UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
-	FString GetDiscoveredSoundsName();
-
-	UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
-	void GetDiscoveredMeshesName();
-
-	**/
+    // === DATA ===
+    
+    UPROPERTY()
+    TArray<FString> DiscoveredTextureNames;
+    
+    UPROPERTY()
+    TArray<FString> DiscoveredParticleNames;
+    
+    UPROPERTY()
+    TArray<FString> DiscoveredPostProcessNames;
+    
+    UPROPERTY()
+    TArray<FString> DiscoveredActorTags;
+    
+    UPROPERTY()
+    bool bIsScanning = false;
+    
+    UPROPERTY()
+    bool bIsScanComplete = false;
 };
+

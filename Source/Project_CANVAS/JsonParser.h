@@ -16,7 +16,12 @@ class PROJECT_CANVAS_API UJsonParser : public UObject
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable)
-	bool bScehmaValidation(FString& JsonContext);
+	static bool bScehmaValidation(FString& JsonContext);
 	UFUNCTION(BlueprintCallable)
-	FEnhancedScenePlan CreatePlan(FString JsonContext);
+	static FEnhancedScenePlan CreatePlan(FString JsonContext);
+
+private:
+	static void ParseEnvironment(const TSharedPtr<FJsonObject>& JsonObject, FEnvironmentPlan& Environment);
+	static void ParsePropModification(const TSharedPtr<FJsonObject>& JsonObject, FPropsModification& PropMod);
+	static void ParseTextureSet(const TSharedPtr<FJsonObject>& JsonObject, FTextureSet& TextureSet);
 };

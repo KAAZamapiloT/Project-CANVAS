@@ -22,23 +22,7 @@ void ASideScrollingPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	MyGenAISystem = NewObject<UGenAISystem>(this);
-	MySceneBuilder = NewObject<USceneBuilder>(this);
-
-	if (MyGenAISystem)
-	{
-		MyGenAISystem->OnThemeDataReady.AddDynamic(this, &ASideScrollingPlayerController::OnThemeDataReady);
-		UE_LOG(LogTemp, Log, TEXT("BeginPlay: Bound to GenAISystem's OnThemeDataReady event."));
-	}
-	else
-	{
-		UE_LOG(LogProject_CANVAS, Error, TEXT("BeginPlay: Failed to create GenAISystem!"));
-	}
-
-	if (!MySceneBuilder)
-	{
-		UE_LOG(LogProject_CANVAS, Error, TEXT("BeginPlay: Failed to create SceneBuilder!"));
-	}
+	
 	
 	// only spawn touch controls on local player controllers
 	if (SVirtualJoystick::ShouldDisplayTouchInterface() && IsLocalPlayerController())
@@ -255,30 +239,30 @@ void ASideScrollingPlayerController::TogglePromptUI()
 
 void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText)
 {
-	UE_LOG(LogTemp, Warning, TEXT("PlayerController: UI Submitted: %s"), *PromptText);
-
-	if (MyGenAISystem)
+	FString UserPrompt = PromptText;
+    
+	UE_LOG(LogTemp, Warning, TEXT("PlayerController: Prompt submitted: %s"), *UserPrompt);
+    
+	// Get the Game Instance
+	USceneStateTracker* GameInstance = Cast<USceneStateTracker>(GetGameInstance());
+    
+	if (!GameInstance)
 	{
-		MyGenAISystem->RequestSceneChange(PromptText);
+		UE_LOG(LogTemp, Error, TEXT("PlayerController: GameInstance is NOT SceneStateTracker!"));
+		return;
 	}
-	else
+    
+	if (!GameInstance->GenAISystem)
 	{
-		UE_LOG(LogTemp, Error, TEXT("OnPromptSubmitted: MyGenAISystem is invalid!"));
+		UE_LOG(LogTemp, Error, TEXT("PlayerController: GenAISystem is NULL!"));
+		return;
 	}
+    
+	// Call GenAI to process the prompt
+	UE_LOG(LogTemp, Warning, TEXT("PlayerController: Calling GenAISystem->RequestSceneChange()"));
+	GameInstance->GenAISystem->RequestSceneChange(UserPrompt, GetWorld());
 
 	// Automatically close the UI after submitting
 	TogglePromptUI();
 }
 
-void ASideScrollingPlayerController::OnThemeDataReady(const FEnhancedScenePlan& Plan)
-{
-	UE_LOG(LogTemp, Warning, TEXT("PlayerController: Received Theme Data! Building scene... Theme: %s"), *Plan.ThemeName);
-	if (MySceneBuilder)
-	{
-		MySceneBuilder->BuildScene(Plan, GetWorld());
-	}
-	else
-	{
-		UE_LOG(LogProject_CANVAS, Error, TEXT("OnThemeDataReady: SceneBuilder is invalid!"));
-	}
-}

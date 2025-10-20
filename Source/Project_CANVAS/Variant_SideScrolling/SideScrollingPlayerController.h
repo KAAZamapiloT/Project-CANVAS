@@ -10,8 +10,6 @@
 
 class ASideScrollingCharacter;
 class UInputMappingContext;
-class UGenAISystem; 
-class USceneBuilder; 
 /**
  *  A simple Side Scrolling Player Controller
  *  Manages input mappings
@@ -31,10 +29,7 @@ protected:
 	TObjectPtr<UInputAction> TogglePromptAction;
 	UPROPERTY()
     TObjectPtr<UUserWidget> PromptWidgetInstance;
-	UPROPERTY()
-	TObjectPtr<UGenAISystem> MyGenAISystem;
-	UPROPERTY()
-	TObjectPtr<USceneBuilder> MySceneBuilder;
+	
 	/** Input mapping context for this player */
 	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")
 	TArray<UInputMappingContext*> DefaultMappingContexts;
@@ -58,8 +53,6 @@ private:
 	void TogglePromptUI();
 	UFUNCTION()
 	void OnPromptSubmitted(const FString& PromptText);
-	UFUNCTION()
-	void OnThemeDataReady(const FEnhancedScenePlan& Plan);
 protected:
 
 	/** Gameplay initialization */

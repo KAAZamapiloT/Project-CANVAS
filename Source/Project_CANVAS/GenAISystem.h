@@ -6,6 +6,7 @@
 #include "UObject/Object.h"
 #include "ScenePlan.h" 
 #include "HttpModule.h"
+#include "SceneStateTracker.h"
 #include "GenAISystem.generated.h"
 
 /**
@@ -20,17 +21,15 @@ class PROJECT_CANVAS_API UGenAISystem : public UObject
 public:
 	
 	// Helper function to build the final prompt for the LLM
-	FString ConstructMasterPrompt(FString UserPrompt);
+	FString ConstructMasterPrompt(FString UserPrompt,const TArray<FString>& AvailableTextures,const TArray<FString>& AvailableTags,const TArray<FString>& AvailablePPMs);
 	
 	UFUNCTION(BlueprintCallable)
-	void RequestSceneChange(FString UserPrompt);
+	void RequestSceneChange(FString UserPrompt,UWorld* WorldContext);
 	
 	// --- Internal HTTP Callback ---
 	void OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// We need a reference to our parser
-	UPROPERTY()
-	class UJsonParser* Parser;
 	UPROPERTY(BlueprintAssignable)
 	FOnThemeDataReady OnThemeDataReady;
 	
