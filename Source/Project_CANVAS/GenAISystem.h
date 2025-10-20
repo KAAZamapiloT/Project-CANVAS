@@ -18,9 +18,10 @@ class PROJECT_CANVAS_API UGenAISystem : public UObject
 {
 	GENERATED_BODY()
 public:
-	UPROPERTY(BlueprintAssignable)
-	FOnThemeDataReady OnThemeDataReady;
-
+	
+	// Helper function to build the final prompt for the LLM
+	FString ConstructMasterPrompt(FString UserPrompt);
+	
 	UFUNCTION(BlueprintCallable)
 	void RequestSceneChange(FString UserPrompt);
 	
@@ -30,7 +31,7 @@ public:
 	// We need a reference to our parser
 	UPROPERTY()
 	class UJsonParser* Parser;
-
-	// Helper function to build the final prompt for the LLM
-	FString ConstructMasterPrompt(FString UserPrompt);
+	UPROPERTY(BlueprintAssignable)
+	FOnThemeDataReady OnThemeDataReady;
+	
 };
