@@ -25,7 +25,9 @@ Intermediate/
 
 # Saved files (Logs, Configs specific to a machine, etc.)
 Saved/
-
+#API keys
+Source/Project_CANVAS/API_KEY.h
+Source/Project_CANVAS/API_KEY.cpp
 # Local files
 .vscode/
 *.VC.db
