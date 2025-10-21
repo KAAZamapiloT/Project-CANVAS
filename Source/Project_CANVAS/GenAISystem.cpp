@@ -10,70 +10,354 @@
 #include"Kismet/GameplayStatics.h"
 #include "Json.h"
 #include "JsonUtilities.h"
-
+#include "API_KEY.h"
 #include "AssetIndexer.h"
 #include "SceneHistoryManager.h"
+
 
 void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager)
 {
 	
 
 	// 1. Get the GameInstance and AssetIndexer
-	USceneStateTracker* GameInstance = Cast<USceneStateTracker>(UGameplayStatics::GetGameInstance(WorldContext));
-	if (!GameInstance || !GameInstance->AssetIndexer)
-	{
-		UE_LOG(LogTemp, Error, TEXT("GenAISystem: Cannot find GameInstance or AssetIndexer!"));
-		return;
-	}
+    USceneStateTracker* GameInstance = Cast<USceneStateTracker>(UGameplayStatics::GetGameInstance(WorldContext));
+    if (!GameInstance || !GameInstance->AssetIndexer)
+    {
+        UE_LOG(LogTemp, Error, TEXT("GenAISystem: Cannot find GameInstance or AssetIndexer!"));
+        return;
+    }
 
-	// 2. Check if the asset list is ready
-	if (!GameInstance->AssetIndexer->IsScanComplete())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("GenAISystem: Asset scan is not complete. Please wait."));
-		// You could broadcast a failure event to the UI here
-		return;
-	}
-	// 3. Fetch the asset list
-	TArray<FString> AvailableTextures = GameInstance->AssetIndexer->GetDiscoveredTextureNames();
-	TArray<FString> AvailableTags = GameInstance->TargetableActorTags;
-	TArray<FString> AvailablePPMs = GameInstance->TargetablePostProcessMaterials;
-	// constructing master prompt for model
-	LastUserPrompt = UserPrompt;
-	FString MasterPrompt = ConstructMasterPrompt(UserPrompt,AvailableTextures,AvailableTags,AvailablePPMs );
+    // 2. Check if the asset list is ready
+    if (!GameInstance->AssetIndexer->IsScanComplete())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GenAISystem: Asset scan is not complete. Please wait."));
+        return;
+    }
 
-// creating a HTTP request
-	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-	Request->SetURL(TEXT("http://localhost:11434/api/generate")); // Default Ollama URL
-	Request->SetVerb(TEXT("POST"));
-	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    // 3. Fetch the asset list
+    TArray<FString> AvailableTextures = GameInstance->AssetIndexer->GetDiscoveredTextureNames();
+    TArray<FString> AvailableTags = GameInstance->TargetableActorTags;
+    TArray<FString> AvailablePPMs = GameInstance->TargetablePostProcessMaterials;
 
-	// 4. Create the JSON payload for Ollama
-	FString EscapedPrompt = MasterPrompt
-	.Replace(TEXT("\\"), TEXT("\\\\"))  // Escape backslashes first
-	.Replace(TEXT("\""), TEXT("\\\""))  // Escape quotes
-	.Replace(TEXT("\n"), TEXT("\\n"))   // Escape newlines
-	.Replace(TEXT("\r"), TEXT("\\r"))   // Escape carriage returns
-	.Replace(TEXT("\t"), TEXT("\\t"));  // Escape tabs
+    // Store user prompt
+    LastUserPrompt = UserPrompt;
 
-	FString Payload = FString::Printf(TEXT(
-		"{\"model\": \"llama3\", \"prompt\": \"%s\", \"stream\": false}"
-	), *EscapedPrompt);
+    // Construct master prompt
+    FString MasterPrompt = ConstructMasterPrompt(UserPrompt, AvailableTextures, AvailableTags, AvailablePPMs, HistoryManager);
 
-	UE_LOG(LogTemp, Display, TEXT("GenAI: Payload length: %d chars"), Payload.Len());
-	Request->SetContentAsString(Payload);
-
-	
-	Request->SetContentAsString(Payload);
-
-	// 5. Bind the callback function (what to do when we get a response)
-	Request->OnProcessRequestComplete().BindUObject(this, &UGenAISystem::OnOllamaResponseReceived);
+    // === CHANGES START HERE ===
     
-	// 6. Send the request!
-	Request->ProcessRequest();
+    // Get API key
+	API_KEY APIKey;
+    FString GroqAPIKey = APIKey.GetGroqKey();
+
+    // Create HTTP request
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(TEXT("https://api.groq.com/openai/v1/chat/completions")); // Changed URL
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *GroqAPIKey)); // Added auth
+
+    // Build Groq JSON payload (OpenAI format)
+    FString Payload = FString::Printf(TEXT(
+        "{"
+        "\"model\":\"openai/gpt-oss-120b\","
+        "\"messages\":["
+            "{\"role\":\"system\",\"content\":\"You are a JSON generator for a 3D scene builder. Only respond with valid JSON, no markdown, no code blocks.\"},"
+            "{\"role\":\"user\",\"content\":\"%s\"}"
+        "],"
+        "\"temperature\":0.2,"
+        "\"max_tokens\":2000"
+        "}"
+    ), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
+
+    // === CHANGES END HERE ===
+
+    UE_LOG(LogTemp, Display, TEXT("GenAI: Payload length: %d chars"), Payload.Len());
+    Request->SetContentAsString(Payload);
+
+    // Bind callback
+    Request->OnProcessRequestComplete().BindUObject(this, &UGenAISystem::OnGroqResponseReceived);
+
+    // Send request
+    Request->ProcessRequest();
 	
 }
 
-void UGenAISystem::OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
+void UGenAISystem::OnGroqResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+    {
+        UE_LOG(LogTemp, Error, TEXT("Ollama request failed!"));
+        return;
+    }
+    
+	FString ResponseString = Response->GetContentAsString();
+	UE_LOG(LogTemp, Warning, TEXT("GenAI: RAW GROQ RESPONSE:\n%s"), *ResponseString);
+    
+	TSharedPtr<FJsonObject> GroqJsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseString);
+    
+	if (FJsonSerializer::Deserialize(Reader, GroqJsonObject) && GroqJsonObject.IsValid())
+    {
+		FString LlmResponseString;
+        
+		const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
+		if (GroqJsonObject->TryGetArrayField(TEXT("choices"), ChoicesArray) && ChoicesArray->Num() > 0)
+		{
+			TSharedPtr<FJsonObject> FirstChoice = (*ChoicesArray)[0]->AsObject();
+			TSharedPtr<FJsonObject> MessageObj = FirstChoice->GetObjectField(TEXT("message"));
+			LlmResponseString = MessageObj->GetStringField(TEXT("content"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("GenAI: No choices in Groq response!"));
+			return;
+		}
+		// === END OF GROQ-SPECIFIC CODE ===
+        
+		UE_LOG(LogTemp, Log, TEXT("GenAI: Extracted LLM response (raw): %s"), *LlmResponseString);
+        
+        // === STEP 1: Extract JSON between first { and last } ===
+        int32 JsonStart = -1;
+        int32 JsonEnd = -1;
+        
+        if (LlmResponseString.FindChar(TEXT('{'), JsonStart) && 
+            LlmResponseString.FindLastChar(TEXT('}'), JsonEnd) && 
+            JsonStart < JsonEnd)
+        {
+            LlmResponseString = LlmResponseString.Mid(JsonStart, (JsonEnd - JsonStart) + 1);
+            UE_LOG(LogTemp, Log, TEXT("Step 1 - Extracted JSON block"));
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("JSON parsing error: Could not find valid braces."));
+            LlmResponseString = "";
+        }
+        
+        // === STEP 2: Remove JSON comments (// ...) ===
+        if (!LlmResponseString.IsEmpty())
+        {
+            TArray<FString> Lines;
+            LlmResponseString.ParseIntoArrayLines(Lines);
+            FString CleanedJSON;
+            
+            for (const FString& Line : Lines)
+            {
+                FString ProcessedLine = Line;
+                
+                // Find and remove single-line comments
+                int32 CommentIndex = ProcessedLine.Find(TEXT("//"));
+                if (CommentIndex != INDEX_NONE)
+                {
+                    ProcessedLine = ProcessedLine.Left(CommentIndex);
+                }
+                
+                // Trim and keep non-empty lines
+                ProcessedLine = ProcessedLine.TrimStartAndEnd();
+                if (!ProcessedLine.IsEmpty())
+                {
+                    CleanedJSON += ProcessedLine + TEXT("\n");
+                }
+            }
+            
+            LlmResponseString = CleanedJSON.TrimStartAndEnd();
+            UE_LOG(LogTemp, Log, TEXT("Step 2 - Removed comments"));
+        }
+        
+        // === STEP 3: Final log and parse ===
+        UE_LOG(LogTemp, Warning, TEXT("Cleaned LLM response for parser:\n%s"), *LlmResponseString);
+        
+        // Parse the cleaned JSON
+        FEnhancedScenePlan Plan = UJsonParser::CreatePlan(LlmResponseString);
+        
+        // Log the parsed plan data
+        UE_LOG(LogTemp, Warning, TEXT("GENAI: Parsed Plan - Theme: %s, Prop Modifications: %d"),
+            *Plan.ThemeName, Plan.Props.Num());
+        
+    	OnThemeDataReady.Broadcast(Plan, LastUserPrompt);
+        UE_LOG(LogTemp, Warning, TEXT("GENAI: Broadcast OnThemeDataReady"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to parse Ollama's MAIN response: %s"), *ResponseString);
+    }
+
+	
+}
+
+
+
+FString UGenAISystem::ConstructMasterPrompt(
+    FString UserPrompt, 
+    const TArray<FString>& AvailableTextures,
+    const TArray<FString>& AvailableTags, 
+    const TArray<FString>& AvailablePPMs,
+    USceneHistoryManager* HistoryManager)
+{
+	// === STEP 1: GROUP TEXTURES INTO MATERIAL SETS ===
+	TMap<FString, bool> MaterialBaseNames;  // Use as a set
+    
+	for (const FString& Texture : AvailableTextures)
+	{
+		FString BaseName = ExtractMaterialBaseName(Texture);
+		if (!BaseName.IsEmpty())
+		{
+			MaterialBaseNames.Add(BaseName, true);
+		}
+	}
+    
+	// Convert to array
+	TArray<FString> MaterialList;
+	MaterialBaseNames.GetKeys(MaterialList);
+    
+	UE_LOG(LogTemp, Display, TEXT("GenAI: Reduced %d textures → %d materials"), 
+		AvailableTextures.Num(), MaterialList.Num());
+    
+	UE_LOG(LogTemp, Display, TEXT("GenAI: Reduced %d textures → %d materials"), 
+		AvailableTextures.Num(), MaterialList.Num());
+	
+	// === STEP 2: BUILD STRINGS ===
+	FString MaterialListString = FString::Join(MaterialList, TEXT("\", \""));
+	FString TagListString = FString::Join(AvailableTags, TEXT("\", \""));
+	FString PPMListString = FString::Join(AvailablePPMs, TEXT("\", \""));
+	FString TexturesListString = FString::Join(AvailableTextures, TEXT("\", \""));
+    // === GET HISTORY CONTEXT (if available) ===
+    FString HistoryContext = TEXT("");
+    if (HistoryManager)
+    {
+        HistoryContext = HistoryManager->GetLLMContextString();
+        UE_LOG(LogTemp, Display, TEXT("GenAISystem: Including history context in prompt"));
+    }
+    
+    // === STEP 4: CONSTRUCT PROMPT ===
+    return FString::Printf(TEXT(
+        "You are an expert game environment designer. Generate a JSON scene plan for this request:\n"
+        "USER REQUEST: \"%s\"\n\n"
+        "%s"  // History context
+        
+       
+        "=== CRITICAL MATERIAL RULES ===\n"
+	   "MATERIALS: Each material name represents a COMPLETE PBR texture set.\n"
+	   "- When you specify 'wood_floor', the system will automatically load:\n"
+	   "  * wood_floor_diff_2k (base color)\n"
+	   "  * wood_floor_rough_2k (roughness)\n"
+	   "  * wood_floor_nor_gl_2k (normal map)\n"
+	   "  * wood_floor_metal_2k (metallic)\n"
+	   "  * wood_floor_ao_2k (ambient occlusion)\n"
+	   "- In your JSON, ONLY use the base material name (e.g., 'wood_floor')\n"
+	   "- DO NOT specify individual texture map names (_diff, _rough, etc.)\n\n"
+        "=== CRITICAL TAG RULES ===\n"
+        "VALID TAGS: [\"%s\"]\n"
+        "- TagName = Actor tag from this list (identifies WHICH object to modify)\n"
+        "- Texture paths = Material names from MATERIAL LIST below\n"
+        "- NEVER mix tags and materials!\n\n"
+        
+        "=== JSON FORMAT ===\n"
+        "{\n"
+        "  \"ThemeName\": \"Your Theme Name\",\n"
+        "  \"bModifyEnvironment\": true/false,\n"
+        "  \"bModifyProps\": true/false,\n"
+        "  \"TargetPropTags\": [\"Ground.Floor\", \"Background.Wall\"],\n"
+        "  \"Environment\": {\n"
+        "    \"FogDensity\": 0.1,\n"
+        "    \"FogColor\": [R, G, B],\n"
+        "    \"Lighting\": {\n"
+        "      \"SunColor\": [R, G, B],\n"
+        "      \"SunIntensity\": 10.0,\n"
+        "      \"SunPitch\": -45.0,\n"
+        "      \"SkyLightColor\": [R, G, B],\n"
+        "      \"SkyLightIntensity\": 1.0\n"
+        "    }\n"
+        "  },\n"
+        "  \"Props\": [\n"
+        "    {\n"
+        "      \"TagName\": \"Ground.Floor\",\n"
+        "      \"PropColor\": [R, G, B],\n"
+        "      \"Texture\": {\n"
+        "        \"BaseColorPath\": \"black_painted_planks\",\n"
+        "        \"NormalPath\": \"\",\n"
+        "        \"RoughnessPath\": \"\",\n"
+        "        \"MetallicPath\": \"\",\n"
+        "        \"AOPath\": \"\"\n"
+        "      },\n"
+        "      \"ParticleEffects\": \"\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        
+        "=== AVAILABLE ACTOR TAGS ===\n"
+        "[\"%s\"]\n\n"
+        
+        "=== AVAILABLE MATERIALS ===\n"
+        "[\"%s\"]\n\n"
+        
+        "=== AVAILABLE POST-PROCESS MATERIALS ===\n"
+        "[\"%s\"]\n\n"
+        
+        "Generate ONLY valid JSON (no markdown, no code blocks):"
+    ),
+    *UserPrompt,
+    *HistoryContext,
+    *TagListString,
+    *TagListString,
+    *MaterialListString,  // ✅ NOW USING FILTERED MATERIAL LIST
+    *PPMListString);
+}
+
+FString UGenAISystem::ExtractMaterialBaseName(const FString& TextureName)
+{
+	FString BaseName = TextureName;
+    
+	// Remove all known PBR suffixes
+	TArray<FString> Suffixes = {
+		TEXT("_diff_2k"), TEXT("_diff_4k"), TEXT("_diff_1k"),
+		TEXT("_rough_2k"), TEXT("_rough_4k"), TEXT("_rough_1k"),
+		TEXT("_nor_gl_2k"), TEXT("_nor_gl_4k"), TEXT("_nor_gl_1k"),
+		TEXT("_nor_dx_2k"), TEXT("_nor_dx_4k"), TEXT("_nor_dx_1k"),
+		TEXT("_metal_2k"), TEXT("_metal_4k"), TEXT("_metal_1k"),
+		TEXT("_arm_2k"), TEXT("_arm_4k"), TEXT("_arm_1k"),
+		TEXT("_ao_2k"), TEXT("_ao_4k"), TEXT("_ao_1k"),
+		TEXT("_disp_2k"), TEXT("_disp_4k"), TEXT("_disp_1k"),
+		TEXT("_spec_ior_2k"), TEXT("_spec_ior_4k"), TEXT("_spec_ior_1k"),
+		TEXT("_anisotropy_strength_2k"), TEXT("_anisotropy_strength_4k"),
+		TEXT("_anisotropy_rotation_2k"), TEXT("_anisotropy_rotation_4k"),
+		TEXT("_mask_2k"), TEXT("_mask_4k"), TEXT("_mask_1k"),
+		TEXT("_N1"), TEXT("_N"), TEXT("_D1"), TEXT("_D"),  // For character textures like T_Manny
+		TEXT("_MRA1"), TEXT("_MRA"), TEXT("_BN")
+	};
+    
+	for (const FString& Suffix : Suffixes)
+	{
+		if (BaseName.EndsWith(Suffix))
+		{
+			BaseName.RemoveFromEnd(Suffix);
+			return BaseName;  // Return immediately after first match
+		}
+	}
+    
+	// If no suffix matched, return original name
+	return BaseName;
+}
+//A LOCAL OLLAMA FUNCTION CAN BE USED IF WE HAVE MORE RAM AVALIBLE BUT WE DONT
+
+
+/**
+ *
+ *
+*"=== CRITICAL MATERIAL RULES ===\n"
+	   "MATERIALS: Each material name represents a COMPLETE PBR texture set.\n"
+	   "- When you specify 'wood_floor', the system will automatically load:\n"
+	   "  * wood_floor_diff_2k (base color)\n"
+	   "  * wood_floor_rough_2k (roughness)\n"
+	   "  * wood_floor_nor_gl_2k (normal map)\n"
+	   "  * wood_floor_metal_2k (metallic)\n"
+	   "  * wood_floor_ao_2k (ambient occlusion)\n"
+	   "- In your JSON, ONLY use the base material name (e.g., 'wood_floor')\n"
+	   "- DO NOT specify individual texture map names (_diff, _rough, etc.)\n\n"
+ *
+ *
+ *void UGenAISystem::OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
 	if (!bWasSuccessful || !Response.IsValid())
     {
@@ -158,128 +442,4 @@ void UGenAISystem::OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpRespon
     }
 
 	
-}
-
-FString UGenAISystem::ConstructMasterPrompt(
-    FString UserPrompt, 
-    const TArray<FString>& AvailableTextures,
-    const TArray<FString>& AvailableTags, 
-    const TArray<FString>& AvailablePPMs,
-    USceneHistoryManager* HistoryManager)
-{
-    FString TextureListString = FString::Join(AvailableTextures, TEXT("\", \""));
-    FString TagListString = FString::Join(AvailableTags, TEXT("\", \""));
-    FString PPMListString = FString::Join(AvailablePPMs, TEXT("\", \""));
-    
-    // === GET HISTORY CONTEXT (if available) ===
-    FString HistoryContext = TEXT("");
-    if (HistoryManager)
-    {
-        HistoryContext = HistoryManager->GetLLMContextString();
-        UE_LOG(LogTemp, Display, TEXT("GenAISystem: Including history context in prompt"));
-    }
-    
-    return FString::Printf(TEXT(
-        "You are an expert game environment designer. Generate a JSON scene plan for this request:\n"
-        "USER REQUEST: \"%s\"\n\n"
-        
-        "%s"  // History context
-
-          
-        "=== CRITICAL TAG RULES (MUST FOLLOW) ===\n"
-		"YOU MUST USE TAGS FROM THIS EXACT LIST. DO NOT INVENT NEW TAGS!\n"
-		"VALID TAGS: [\"%s\"]\n\n"
-		
-        "=== CRITICAL RULES ===\n"
-        "1. TagName field = Actor tag from TAG LIST (identifies WHICH object to modify)\n"
-        "2. Texture paths = Texture names from TEXTURE LIST (what material to apply)\n"
-        "3. NEVER mix tags and textures! They are SEPARATE lists!\n"
-        "4. Colors = [R, G, B] with numbers 0-255 only\n"
-        "5. Response = ONLY valid JSON, no markdown, no code blocks\n"
-        "6. bModifyEnvironment = true ONLY if user mentions fog/lighting/atmosphere/scene\n"
-        "7. bModifyProps = true ONLY if user mentions objects/surfaces/walls/floor/ground/ or background\n"
-        "8. TargetPropTags = list of tags user explicitly mentions\n\n"
-        "9. TargetPropTags = list EVERY tag you use in Props array\n"  
-		"10. If user says 'wall' or 'background', use Background.Wall tag\n"  
-		"11. If user says 'floor' or 'ground', use Ground.Floor tag\n\n"
-		"=== LIGHTING CONTROL ===\n"
-		"You can control lighting in the Environment.Lighting section:\n"
-		"- SunColor: [R, G, B] (0-255) for sun/moon color\n"
-		"- SunIntensity: 1-20 (typical: 10 for day, 0.5 for night)\n"
-		"- SunPitch: -90 to 0 degrees (-45 = afternoon, -10 = sunset)\n"
-		"- SunYaw: 0-360 degrees (direction: 0=north, 180=south)\n"
-		"- SkyLightColor: [R, G, B] for ambient light\n"
-		"- SkyLightIntensity: 0.1-2.0 (typical: 1.0)\n"
-		"- SunTemperature: 2000-10000 Kelvin (3000=warm sunset, 6500=daylight, 9000=cool)\n\n"
-        
-		"LIGHTING EXAMPLES:\n"
-		"- Sunset: SunColor=[255,150,80], SunPitch=-10, SunIntensity=8\n"
-		"- Noon: SunColor=[255,255,240], SunPitch=-80, SunIntensity=15\n"
-		"- Night: SunColor=[50,70,120], SunPitch=-30, SunIntensity=0.2\n"
-		"- Horror: SunColor=[100,100,120], SunIntensity=2, SkyLightIntensity=0.3\n\n"
-        
-		"=== EXAMPLE JSON (WITH LIGHTING) ===\n"
-		"{\n"
-		"  \"ThemeName\": \"Roman Sunset\",\n"
-		"  \"bModifyEnvironment\": true,\n"
-		"  \"Environment\": {\n"
-		"    \"FogDensity\": 0.02,\n"
-		"    \"FogColor\": [240, 200, 150],\n"
-		"    \"Lighting\": {\n"
-		"      \"SunColor\": [255, 180, 100],\n"
-		"      \"SunIntensity\": 8.0,\n"
-		"      \"SunPitch\": -15.0,\n"
-		"      \"SunYaw\": 180.0,\n"
-		"      \"SkyLightColor\": [200, 180, 150],\n"
-		"      \"SkyLightIntensity\": 0.8\n"
-		"    }\n"
-		"  }\n"
-		"}\n\n"
-        
-        "=== EXAMPLE (CORRECT FORMAT) ===\n"
-        "{\n"
-        "  \"ThemeName\": \"Dark Forest\",\n"
-        "  \"bModifyEnvironment\": false,\n"
-        "  \"bModifyProps\": true,\n"
-        "  \"TargetPropTags\": [\"Background.Wall\"],\n"
-        "  \"Environment\": {\n"
-        "    \"FogDensity\": 0.1,\n"
-        "    \"FogColor\": [128, 200, 100],\n"
-        "    \"PostProcessingName\": \"PP_Default\"\n"
-        "  },\n"
-        "  \"Props\": [\n"
-        "    {\n"
-        "      \"TagName\": \"Background.Wall\",\n"
-        "      \"PropColor\": [80, 60, 40],\n"
-        "      \"Texture\": {\n"
-        "        \"BaseColorPath\": \"wood_table_rough_2k\",\n"
-        "        \"NormalPath\": \"wood_table_nor_gl_2k\",\n"
-        "        \"RoughnessPath\": \"wood_table_rough_2k\",\n"
-        "        \"MetallicPath\": \"\",\n"
-        "        \"AOPath\": \"wood_table_ao_2k\"\n"
-        "      },\n"
-        "      \"ParticleEffects\": \"\"\n"
-        "    }\n"
-        "  ]\n"
-        "}\n\n"
-        
-        "=== AVAILABLE ACTOR TAGS (use in TagName field) ===\n"
-        "[\"%s\"]\n\n"
-        
-        "=== AVAILABLE TEXTURES (use in Texture fields) ===\n"
-        "[\"%s\"]\n\n"
-        
-        "=== AVAILABLE POST-PROCESS MATERIALS ===\n"
-        "[\"%s\"]\n\n"
-        
-        "Generate JSON response (no markdown):"
-    ), 
-    *UserPrompt,
-    *HistoryContext,*TagListString,
-    *TagListString,      // ✅ Tags section FIRST
-    *TextureListString,  // ✅ Textures section SECOND
-    *PPMListString);
-}
-
-
-
+}**/

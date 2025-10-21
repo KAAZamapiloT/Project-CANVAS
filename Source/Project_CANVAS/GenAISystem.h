@@ -30,7 +30,7 @@ public:
 	void RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager);
 	
 	// --- Internal HTTP Callback ---
-	void OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+	void OnGroqResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	
 	// We need a reference to our parser
@@ -39,5 +39,5 @@ public:
 
 private:
 	FString LastUserPrompt ;
-	
+	FString ExtractMaterialBaseName(const FString& TextureName); 
 };

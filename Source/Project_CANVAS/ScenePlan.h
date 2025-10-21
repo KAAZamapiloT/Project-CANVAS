@@ -47,6 +47,19 @@ public:
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     bool bUseTemperature = false;  // Use color OR temperature
+
+
+    bool operator==(const FLightingPlan& Other) const
+    {
+        return SunColor.Equals(Other.SunColor, 0.01f) &&
+               FMath::IsNearlyEqual(SunIntensity, Other.SunIntensity, 0.1f) &&
+               FMath::IsNearlyEqual(SunPitch, Other.SunPitch, 0.1f) &&
+               FMath::IsNearlyEqual(SunYaw, Other.SunYaw, 0.1f) &&
+               SkyLightColor.Equals(Other.SkyLightColor, 0.01f) &&
+               FMath::IsNearlyEqual(SkyLightIntensity, Other.SkyLightIntensity, 0.1f) &&
+               FMath::IsNearlyEqual(SunTemperature, Other.SunTemperature, 0.1f) &&
+               bUseTemperature == Other.bUseTemperature;
+    }
 };
 
 

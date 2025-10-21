@@ -86,17 +86,68 @@ void USceneStateTracker::OnAssetScanFinished()
 
 void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan,const FString& UserPrompt)
 {
-	UE_LOG(LogTemp, Warning, TEXT("SceneStateTracker: Received Plan, executing..."));
-	if (HistoryManager)
-	{
-		// Note: GenAISystem already called AddPrompt(), so we only need SavePlan here
-		// But we'll need the original prompt... GenAISystem should pass it via Plan or delegate
-		// For now, use Plan.ThemeName as proxy
-		HistoryManager->SavePlan(Plan, UserPrompt);
-		UE_LOG(LogTemp, Display, TEXT("SceneStateTracker: Saved plan to history"));
-	}
-	if (SceneBuilder && GetWorld())
-	{
-		SceneBuilder->BuildScene(Plan, GetWorld());
-	}
+	UE_LOG(LogTemp, Warning, TEXT("SceneStateTracker: Plan Received!"));
+	FEnhancedScenePlan EnrichedPlan = Plan;
+
+    if (!AssetIndexer)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SceneStateTracker: AssetIndexer is null! Cannot resolve materials."));
+    }
+    else
+    {
+        for (FPropsModification& Prop : EnrichedPlan.Props)
+        {
+            FString& BaseName = Prop.Texture.BaseColorPath;
+
+            const bool bLooksLikeBase =
+                !BaseName.IsEmpty() &&
+                !BaseName.Contains(TEXT("_diff_")) &&
+                !BaseName.Contains(TEXT("_rough_")) &&
+                !BaseName.Contains(TEXT("_nor_")) &&
+                !BaseName.Contains(TEXT("_metal_")) &&
+                !BaseName.Contains(TEXT("_arm_")) &&
+                !BaseName.Contains(TEXT("_ao_"));
+
+            if (bLooksLikeBase)
+            {
+                const FTextureSet Resolved = AssetIndexer->ResolveBaseMaterialToTextureSet(BaseName);
+                if (!Resolved.BaseColorPath.IsEmpty())
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Resolved tag '%s': %s -> Diff:%s Rough:%s Normal:%s Metal:%s AO:%s"),
+                        *Prop.TagName, *BaseName,
+                        *Resolved.BaseColorPath, *Resolved.RoughnessPath,
+                        *Resolved.NormalPath, *Resolved.MetallicPath, *Resolved.AOPath);
+                    Prop.Texture = Resolved;
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("SceneStateTracker: Failed to resolve base '%s' for tag '%s'"),
+                        *BaseName, *Prop.TagName);
+                }
+            }
+        }
+
+        // Debug: print all props after enrichment
+        for (const FPropsModification& Prop : EnrichedPlan.Props)
+        {
+            UE_LOG(LogTemp, Display, TEXT("Resolved Prop '%s' -> Diff:%s Normal:%s Rough:%s Metal:%s AO:%s"),
+                *Prop.TagName,
+                *Prop.Texture.BaseColorPath,
+                *Prop.Texture.NormalPath,
+                *Prop.Texture.RoughnessPath,
+                *Prop.Texture.MetallicPath,
+                *Prop.Texture.AOPath);
+        }
+    }
+
+    if (HistoryManager)
+    {
+        HistoryManager->SavePlan(EnrichedPlan, UserPrompt);
+        UE_LOG(LogTemp, Display, TEXT("SceneStateTracker: Saved plan to history"));
+    }
+
+    if (SceneBuilder && GetWorld())
+    {
+        SceneBuilder->BuildScene(EnrichedPlan, GetWorld());
+    }
 }

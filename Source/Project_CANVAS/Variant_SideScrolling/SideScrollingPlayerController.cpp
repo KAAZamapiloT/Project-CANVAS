@@ -23,7 +23,7 @@ void ASideScrollingPlayerController::BeginPlay()
 	Super::BeginPlay();
 	
 	
-	
+	Tags.Add("Player");
 	// only spawn touch controls on local player controllers
 	if (SVirtualJoystick::ShouldDisplayTouchInterface() && IsLocalPlayerController())
 	{

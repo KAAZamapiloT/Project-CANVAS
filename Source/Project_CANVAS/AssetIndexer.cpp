@@ -10,7 +10,7 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Actor.h"
-
+#include"ScenePlan.h"
 void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
 {
     if (bIsScanning)
@@ -149,6 +149,10 @@ void UAssetIndexer::CheckAllScansComplete()
         bIsScanning = false;
         bIsScanComplete = true;
         
+        MaterialDatabase = BuildMaterialDatabase();
+        UE_LOG(LogTemp, Warning, TEXT("AssetIndexer: Built material database with %d unique materials"), 
+            MaterialDatabase.Num());
+        
         UE_LOG(LogTemp, Warning, TEXT("AssetIndexer: ========== SCAN COMPLETE =========="));
         UE_LOG(LogTemp, Warning, TEXT("  Textures: %d"), DiscoveredTextureNames.Num());
         UE_LOG(LogTemp, Warning, TEXT("  Particles: %d"), DiscoveredParticleNames.Num());
@@ -158,4 +162,81 @@ void UAssetIndexer::CheckAllScansComplete()
         
         OnScanComplete.Broadcast();
     }
+}
+
+
+TMap<FString, FTextureSet> UAssetIndexer::BuildMaterialDatabase()
+{
+    TMap<FString, FTextureSet> Database;
+    
+    for (const FString& TextureName : DiscoveredTextureNames)
+    {
+        FString BaseName = ExtractMaterialBaseName(TextureName);
+        if (BaseName.IsEmpty()) continue;
+        
+        if (!Database.Contains(BaseName))
+        {
+            FTextureSet NewSet;
+            Database.Add(BaseName, NewSet);
+        }
+        
+        // Classify and assign to proper slot
+        FTextureSet& Set = Database[BaseName];
+        
+        if (TextureName.Contains(TEXT("_diff_")))
+            Set.BaseColorPath = TextureName;
+        else if (TextureName.Contains(TEXT("_rough_")))
+            Set.RoughnessPath = TextureName;
+        else if (TextureName.Contains(TEXT("_nor_gl_")) || TextureName.Contains(TEXT("_nor_dx_")))
+            Set.NormalPath = TextureName;
+        else if (TextureName.Contains(TEXT("_metal_")))
+            Set.MetallicPath = TextureName;
+        else if (TextureName.Contains(TEXT("_ao_")))
+            Set.AOPath = TextureName;
+    }
+    
+    return Database;
+}
+
+FTextureSet UAssetIndexer::ResolveBaseMaterialToTextureSet(const FString& BaseMaterialName)
+{
+    if (MaterialDatabase.Contains(BaseMaterialName))
+    {
+        return MaterialDatabase[BaseMaterialName];
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("Material not found: %s"), *BaseMaterialName);
+    return FTextureSet();  // Empty set
+}
+
+FString UAssetIndexer::ExtractMaterialBaseName(const FString& TextureName)
+{
+    FString BaseName = TextureName;
+    
+    // Remove all known PBR suffixes
+    TArray<FString> Suffixes = {
+        TEXT("_diff_2k"), TEXT("_diff_4k"),
+        TEXT("_rough_2k"), TEXT("_rough_4k"),
+        TEXT("_nor_gl_2k"), TEXT("_nor_gl_4k"),
+        TEXT("_nor_dx_2k"), TEXT("_nor_dx_4k"),
+        TEXT("_metal_2k"), TEXT("_metal_4k"),
+        TEXT("_arm_2k"), TEXT("_arm_4k"),
+        TEXT("_ao_2k"), TEXT("_ao_4k"),
+        TEXT("_disp_2k"), TEXT("_disp_4k"),
+        TEXT("_spec_ior_2k"), TEXT("_spec_ior_4k"),
+        TEXT("_anisotropy_strength_2k"), TEXT("_anisotropy_strength_4k"),
+        TEXT("_anisotropy_rotation_2k"), TEXT("_anisotropy_rotation_4k"),
+        TEXT("_mask_2k"), TEXT("_mask_4k")
+    };
+    
+    for (const FString& Suffix : Suffixes)
+    {
+        if (BaseName.EndsWith(Suffix))
+        {
+            BaseName.RemoveFromEnd(Suffix);
+            return BaseName;  // Return immediately after first match
+        }
+    }
+    
+    return BaseName;
 }

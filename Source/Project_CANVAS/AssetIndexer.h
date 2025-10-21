@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
+#include "ScenePlan.h"
 #include "AssetIndexer.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAssetScanComplete);
@@ -53,15 +54,26 @@ public:
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
     bool IsScanComplete() const { return bIsScanComplete; }
 
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    FTextureSet ResolveBaseMaterialToTextureSet(const FString& BaseMaterialName);
+    
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    TMap<FString, FTextureSet> BuildMaterialDatabase();
     // === DELEGATE ===
     
     UPROPERTY(BlueprintAssignable, Category = "AssetIndexer")
     FOnAssetScanComplete OnScanComplete;
-
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    TArray<FString> GetMaterialBaseNames() const
+    {
+        TArray<FString> Names;
+        MaterialDatabase.GetKeys(Names);
+        return Names;
+    }
 private:
     // Internal scan counter
     int32 PendingScans = 0;
-    
+    FString ExtractMaterialBaseName(const FString& TextureName);
     void CheckAllScansComplete();
     void ScanAssetsOfType(const UClass* AssetClass, FString ScanPath, TArray<FString>& OutArray);
 
@@ -78,7 +90,8 @@ private:
     
     UPROPERTY()
     TArray<FString> DiscoveredActorTags;
-    
+    UPROPERTY()
+    TMap<FString, FTextureSet> MaterialDatabase;
     UPROPERTY()
     bool bIsScanning = false;
     

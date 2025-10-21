@@ -17,7 +17,7 @@
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
-
+     Tags.Add("Player");
 	// create the camera component
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(RootComponent);
