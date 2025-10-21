@@ -27,23 +27,10 @@ bool UJsonParser::bScehmaValidation(FString& JsonContext)
         UE_LOG(LogTemp, Error, TEXT("Validation: Failed to deserialize JSON"));
         return false;
     }
-    if (!Root->Type == EJson::Object) // defensive, Root should be object
-    {
-        UE_LOG(LogTemp, Error, TEXT("Validation: Root must be a JSON object"));
-        return false;
-    }
 
     TArray<FString> Errors;
     TArray<FString> Warnings;
-
-    // PlanVersion (optional)
-    if (Root->HasField(TEXT("PlanVersion")))
-    {
-        if (!Root->TryGetNumberField(TEXT("PlanVersion"), /*out*/nullptr))
-        {
-            Errors.Add(TEXT("$.PlanVersion must be an integer"));
-        }
-    }
+    
 
     // ThemeName (required, non-empty string)
     if (!Root->HasField(TEXT("ThemeName")))
