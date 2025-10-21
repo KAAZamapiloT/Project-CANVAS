@@ -33,7 +33,10 @@ private:
 	void ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext);
 	void ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet);
 	void ApplyParticleEffects(AActor* Actor, const FString& ParticleEffectsName);
-    
+    //Lighting Helpers
+	static void ApplyLightingSettings(const FLightingPlan& Lighting, UWorld* WorldContext);
+	static void ApplyDirectionalLight(const FLightingPlan& Lighting, UWorld* WorldContext);
+	static void ApplySkyLight(const FLightingPlan& Lighting, UWorld* WorldContext);
 	// Texture loading helpers
 	UTexture2D* LoadTextureFromPath(const FString& TexturePath);
 	UMaterialInstanceDynamic* GetOrCreateDynamicMaterial(UStaticMeshComponent* Mesh, int32 MaterialIndex = 0);

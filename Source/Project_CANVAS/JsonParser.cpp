@@ -45,7 +45,7 @@ FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
                 ParseEnvironment(*EnvironmentObject, Plan.Environment);
             }
         }
-
+        
         // Parse Props array
         if (JsonObject->HasField(TEXT("Props")))
         {
@@ -66,6 +66,29 @@ FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
             }
         }
 
+        // DELTA CHANGES ADDITIONS
+        if (JsonObject->HasField(TEXT("bModifyEnvironment")))
+        {
+            Plan.bModifyEnvironment = JsonObject->GetBoolField(TEXT("bModifyEnvironment"));
+        }
+    
+        if (JsonObject->HasField(TEXT("bModifyProps")))
+        {
+            Plan.bModifyProps = JsonObject->GetBoolField(TEXT("bModifyProps"));
+        }
+
+        if (JsonObject->HasField(TEXT("TargetPropTags")))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* TagsArray;
+            if (JsonObject->TryGetArrayField(TEXT("TargetPropTags"), TagsArray))
+            {
+                for (const TSharedPtr<FJsonValue>& TagValue : *TagsArray)
+                {
+                    Plan.TargetPropTags.Add(TagValue->AsString());
+                }
+            }
+        }
+        
         return Plan;
     }
     else
@@ -112,6 +135,68 @@ void UJsonParser::ParseEnvironment(const TSharedPtr<FJsonObject>& JsonObject, FE
 
     UE_LOG(LogTemp, Display, TEXT("PARSER: Environment - , FogDensity: %f"), 
             Environment.FogDensity);
+
+    if (JsonObject->HasTypedField<EJson::Object>(TEXT("Lighting")))
+    {
+        TSharedPtr<FJsonObject> LightObj = JsonObject->GetObjectField(TEXT("Lighting"));
+        
+        // Parse sun color
+        if (LightObj->HasField(TEXT("SunColor")))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* ColorArray;
+            if (LightObj->TryGetArrayField(TEXT("SunColor"), ColorArray) && ColorArray->Num() >= 3)
+            {
+                float R = (*ColorArray)[0]->AsNumber() / 255.0f;
+                float G = (*ColorArray)[1]->AsNumber() / 255.0f;
+                float B = (*ColorArray)[2]->AsNumber() / 255.0f;
+                Environment.Lighting.SunColor = FLinearColor(R, G, B, 1.0f);
+            }
+        }
+        
+        // Parse sun intensity
+        if (LightObj->HasField(TEXT("SunIntensity")))
+        {
+            Environment.Lighting.SunIntensity = LightObj->GetNumberField(TEXT("SunIntensity"));
+        }
+        
+        // Parse sun angle
+        if (LightObj->HasField(TEXT("SunPitch")))
+        {
+           Environment.Lighting.SunPitch = LightObj->GetNumberField(TEXT("SunPitch"));
+        }
+        
+        if (LightObj->HasField(TEXT("SunYaw")))
+        {
+            Environment.Lighting.SunYaw = LightObj->GetNumberField(TEXT("SunYaw"));
+        }
+        
+        // Parse sky light
+        if (LightObj->HasField(TEXT("SkyLightColor")))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* SkyColorArray;
+            if (LightObj->TryGetArrayField(TEXT("SkyLightColor"), SkyColorArray) && SkyColorArray->Num() >= 3)
+            {
+                float R = (*SkyColorArray)[0]->AsNumber() / 255.0f;
+                float G = (*SkyColorArray)[1]->AsNumber() / 255.0f;
+                float B = (*SkyColorArray)[2]->AsNumber() / 255.0f;
+                Environment.Lighting.SkyLightColor = FLinearColor(R, G, B, 1.0f);
+            }
+        }
+        
+        if (LightObj->HasField(TEXT("SkyLightIntensity")))
+        {
+            Environment.Lighting.SkyLightIntensity = LightObj->GetNumberField(TEXT("SkyLightIntensity"));
+        }
+        
+        // Parse temperature
+        if (LightObj->HasField(TEXT("SunTemperature")))
+        {
+            Environment.Lighting.SunTemperature = LightObj->GetNumberField(TEXT("SunTemperature"));
+            Environment.Lighting.bUseTemperature = true;
+        }
+        
+        UE_LOG(LogTemp, Display, TEXT("JsonParser: Parsed lighting settings"));
+    }
 }
 
 void UJsonParser::ParsePropModification(const TSharedPtr<FJsonObject>& JsonObject, FPropsModification& PropMod)

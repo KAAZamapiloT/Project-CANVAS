@@ -8,6 +8,7 @@
 #include "SceneStateTracker.generated.h"
 class UGenAISystem;
 class USceneBuilder;
+class USceneHistoryManager;
 /**
  * 
  */
@@ -29,8 +30,11 @@ public:
     
 	UPROPERTY()
 	USceneBuilder* SceneBuilder;
+	UPROPERTY()
+	USceneHistoryManager* HistoryManager;
+	
 	UFUNCTION() // Must be a UFUNCTION to bind to a delegate
 	void OnAssetScanFinished();
 	UFUNCTION()
-	void OnPlanReceived(const FEnhancedScenePlan& Plan);
+	void OnPlanReceived(const FEnhancedScenePlan& Plan,const FString& UserPrompt);
 };

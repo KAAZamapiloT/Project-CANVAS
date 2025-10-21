@@ -260,7 +260,7 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
     
 	// Call GenAI to process the prompt
 	UE_LOG(LogTemp, Warning, TEXT("PlayerController: Calling GenAISystem->RequestSceneChange()"));
-	GameInstance->GenAISystem->RequestSceneChange(UserPrompt, GetWorld());
+	GameInstance->GenAISystem->RequestSceneChange(UserPrompt, GetWorld(),GameInstance->HistoryManager);
 
 	// Automatically close the UI after submitting
 	TogglePromptUI();

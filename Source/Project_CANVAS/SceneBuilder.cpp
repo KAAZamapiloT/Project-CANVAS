@@ -19,7 +19,11 @@
 #include "Engine/ExponentialHeightFog.h"
 #include "Components/ExponentialHeightFogComponent.h" // <-- Needed for GetComponent()
 #include "Engine/PostProcessVolume.h"
-
+#include"Components/LightComponent.h"
+#include "Engine/DirectionalLight.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyLightComponent.h"
 // --- Define your content paths ---
 // You MUST place your assets in these folders, or change these paths.
 // The parser gets "T_Brick_Normal", this path turns it into "/Game/Textures/Generative/T_Brick_Normal.T_Brick_Normal"
@@ -40,11 +44,26 @@ void USceneBuilder::BuildScene(const FEnhancedScenePlan& Plan, UWorld* WorldCont
 
     UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Building scene for theme: %s"), *Plan.ThemeName);
 
-    // Apply all global environmental settings
-    ApplyEnvironmentSettings(Plan.Environment, WorldContext);
-
-    // Apply all specific prop/actor modifications
-    ApplyPropsModifications(Plan.Props, WorldContext);
+    // === DELTA LOGIC ===
+    if (Plan.bModifyEnvironment)
+    {
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Applying environment changes"));
+        ApplyEnvironmentSettings(Plan.Environment, WorldContext);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Skipping environment (bModifyEnvironment = false)"));
+    }
+    
+    if (Plan.bModifyProps||Plan.Props.Num()>0)
+    {
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Applying prop modifications"));
+        ApplyPropsModifications(Plan.Props, WorldContext);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Skipping props (bModifyProps = false)"));
+    }
 }
 
 // --- Private: Main Build Functions ---
@@ -57,10 +76,9 @@ void USceneBuilder::ApplyEnvironmentSettings(const FEnvironmentPlan& Environment
     // 2. Apply Post Processing
     // This assumes "PostProcessingName" is the name of an asset, e.g., "PP_Cyberpunk"
     ApplyPostProcessing(Environment.PostProcessingName, WorldContext);
-    
-    // NOTE: Your ScenePlan.h doesn't have lights yet.
-    // When you add them, you would find the ADirectionalLight and apply
-    // Environment.PrimaryLight properties here.
+
+    // 3.apply lighting
+    ApplyLightingSettings(Environment.Lighting, WorldContext);
 }
 
 void USceneBuilder::ApplyPropsModifications(const TArray<FPropsModification>& Props, UWorld* WorldContext)
@@ -297,6 +315,103 @@ void USceneBuilder::ApplyParticleEffects(AActor* Actor, const FString& ParticleE
             UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Failed to load particle system: %s"), *AssetPath.ToString());
         }
     });
+}
+
+void USceneBuilder::ApplyLightingSettings(const FLightingPlan& Lighting, UWorld* WorldContext)
+{
+    if (!WorldContext) return;
+    
+    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Applying lighting settings..."));
+    
+    // Apply directional light (sun/moon)
+    ApplyDirectionalLight(Lighting, WorldContext);
+    
+    // Apply sky light (ambient)
+    ApplySkyLight(Lighting, WorldContext);
+}
+
+void USceneBuilder::ApplyDirectionalLight(const FLightingPlan& Lighting, UWorld* WorldContext)
+{
+    // Find the directional light in the scene
+    ADirectionalLight* DirLight = Cast<ADirectionalLight>(
+        UGameplayStatics::GetActorOfClass(WorldContext, ADirectionalLight::StaticClass())
+    );
+    
+    if (!DirLight)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: No Directional Light found in level!"));
+        return;
+    }
+    
+    UDirectionalLightComponent* LightComp = DirLight->GetComponent();
+    if (!LightComp)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SceneBuilder: Directional Light has no component!"));
+        return;
+    }
+    
+    // === Apply Color or Temperature ===
+    if (Lighting.bUseTemperature)
+    {
+        LightComp->SetUseTemperature(true);
+        LightComp->SetTemperature(Lighting.SunTemperature);
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Set sun temperature to %.0fK"), Lighting.SunTemperature);
+    }
+    else
+    {
+        LightComp->SetUseTemperature(false);
+        LightComp->SetLightColor(Lighting.SunColor);
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Set sun color to RGB(%.2f, %.2f, %.2f)"), 
+            Lighting.SunColor.R, Lighting.SunColor.G, Lighting.SunColor.B);
+    }
+    
+    // === Apply Intensity ===
+    LightComp->SetIntensity(Lighting.SunIntensity);
+    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Set sun intensity to %.2f"), Lighting.SunIntensity);
+    
+    // === Apply Rotation (Time of Day) ===
+    FRotator NewRotation = DirLight->GetActorRotation();
+    NewRotation.Pitch = Lighting.SunPitch;
+    NewRotation.Yaw = Lighting.SunYaw;
+    DirLight->SetActorRotation(NewRotation);
+    
+    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Set sun angle to Pitch=%.1f°, Yaw=%.1f°"), 
+        Lighting.SunPitch, Lighting.SunYaw);
+}
+
+void USceneBuilder::ApplySkyLight(const FLightingPlan& Lighting, UWorld* WorldContext)
+{
+    // Find the sky light in the scene
+    ASkyLight* SkyLight = Cast<ASkyLight>(
+        UGameplayStatics::GetActorOfClass(WorldContext, ASkyLight::StaticClass())
+    );
+    
+    if (!SkyLight)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: No Sky Light found in level!"));
+        return;
+    }
+    
+    USkyLightComponent* SkyComp = SkyLight->GetLightComponent();
+    if (!SkyComp)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SceneBuilder: Sky Light has no component!"));
+        return;
+    }
+    
+    // === Apply Color ===
+    SkyComp->SetLightColor(Lighting.SkyLightColor);
+    
+    // === Apply Intensity ===
+    SkyComp->SetIntensity(Lighting.SkyLightIntensity);
+    
+    // === Recapture (important for real-time updates) ===
+    SkyComp->SetCaptureIsDirty();
+    SkyComp->RecaptureSky();
+    
+    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Set sky light color to RGB(%.2f, %.2f, %.2f), intensity=%.2f"), 
+        Lighting.SkyLightColor.R, Lighting.SkyLightColor.G, Lighting.SkyLightColor.B,
+        Lighting.SkyLightIntensity);
 }
 
 // --- Private: Texture/Material Helpers ---

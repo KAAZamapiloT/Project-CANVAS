@@ -2,9 +2,14 @@
 
 
 // SceneStateTracker.cpp
+
 #include "SceneStateTracker.h"
 #include "GenAISystem.h"      
-#include "SceneBuilder.h" 
+#include "SceneBuilder.h"
+#include "SceneHistoryManager.h"
+
+
+
 void USceneStateTracker::Init()
 {
 	Super::Init();
@@ -35,7 +40,15 @@ void USceneStateTracker::Init()
 		return;
 	}
 	UE_LOG(LogTemp, Warning, TEXT("SceneStateTracker: SceneBuilder created successfully!"));
-	// Create the AssetIndexer
+	// 4 . Create HistoryManger
+	HistoryManager = NewObject<USceneHistoryManager>(this);
+	if (!HistoryManager)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SceneStateTracker: FAILED to create HistoryManager!"));
+		return;
+	}
+	UE_LOG(LogTemp,Warning, TEXT("SceneStateTracker: SceneHistoryManager created successfully!"));
+	
 	
     
 	// Bind to completion delegate
@@ -71,10 +84,17 @@ void USceneStateTracker::OnAssetScanFinished()
 	UE_LOG(LogTemp, Display, TEXT("Available Tags: %s"), *FString::Join(Tags, TEXT(", ")));
 }
 
-void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan)
+void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan,const FString& UserPrompt)
 {
 	UE_LOG(LogTemp, Warning, TEXT("SceneStateTracker: Received Plan, executing..."));
-    
+	if (HistoryManager)
+	{
+		// Note: GenAISystem already called AddPrompt(), so we only need SavePlan here
+		// But we'll need the original prompt... GenAISystem should pass it via Plan or delegate
+		// For now, use Plan.ThemeName as proxy
+		HistoryManager->SavePlan(Plan, UserPrompt);
+		UE_LOG(LogTemp, Display, TEXT("SceneStateTracker: Saved plan to history"));
+	}
 	if (SceneBuilder && GetWorld())
 	{
 		SceneBuilder->BuildScene(Plan, GetWorld());

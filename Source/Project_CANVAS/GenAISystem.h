@@ -8,12 +8,14 @@
 #include "HttpModule.h"
 #include "SceneStateTracker.h"
 #include "GenAISystem.generated.h"
-
+class USceneHistoryManager;
 /**
  * 
  */
 //  A EVENT DRIVEN -> SEND IT TO SCENE BUILDER
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnThemeDataReady, const FEnhancedScenePlan&, Plan);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnThemeDataReady, 
+	const FEnhancedScenePlan&, Plan,
+	const FString&, UserPrompt); 
 UCLASS()
 class PROJECT_CANVAS_API UGenAISystem : public UObject
 {
@@ -21,16 +23,21 @@ class PROJECT_CANVAS_API UGenAISystem : public UObject
 public:
 	
 	// Helper function to build the final prompt for the LLM
-	FString ConstructMasterPrompt(FString UserPrompt,const TArray<FString>& AvailableTextures,const TArray<FString>& AvailableTags,const TArray<FString>& AvailablePPMs);
+	FString ConstructMasterPrompt(FString UserPrompt,const TArray<FString>& AvailableTextures,const TArray<FString>& AvailableTags,
+		const TArray<FString>& AvailablePPMs,USceneHistoryManager* HistoryManager = nullptr);
 	
 	UFUNCTION(BlueprintCallable)
-	void RequestSceneChange(FString UserPrompt,UWorld* WorldContext);
+	void RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager);
 	
 	// --- Internal HTTP Callback ---
 	void OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
+	
 	// We need a reference to our parser
 	UPROPERTY(BlueprintAssignable)
 	FOnThemeDataReady OnThemeDataReady;
+
+private:
+	FString LastUserPrompt ;
 	
 };
