@@ -6,22 +6,32 @@
 #include "UObject/Interface.h"
 #include "Damagable.generated.h"
 
-// This class does not need to be modified.
-UINTERFACE()
-class UDamagable : public UInterface
-{
-	GENERATED_BODY()
+
+USTRUCT(BlueprintType)
+struct FDamageSpec {
+  GENERATED_BODY()
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) float Amount = 0.f;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) TSubclassOf<UDamageType> DamageType = UDamageType::StaticClass();
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector HitLocation = FVector::ZeroVector;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector HitNormal = FVector::UpVector;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) FName HitBone = NAME_None;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) AController* InstigatorController = nullptr;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) AActor* DamageCauser = nullptr;
 };
 
-/**
- * 
- */
+UINTERFACE(BlueprintType) // ADD THIS
+class UDamagable : public UInterface
+{
+  GENERATED_BODY()
+};
+
 class PROJECT_CANVAS_API IDamagable
 {
-	GENERATED_BODY()
-
-	// Add interface functions to this class. This is the class that will be inherited to implement this interface.
+  GENERATED_BODY()
 public:
-	virtual void TakeDamage()=0;
-	virtual void Heal()=0;
+  UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Damage")
+  void ReceiveDamage(const FDamageSpec& Spec);
+
+  UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Damage")
+  bool IsAlive() const;
 };

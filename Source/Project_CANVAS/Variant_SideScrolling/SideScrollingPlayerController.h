@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "EnhancedInput/Public/InputAction.h"
-#include "ScenePlan.h"
+
 #include "SideScrollingPlayerController.generated.h"
 
 class ASideScrollingCharacter;

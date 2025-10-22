@@ -8,6 +8,7 @@
 #include "Components/InputComponent.h"
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
+#include"HealthComponent.h"
 #include "InputAction.h"
 #include "Engine/World.h"
 #include "SideScrollingInteractable.h"
@@ -331,6 +332,32 @@ void ASideScrollingCharacter::ResetWallJump()
 {
 	// reset the wall jump flag
 	bHasWallJumped = false;
+}
+
+void ASideScrollingCharacter::OnHealthChanged(float Current, float Max)
+{
+	UE_LOG(LogTemp, Log, TEXT("Enemy Health: %.1f / %.1f"), Current, Max);
+}
+
+void ASideScrollingCharacter::OnDeath()
+{
+	UE_LOG(LogTemp, Warning, TEXT("Enemy died!"));
+	// Disable AI, play death anim, destroy after delay
+	SetLifeSpan(3.0f);
+}
+
+void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Spec)
+{
+	if (HealthComp && HealthComp->IsAlive())
+	{
+		HealthComp->ApplyDamage(Spec.Amount);
+		// Play hit react or stun anim
+	}
+}
+
+bool ASideScrollingCharacter::IsAlive_Implementation() const
+{
+	return HealthComp && HealthComp->IsAlive();
 }
 
 void ASideScrollingCharacter::SetSoftCollision(bool bEnabled)

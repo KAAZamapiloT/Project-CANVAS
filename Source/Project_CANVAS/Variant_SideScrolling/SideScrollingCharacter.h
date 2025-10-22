@@ -3,18 +3,19 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include"Damagable.h"
 #include "GameFramework/Character.h"
 #include "SideScrollingCharacter.generated.h"
 
 class UCameraComponent;
 class UInputAction;
 struct FInputActionValue;
-
+class UHealthComponent;
 /**
  *  A player-controllable character side scrolling game
  */
 UCLASS(abstract)
-class ASideScrollingCharacter : public ACharacter
+class ASideScrollingCharacter : public ACharacter,public IDamagable
 {
 	GENERATED_BODY()
 
@@ -97,6 +98,9 @@ protected:
 	/** If true, this character is moving along the side scrolling axis */
 	bool bMovingHorizontally = false;
 
+	UPROPERTY(EditAnywhere, Category="Health")
+	UHealthComponent* HealthComp;
+
 public:
 	
 	/** Constructor */
@@ -163,11 +167,18 @@ protected:
 	/** Resets wall jump lockout. Called from timer after a wall jump */
 	void ResetWallJump();
 
+	UFUNCTION()
+	void OnHealthChanged(float Current, float Max);
+
+	UFUNCTION()
+	void OnDeath();
 public:
 
 	/** Sets the soft collision response. True passes, False blocks */
 	void SetSoftCollision(bool bEnabled);
 
+	virtual void ReceiveDamage_Implementation(const FDamageSpec& Spec) override;
+	virtual bool IsAlive_Implementation() const override;
 public:
 
 	/** Returns true if the character has just double jumped */

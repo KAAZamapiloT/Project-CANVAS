@@ -7,29 +7,45 @@
 #include "HealthComponent.generated.h"
 
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChanged, float, CurrentHealth, float, MaxHealth);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnHealthDepleted);
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PROJECT_CANVAS_API UHealthComponent : public UActorComponent
 {
-	GENERATED_BODY()
-
+  GENERATED_BODY()
 public:
-	// Sets default values for this component's properties
-	UHealthComponent();
+  UHealthComponent();
+
+  UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Health")
+  float MaxHealth = 100.f;
+
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Health")
+  float Health = 0.f;
+
+  UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Health")
+  float StunDuration = 0.f;
+
+  // Delegates
+  UPROPERTY(BlueprintAssignable, Category="Health")
+  FOnHealthChanged OnHealthChanged;
+
+  UPROPERTY(BlueprintAssignable, Category="Health")
+  FOnHealthDepleted OnHealthDepleted;
+
+  // Public methods
+  UFUNCTION(BlueprintCallable, Category="Health")
+  void ApplyDamage(float Amount);
+
+  UFUNCTION(BlueprintCallable, Category="Health")
+  void Heal(float Amount);
+
+  UFUNCTION(BlueprintPure, Category="Health")
+  float GetHealthPercent() const { return MaxHealth > 0.f ? Health / MaxHealth : 0.f; }
+
+  UFUNCTION(BlueprintPure, Category="Health")
+  bool IsAlive() const { return Health > 0.f; }
 
 protected:
-	// Called when the game starts
-	virtual void BeginPlay() override;
-
-public:
-	// Called every frame
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
-	                           FActorComponentTickFunction* ThisTickFunction) override;
-
-private:
-	UPROPERTY(EditAnywhere,Category="Health")
-	float Health;
-	UPROPERTY(EditAnywhere,Category="Health")
-	float MaxHealth;
-	UPROPERTY(EditAnywhere,Category="Health")
-	float StunDuration;
+  virtual void BeginPlay() override;
 };
