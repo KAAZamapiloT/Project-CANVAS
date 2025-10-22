@@ -13,7 +13,7 @@
  * Delegate fired when a montage/move completes
  * Broadcasts the completed move identifier for combo chaining logic
  */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMontageEnded, FName, CompletedMove);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatMontageEnded, FName, CompletedMove);
 
 /**
  * Delegate fired when AnimNotify_CombatHit is triggered during montage
@@ -81,7 +81,7 @@ public:
 
     /** Fired when a montage/move completes - used for combo chaining */
     UPROPERTY(BlueprintAssignable, Category="Combat Animation")
-    FOnMontageEnded OnMontageEnded;
+    FOnCombatMontageEnded OnMontageEnded;
 
     /** Fired when AnimNotify_CombatHit triggers - used for damage application */
     UPROPERTY(BlueprintAssignable, Category="Combat Animation")

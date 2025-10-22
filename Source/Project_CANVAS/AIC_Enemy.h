@@ -9,13 +9,9 @@
 #include "Perception/AISenseConfig_Sight.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
-#include "Runtime/AIModule/Classes/AIController.h"
-
 #include "Perception/AISense_Sight.h"
 #include "Perception/AISense_Hearing.h"
-#include "Perception/AISense.h"
-
-
+#include "AIC_Enemy.generated.h"
 
 class UAISenseConfig;
 class UAIPerceptionComponent;

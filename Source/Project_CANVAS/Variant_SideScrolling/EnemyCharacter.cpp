@@ -2,12 +2,13 @@
 
 
 // EnemyCharacter.cpp
-// 2.5D enemy implementation with plane-constrained movement
+// Enemy executes attacks directly via ExecuteAttack() from behavior tree
 
 #include "EnemyCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "HealthComponent.h"
 #include "CombatAnimationComponent.h"
+#include "CombatData.h"  // For FActionCommand
 #include "Damagable.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
@@ -15,35 +16,22 @@
 AEnemyCharacter::AEnemyCharacter()
 {
     PrimaryActorTick.bCanEverTick = false;
-    
-    // Add "Enemy" tag for player's FindNearestEnemy() function
     Tags.Add(FName("Enemy"));
 
     // =====================================
-    // 2.5D PLANE CONSTRAINT (KEY FIX)
+    // 2.5D PLANE CONSTRAINT
     // =====================================
     
-    // Lock movement to X-Z plane (side-scroller zone)
-    // Prevents enemy from drifting in Y-axis during navigation
     GetCharacterMovement()->SetPlaneConstraintNormal(FVector(0.0f, 1.0f, 0.0f));
     GetCharacterMovement()->bConstrainToPlane = true;
-    
-    // Make enemy face movement direction (left/right in 2.5D)
     GetCharacterMovement()->bOrientRotationToMovement = true;
-    
-    // Disable controller yaw rotation (side-scroller doesn't need it)
     bUseControllerRotationYaw = false;
-
-    UE_LOG(LogTemp, Log, TEXT("Enemy CharacterMovement constrained to 2.5D plane"));
 
     // =====================================
     // COMBAT COMPONENTS
     // =====================================
     
-    // Create health component
     HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
-    
-    // Create combat animation component
     CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
 }
 
@@ -51,73 +39,67 @@ void AEnemyCharacter::BeginPlay()
 {
     Super::BeginPlay();
 
-    // =====================================
-    // WIRE HEALTH DELEGATES
-    // =====================================
-    
+    // Wire health delegates
     if (HealthComp)
     {
         HealthComp->OnHealthChanged.AddDynamic(this, &AEnemyCharacter::OnHealthChanged);
         HealthComp->OnHealthDepleted.AddDynamic(this, &AEnemyCharacter::OnDeath);
-        
-        UE_LOG(LogTemp, Log, TEXT("Enemy health initialized: %.1f HP"), HealthComp->MaxHealth);
     }
 
-    // =====================================
-    // WIRE COMBAT ANIMATION DELEGATES
-    // =====================================
-    
+    // Wire combat animation delegates
     if (CombatAnimComp)
     {
         CombatAnimComp->OnMontageEnded.AddDynamic(this, &AEnemyCharacter::OnMoveCompleted);
         CombatAnimComp->OnHitWindowActive.AddDynamic(this, &AEnemyCharacter::OnHitWindowActive);
-        
-        UE_LOG(LogTemp, Log, TEXT("Enemy combat animation component initialized"));
     }
-
-    // =====================================
-    // VALIDATE PLANE CONSTRAINT
-    // =====================================
-    
-    // Log current Y position to verify constraint is working
-    FVector CurrentLocation = GetActorLocation();
-    UE_LOG(LogTemp, Log, TEXT("Enemy spawned at Y=%.1f (should stay constant)"), CurrentLocation.Y);
-}
-
-void AEnemyCharacter::Tick(float DeltaTime)
-{
-    Super::Tick(DeltaTime);
-
-    // =====================================
-    // DEBUG: MONITOR Y-AXIS DRIFT
-    // =====================================
-    // Uncomment to verify plane constraint is working
-    /*
-    FVector CurrentLocation = GetActorLocation();
-    if (FMath::Abs(CurrentLocation.Y - SpawnY) > 1.0f)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Enemy drifting in Y! Current: %.1f, Spawn: %.1f"), 
-               CurrentLocation.Y, SpawnY);
-    }
-    */
 }
 
 // =====================================
-// IDAMAGABLE INTERFACE IMPLEMENTATION
+// BEHAVIOR TREE CALLABLE ATTACK
+// Called from BTTask_EnemyAttack
+// =====================================
+
+void AEnemyCharacter::ExecuteAttack(UAnimMontage* AttackMontage, float Damage, float Stun)
+{
+    // Validate inputs
+    if (!AttackMontage || !CombatAnimComp)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ExecuteAttack: Invalid montage or component"));
+        return;
+    }
+
+    // Check if already attacking
+    if (CombatAnimComp->IsExecutingMove())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Enemy already executing attack"));
+        return;
+    }
+
+    // Build Action Command manually (no Decision Engine)
+    FActionCommand Command;
+    Command.MoveIdentifier = FName("EnemyAttack");
+    Command.AnimationToPlay = AttackMontage;
+    Command.DamageToApply = Damage;
+    Command.StunDurationToInflict = Stun;
+    Command.MovementToApply = FVector::ZeroVector;
+
+    // Execute via CombatAnimationComponent
+    CombatAnimComp->ExecuteActionCommand(Command);
+
+    UE_LOG(LogTemp, Log, TEXT("Enemy executing attack: Damage=%.1f, Stun=%.1f"), Damage, Stun);
+}
+
+// =====================================
+// IDAMAGABLE INTERFACE
 // =====================================
 
 void AEnemyCharacter::ReceiveDamage_Implementation(const FDamageSpec& Spec)
 {
-    // Route damage to HealthComponent
-    // This replaces your old IIA_Damageable::Damage(100) function
     if (HealthComp && HealthComp->IsAlive())
     {
         HealthComp->ApplyDamage(Spec.Amount);
         
-        // TODO: Play hit react montage
-        // TODO: Apply stun via gameplay tags
-        
-        UE_LOG(LogTemp, Warning, TEXT("Enemy received %.1f damage from %s"), 
+        UE_LOG(LogTemp, Warning, TEXT("Enemy took %.1f damage from %s"), 
                Spec.Amount, 
                Spec.DamageCauser ? *Spec.DamageCauser->GetName() : TEXT("Unknown"));
     }
@@ -134,63 +116,45 @@ bool AEnemyCharacter::IsAlive_Implementation() const
 
 void AEnemyCharacter::OnMoveCompleted(FName CompletedMove)
 {
-    UE_LOG(LogTemp, Log, TEXT("Enemy move completed: %s"), *CompletedMove.ToString());
-    
-    // AI controller will query Decision Engine for next move here
-    // (Implemented in AI controller, not character class)
+    UE_LOG(LogTemp, Log, TEXT("Enemy attack completed: %s"), *CompletedMove.ToString());
+    // Behavior tree will handle next action (return to patrol, chase, etc.)
 }
 
 void AEnemyCharacter::OnHitWindowActive(float Damage, float Stun)
 {
-    UE_LOG(LogTemp, Log, TEXT("Enemy hit window active: Damage=%.1f, Stun=%.1f"), Damage, Stun);
-    
-    // Perform hit detection when AnimNotify fires
+    // AnimNotify fired - perform hit detection
     PerformHitDetection(Damage, Stun);
 }
 
 void AEnemyCharacter::PerformHitDetection(float Damage, float Stun)
 {
-    // =====================================
-    // SPHERE TRACE FOR HIT DETECTION
-    // Adapted from your AttackTrace() line trace
-    // =====================================
-    
+    // Sphere trace for hit detection
     FVector Start = GetActorLocation();
     FVector Forward = GetActorForwardVector();
-    FVector End = Start + (Forward * 150.f);  // 150 unit attack range
+    FVector End = Start + (Forward * 150.f);
 
-    // Perform sphere trace
     FHitResult HitResult;
     FCollisionQueryParams QueryParams;
-    QueryParams.AddIgnoredActor(this);  // Ignore self
+    QueryParams.AddIgnoredActor(this);
 
     bool bHit = GetWorld()->SweepSingleByChannel(
         HitResult,
         Start,
         End,
         FQuat::Identity,
-        ECC_Pawn,  // Trace against pawns
-        FCollisionShape::MakeSphere(50.f),  // 50 unit radius
+        ECC_Pawn,
+        FCollisionShape::MakeSphere(50.f),
         QueryParams
     );
 
-    // Draw debug visualization (green if hit, red if miss)
     DrawDebugSphere(GetWorld(), End, 50.f, 12, bHit ? FColor::Green : FColor::Red, false, 0.5f);
 
-    // =====================================
-    // APPLY DAMAGE VIA INTERFACE
-    // =====================================
-    
     if (bHit && HitResult.GetActor())
     {
         AActor* Target = HitResult.GetActor();
-        
-        UE_LOG(LogTemp, Log, TEXT("Enemy hit target: %s"), *Target->GetName());
 
-        // Check if target implements IDamagable
         if (Target->GetClass()->ImplementsInterface(UDamagable::StaticClass()))
         {
-            // Build damage spec
             FDamageSpec Spec;
             Spec.Amount = Damage;
             Spec.HitLocation = HitResult.ImpactPoint;
@@ -199,14 +163,9 @@ void AEnemyCharacter::PerformHitDetection(float Damage, float Stun)
             Spec.InstigatorController = GetController();
             Spec.DamageCauser = this;
 
-            // Apply damage (replaces your old Damageable->Damage(100))
             IDamagable::Execute_ReceiveDamage(Target, Spec);
             
-            UE_LOG(LogTemp, Log, TEXT("Enemy dealt %.1f damage to %s"), Damage, *Target->GetName());
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("Target does not implement IDamagable"));
+            UE_LOG(LogTemp, Log, TEXT("Enemy hit %s for %.1f damage"), *Target->GetName(), Damage);
         }
     }
 }
@@ -218,24 +177,10 @@ void AEnemyCharacter::PerformHitDetection(float Damage, float Stun)
 void AEnemyCharacter::OnHealthChanged(float Current, float Max)
 {
     UE_LOG(LogTemp, Log, TEXT("Enemy Health: %.1f / %.1f"), Current, Max);
-    
-    // TODO: Update health bar widget
 }
 
 void AEnemyCharacter::OnDeath()
 {
     UE_LOG(LogTemp, Warning, TEXT("Enemy died!"));
-    
-    // Stop AI behavior
-    if (UBehaviorTree* BT = BehaviorTree)
-    {
-        // AI controller will handle stopping behavior tree
-    }
-    
-    // TODO: Play death animation
-    // TODO: Disable collision
-    // TODO: Destroy after delay
-    
-    SetLifeSpan(3.0f);  // Destroy after 3 seconds
+    SetLifeSpan(3.0f);
 }
-
