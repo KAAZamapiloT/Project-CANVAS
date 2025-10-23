@@ -37,4 +37,6 @@ public:
 	void OnAssetScanFinished();
 	UFUNCTION()
 	void OnPlanReceived(const FEnhancedScenePlan& Plan,const FString& UserPrompt);
+	UFUNCTION()
+	void ResolveTexturesFromNames(FEnhancedScenePlan& Plan);
 };

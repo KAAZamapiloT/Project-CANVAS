@@ -168,35 +168,52 @@ void UAssetIndexer::CheckAllScansComplete()
 TMap<FString, FTextureSet> UAssetIndexer::BuildMaterialDatabase()
 {
     TMap<FString, FTextureSet> Database;
-    
+
+    // Define token lists for each texture type
+    const TArray<FString> DiffuseTokens     = { "_diff_", "_basecolor", "_albedo", "_color", "_d" };
+    const TArray<FString> RoughnessTokens   = { "_rough_", "_rgh", "_roughness", "_r","_ORM","_orm","ao_r_mt"  };
+    const TArray<FString> NormalTokens      = { "_nor_", "_normal", "_n" };
+    const TArray<FString> MetallicTokens    = { "_metal_", "_metallic", "_m","_ORM","_orm","AO_R_MT","ao_r_mt"  };
+    const TArray<FString> AOTokens          = { "_ao_", "_ambient", "_a","AO_R_MT","ao_r_mt" };
+
     for (const FString& TextureName : DiscoveredTextureNames)
     {
         FString BaseName = ExtractMaterialBaseName(TextureName);
-        if (BaseName.IsEmpty()) continue;
-        
+        if (BaseName.IsEmpty())
+            continue;
+
         if (!Database.Contains(BaseName))
-        {
-            FTextureSet NewSet;
-            Database.Add(BaseName, NewSet);
-        }
-        
-        // Classify and assign to proper slot
+            Database.Add(BaseName, FTextureSet());
+
         FTextureSet& Set = Database[BaseName];
-        
-        if (TextureName.Contains(TEXT("_diff_")))
+        const FString Lower = TextureName.ToLower();
+
+        auto MatchAny = [&Lower](const TArray<FString>& Tokens) -> bool
+        {
+            for (const FString& Token : Tokens)
+            {
+                if (Lower.Contains(Token))
+                    return true;
+            }
+            return false;
+        };
+
+        if (MatchAny(DiffuseTokens))
             Set.BaseColorPath = TextureName;
-        else if (TextureName.Contains(TEXT("_rough_")))
+        else if (MatchAny(RoughnessTokens))
             Set.RoughnessPath = TextureName;
-        else if (TextureName.Contains(TEXT("_nor_gl_")) || TextureName.Contains(TEXT("_nor_dx_")))
+        else if (MatchAny(NormalTokens))
             Set.NormalPath = TextureName;
-        else if (TextureName.Contains(TEXT("_metal_")))
+        else if (MatchAny(MetallicTokens))
             Set.MetallicPath = TextureName;
-        else if (TextureName.Contains(TEXT("_ao_")))
+        else if (MatchAny(AOTokens))
             Set.AOPath = TextureName;
     }
-    
+
+    UE_LOG(LogTemp, Log, TEXT("BuildMaterialDatabase completed. Indexed %d materials."), Database.Num());
     return Database;
 }
+
 
 FTextureSet UAssetIndexer::ResolveBaseMaterialToTextureSet(const FString& BaseMaterialName)
 {
@@ -212,8 +229,9 @@ FTextureSet UAssetIndexer::ResolveBaseMaterialToTextureSet(const FString& BaseMa
 FString UAssetIndexer::ExtractMaterialBaseName(const FString& TextureName)
 {
     FString BaseName = TextureName;
-    
-    // Remove all known PBR suffixes
+    // Remove all ureal specific prefix of fab textures 
+    TArray<FString> Prefixes={TEXT("T_")};
+    // Remove all known PBR suffixes , -> added FAB specific suffixes also
     TArray<FString> Suffixes = {
         TEXT("_diff_2k"), TEXT("_diff_4k"),
         TEXT("_rough_2k"), TEXT("_rough_4k"),
@@ -226,7 +244,13 @@ FString UAssetIndexer::ExtractMaterialBaseName(const FString& TextureName)
         TEXT("_spec_ior_2k"), TEXT("_spec_ior_4k"),
         TEXT("_anisotropy_strength_2k"), TEXT("_anisotropy_strength_4k"),
         TEXT("_anisotropy_rotation_2k"), TEXT("_anisotropy_rotation_4k"),
-        TEXT("_mask_2k"), TEXT("_mask_4k")
+        TEXT("_mask_2k"), TEXT("_mask_4k"),
+        TEXT("_Normal"), TEXT("_BaseColor"),
+        TEXT("_Occlusion"),TEXT("_Roughness"),
+        TEXT("_Metal"), TEXT("_Ao"), TEXT("_Displacement"),
+        TEXT("_Metallic"), TEXT("_AO"), TEXT("_Displacement_AO"),
+        TEXT("_Metallic_AO"), TEXT("_OcclusionRoughnessMetallic"),
+        TEXT("_BC"),TEXT("_ORM"),TEXT("_BC"),TEXT("AO_R_MT")
     };
     
     for (const FString& Suffix : Suffixes)
@@ -234,9 +258,56 @@ FString UAssetIndexer::ExtractMaterialBaseName(const FString& TextureName)
         if (BaseName.EndsWith(Suffix))
         {
             BaseName.RemoveFromEnd(Suffix);
-            return BaseName;  // Return immediately after first match
+            break;
         }
     }
-    
+    for (const FString& Prefix : Prefixes)
+    {
+        if (BaseName.StartsWith(Prefix))
+        {
+            BaseName.RemoveFromStart(Prefix);
+            break;
+        }
+    }
     return BaseName;
+}
+
+
+bool UAssetIndexer::bIsNameMatch(FString Key, FString AssetName)
+{
+    FString CleanKey = Key.ToLower().Replace(TEXT("_"), TEXT(""));
+    FString CleanAsset = AssetName.ToLower().Replace(TEXT("_"), TEXT(""));
+    return CleanAsset.Contains(CleanKey);
+}
+
+FTextureSet UAssetIndexer::ResolveTextureFromName(const FString& SearchName)
+{
+    FTextureSet Result;
+
+    FString CleanKey = SearchName.ToLower().Replace(TEXT("_"), TEXT(""));
+    for (const auto& Pair : MaterialDatabase)
+    {
+        FString CleanAsset = Pair.Key.ToLower().Replace(TEXT("_"), TEXT(""));
+        if (CleanAsset.Contains(CleanKey))
+        {
+            // Found partial match; copy this material set
+            Result = Pair.Value;
+            UE_LOG(LogTemp, Display, TEXT("ResolveTextureFromName: matched %s -> %s"), *SearchName, *Pair.Key);
+            return Result;
+        }
+    }
+
+    // fallback: partial/fuzzy match by token
+    for (const auto& Pair : MaterialDatabase)
+    {
+        if (bIsNameMatch(SearchName, Pair.Key))
+        {
+            Result = Pair.Value;
+            UE_LOG(LogTemp, Display, TEXT("ResolveTextureFromName (fuzzy) %s -> %s"), *SearchName, *Pair.Key);
+            return Result;
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("No texture match found for %s"), *SearchName);
+    return Result; // Empty set
 }

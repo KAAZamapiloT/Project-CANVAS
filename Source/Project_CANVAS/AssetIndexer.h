@@ -70,6 +70,12 @@ public:
         MaterialDatabase.GetKeys(Names);
         return Names;
     }
+
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    bool bIsNameMatch(FString Key,FString AssetName);
+
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    FTextureSet ResolveTextureFromName(const FString& SearchName);
 private:
     // Internal scan counter
     int32 PendingScans = 0;
