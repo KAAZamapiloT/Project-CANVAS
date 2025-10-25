@@ -14,7 +14,10 @@
 #include "SideScrollingInteractable.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "TimerManager.h"
-
+#include"CombatStateComponent.h"
+#include "CombatAnimationComponent.h"
+#include"Kismet/GameplayStatics.h"
+#include "CombatDecisionEngine.h"
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -57,7 +60,12 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	GetCharacterMovement()->bConstrainToPlane = true;
 
 	// enable double jump and coyote time
-	JumpMaxCount = 3;
+	JumpMaxCount = 4;
+
+	HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
+	CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
+	CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
+	DecisionEngine = CreateDefaultSubobject<UCombatDecisionEngine>(TEXT("DecisionEngine"));
 }
 
 void ASideScrollingCharacter::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -170,6 +178,7 @@ void ASideScrollingCharacter::DoMove(float Forward)
 	}
 }
 
+
 void ASideScrollingCharacter::DoDrop(float Value)
 {
 	// save the movement value
@@ -214,6 +223,107 @@ void ASideScrollingCharacter::DoInteract()
 			Interactable->Interaction(this);
 		}
 	}
+}
+
+void ASideScrollingCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+	// ═════════════════════════════════════════════════════════
+	// BIND HEALTH COMPONENT DELEGATES
+	// ═════════════════════════════════════════════════════════
+	if (HealthComp)
+	{
+		HealthComp->OnHealthChanged.AddDynamic(this, &ASideScrollingCharacter::OnHealthChanged);
+		HealthComp->OnHealthDepleted.AddDynamic(this, &ASideScrollingCharacter::OnDeath);
+	}
+    
+	// ═════════════════════════════════════════════════════════
+	// BIND COMBAT ANIMATION COMPONENT DELEGATES
+	// ═════════════════════════════════════════════════════════
+	if (CombatAnimComp)
+	{
+		CombatAnimComp->OnHitWindowActive.AddDynamic(this, &ASideScrollingCharacter::OnHitWindowActive);
+		CombatAnimComp->OnMontageEnded.AddDynamic(this, &ASideScrollingCharacter::OnMoveCompleted);
+	}
+    
+	// ═════════════════════════════════════════════════════════
+	// AUTO-FIND ENEMY FOR COMBAT STATE COMPONENT
+	// ═════════════════════════════════════════════════════════
+	if (CombatStateComp)
+	{
+		TArray<AActor*> FoundEnemies;
+		UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("Enemy"), FoundEnemies);
+		if (FoundEnemies.Num() > 0)
+		{
+			if (ACharacter* Enemy = Cast<ACharacter>(FoundEnemies[0]))
+			{
+				CombatStateComp->SetEnemy(Enemy);
+				UE_LOG(LogTemp, Log, TEXT("Player found enemy: %s"), *Enemy->GetName());
+			}
+		}
+	}
+}
+
+void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
+{
+	// ═════════════════════════════════════════════════════════
+	// HIT DETECTION VIA SPHERE TRACE
+	// ═════════════════════════════════════════════════════════
+    
+	FVector Start = GetActorLocation();
+	FVector Forward = GetActorForwardVector();
+	FVector End = Start + (Forward * 150.f);  // 150 units forward
+    
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+    
+	// Sphere sweep for hit detection
+	bool bHit = GetWorld()->SweepSingleByChannel(
+		HitResult, 
+		Start, 
+		End, 
+		FQuat::Identity,
+		ECC_Pawn,  // Hit pawns only
+		FCollisionShape::MakeSphere(75.f),  // 75 unit radius
+		QueryParams
+	);
+    
+	if (bHit && HitResult.GetActor())
+	{
+		AActor* Target = HitResult.GetActor();
+        
+		// Check if target implements IDamagable
+		if (Target->GetClass()->ImplementsInterface(UDamagable::StaticClass()))
+		{
+			// Build damage specification
+			FDamageSpec DamageSpec;
+			DamageSpec.Amount = Damage;
+			DamageSpec.HitLocation = HitResult.ImpactPoint;
+			DamageSpec.HitNormal = HitResult.ImpactNormal;
+			DamageSpec.HitBone = HitResult.BoneName;
+			DamageSpec.InstigatorController = GetController();
+			DamageSpec.DamageCauser = this;
+            
+			// Apply damage through interface
+			IDamagable::Execute_ReceiveDamage(Target, DamageSpec);
+            
+			UE_LOG(LogTemp, Log, TEXT("Player hit %s for %.1f damage"), 
+				   *Target->GetName(), Damage);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Attack missed - no target hit"));
+	}
+}
+
+void ASideScrollingCharacter::OnMoveCompleted(FName CompletedMove)
+{
+	// TODO: Handle combo window logic here
+	// - Check for buffered inputs
+	// - Allow follow-up moves
+	// - Reset combo state if no input
 }
 
 void ASideScrollingCharacter::MultiJump()
@@ -352,8 +462,22 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 	{
 		HealthComp->ApplyDamage(Spec.Amount);
 		// Play hit react or stun anim
+		// TODO: Apply stun, play hit-react animation, etc.
+		// HealthComp->StunDuration = Stun;
+		// CombatAnimComp->StopCurrentAction();
+		// PlayAnimMontage(HitReactMontage);
 	}
 }
+// Clean separation of concerns
+// Clean separation of concerns
+void ASideScrollingCharacter::ExecuteMove(FName Input)
+{
+	FContextVector Context = CombatStateComp->BuildContext(Input);
+	FActionCommand Command = DecisionEngine->DecideNextMove(Context);
+	CombatAnimComp->ExecuteActionCommand(Command);
+	CombatStateComp->StartCooldown(Command.MoveIdentifier, 0.5f);
+}
+
 
 bool ASideScrollingCharacter::IsAlive_Implementation() const
 {

@@ -125,6 +125,28 @@ struct FContextVector
     /** Moves currently on cooldown (by FName identifier) */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     TArray<FName> ActiveCooldowns;
+
+    // --- 2.5D OPTIMIZATIONS ---
+
+    /** The 2D-plane distance to the enemy. Use this for (Near, Mid, Far) logic. */
+    UPROPERTY(BlueprintReadWrite, Category = "Context")
+    float HorizontalDistanceToEnemy = 0.f;
+
+    /** The Z-axis distance to the enemy. Positive = enemy is above, Negative = below. */
+    UPROPERTY(BlueprintReadWrite, Category = "Context")
+    float VerticalDistanceToEnemy = 0.f;
+    
+    /** Is the player currently facing the enemy? (False during a cross-up) */
+    UPROPERTY(BlueprintReadWrite, Category = "Context")
+    bool bIsFacingEnemy = true;
+    
+    /** Is the player's back against the "wall" (edge of the 2D plane)? */
+    UPROPERTY(BlueprintReadWrite, Category = "Context")
+    bool bPlayerIsCornered = false;
+
+    /** Is the enemy's back against the "wall"? */
+    UPROPERTY(BlueprintReadWrite, Category = "Context")
+    bool bEnemyIsCornered = false;
 };
 
 /**

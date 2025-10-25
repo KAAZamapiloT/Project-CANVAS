@@ -11,6 +11,9 @@ class UCameraComponent;
 class UInputAction;
 struct FInputActionValue;
 class UHealthComponent;
+class UCombatAnimationComponent;  // ADD
+class UCombatStateComponent;      // ADD
+class UCombatDecisionEngine;   
 /**
  *  A player-controllable character side scrolling game
  */
@@ -99,8 +102,16 @@ protected:
 	bool bMovingHorizontally = false;
 
 	UPROPERTY(EditAnywhere, Category="Health")
-	UHealthComponent* HealthComp;
+	class UHealthComponent* HealthComp;
+	// Add these UPROPERTYs in protected section (after HealthComp)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+	UCombatAnimationComponent* CombatAnimComp;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+	UCombatStateComponent* CombatStateComp;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+	UCombatDecisionEngine* DecisionEngine;
 public:
 	
 	/** Constructor */
@@ -156,6 +167,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoInteract();
 
+	virtual void BeginPlay() override;
+
+	UFUNCTION(BlueprintCallable, Category="Damage")
+	void OnHitWindowActive(float Damage,float stun);
+
+	UFUNCTION()  // ✅ ADD THIS FUNCTION
+	void OnMoveCompleted(FName CompletedMove);
 protected:
 
 	/** Handles advanced jump logic */
@@ -172,6 +190,9 @@ protected:
 
 	UFUNCTION()
 	void OnDeath();
+
+	UFUNCTION(BlueprintCallable, Category="Input")
+	void ExecuteMove(FName input);
 public:
 
 	/** Sets the soft collision response. True passes, False blocks */
