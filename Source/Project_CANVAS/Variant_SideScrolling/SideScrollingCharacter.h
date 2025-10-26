@@ -44,6 +44,18 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	UInputAction* InteractAction;
 
+	//** Attack Input Action */
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* LightAttackAction;
+    
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* HeavyAttackAction;
+    
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* DashAction;
+	
+	UPROPERTY(EditAnywhere, Category="Input")
+	UInputAction* BlockAction;
 	/** Impulse to manually push physics objects while we're in midair */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling|Jump")
 	float JumpPushImpulse = 600.0f;
@@ -110,8 +122,8 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
 	UCombatStateComponent* CombatStateComp;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
-	UCombatDecisionEngine* DecisionEngine;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	class UCombatDecisionEngine* DecisionEngine;
 public:
 	
 	/** Constructor */
@@ -193,6 +205,10 @@ protected:
 
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void ExecuteMove(FName input);
+
+	void LightAttack(const FInputActionValue& Value);
+	void HeavyAttack(const FInputActionValue& Value);
+	void Dash(const FInputActionValue& Value);
 public:
 
 	/** Sets the soft collision response. True passes, False blocks */

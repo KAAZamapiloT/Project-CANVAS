@@ -147,6 +147,10 @@ struct FContextVector
     /** Is the enemy's back against the "wall"? */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     bool bEnemyIsCornered = false;
+
+    /**where is enemy realtive to me?**/
+    UPROPERTY(BlueprintReadWrite, Category = "Context")
+    EInputDirection EnemyDirection = EInputDirection::EID_NEUTRAL;
 };
 
 /**

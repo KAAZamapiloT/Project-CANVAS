@@ -80,6 +80,9 @@ public:
     UFUNCTION(BlueprintPure, Category="Combat State")
     bool IsOnCooldown(FName MoveName) const;
 
+    UFUNCTION(BlueprintCallable, Category="Combat State")
+   EInputDirection CalculateEnemyDirection();
+
 protected:
     /** Cached reference to owner character */
     UPROPERTY()

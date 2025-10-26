@@ -16,7 +16,9 @@ class UHealthComponent;
 class UCombatAnimationComponent;
 class UBehaviorTree;
 class UAnimMontage;
-
+class UCombatMovementComponent;
+class UCombatDecisionEngine;
+class UCombatStateComponent;
 /**
  * AEnemyCharacter
  * 
@@ -46,23 +48,14 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
     UCombatAnimationComponent* CombatAnimComp;
 
-    // =====================================
-    // ENEMY ATTACK MONTAGES (assigned in editor)
-    // Behavior tree picks one randomly or based on distance
-    // =====================================
+    /** Combat Decsision Engine **/
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+    UCombatDecisionEngine* CombatDecisionComp;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+    UCombatStateComponent* CombatStateComp;
     
-    /** Light attack montage */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Combat")
-    UAnimMontage* LightAttackMontage;
-
-    /** Heavy attack montage */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Combat")
-    UAnimMontage* HeavyAttackMontage;
-
-    /** Dash/gap-closer montage */
-    UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Combat")
-    UAnimMontage* DashMontage;
-
+  
     // =====================================
     // AI COMPONENTS
     // =====================================
@@ -95,7 +88,7 @@ public:
      * @param Stun - Stun duration on hit
      */
     UFUNCTION(BlueprintCallable, Category="Combat")
-    void ExecuteAttack(UAnimMontage* AttackMontage, float Damage, float Stun);
+    void ExecuteAttack();
 
 protected:
     // =====================================

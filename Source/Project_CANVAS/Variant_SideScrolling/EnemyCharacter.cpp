@@ -9,6 +9,8 @@
 #include "HealthComponent.h"
 #include "CombatAnimationComponent.h"
 #include "CombatData.h"  // For FActionCommand
+#include "CombatDecisionEngine.h"
+#include "CombatStateComponent.h"
 #include "Damagable.h"
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
@@ -33,12 +35,17 @@ AEnemyCharacter::AEnemyCharacter()
     
     HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
     CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
+    CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
+   
 }
 
 void AEnemyCharacter::BeginPlay()
 {
     Super::BeginPlay();
 
+    // ✅ Create UObject DecisionEngine in BeginPlay
+    CombatDecisionComp = NewObject<UCombatDecisionEngine>(this, UCombatDecisionEngine::StaticClass());
+    
     // Wire health delegates
     if (HealthComp)
     {
@@ -52,6 +59,17 @@ void AEnemyCharacter::BeginPlay()
         CombatAnimComp->OnMontageEnded.AddDynamic(this, &AEnemyCharacter::OnMoveCompleted);
         CombatAnimComp->OnHitWindowActive.AddDynamic(this, &AEnemyCharacter::OnHitWindowActive);
     }
+    if (CombatStateComp)
+    {
+        ACharacter* PlayerChar = GetWorld()->GetFirstPlayerController()->GetCharacter();
+        CombatStateComp->SetEnemy(PlayerChar);
+    }
+
+    // ADD engine initialization
+    if (CombatDecisionComp)
+    {
+        CombatDecisionComp->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Varient_SideScrolling/Blueprints/DT_CombatMoves"));
+    }
 }
 
 // =====================================
@@ -59,14 +77,9 @@ void AEnemyCharacter::BeginPlay()
 // Called from BTTask_EnemyAttack
 // =====================================
 
-void AEnemyCharacter::ExecuteAttack(UAnimMontage* AttackMontage, float Damage, float Stun)
+void AEnemyCharacter::ExecuteAttack()
 {
-    // Validate inputs
-    if (!AttackMontage || !CombatAnimComp)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("ExecuteAttack: Invalid montage or component"));
-        return;
-    }
+  
 
     // Check if already attacking
     if (CombatAnimComp->IsExecutingMove())
@@ -74,19 +87,19 @@ void AEnemyCharacter::ExecuteAttack(UAnimMontage* AttackMontage, float Damage, f
         UE_LOG(LogTemp, Warning, TEXT("Enemy already executing attack"));
         return;
     }
-
+    FContextVector Context=CombatStateComp->BuildContext(FName("AI_Attack"));
     // Build Action Command manually (no Decision Engine)
     FActionCommand Command;
-    Command.MoveIdentifier = FName("EnemyAttack");
-    Command.AnimationToPlay = AttackMontage;
-    Command.DamageToApply = Damage;
-    Command.StunDurationToInflict = Stun;
-    Command.MovementToApply = FVector::ZeroVector;
-
+    Command = CombatDecisionComp->DecideNextMove(Context);
+   
     // Execute via CombatAnimationComponent
     CombatAnimComp->ExecuteActionCommand(Command);
 
-    UE_LOG(LogTemp, Log, TEXT("Enemy executing attack: Damage=%.1f, Stun=%.1f"), Damage, Stun);
+    UE_LOG(LogTemp, Log, TEXT("Enemy executing %s (Damage=%.1f, Stun=%.1f)"), 
+    *Command.MoveIdentifier.ToString(), 
+    Command.DamageToApply, 
+    Command.StunDurationToInflict);
+
 }
 
 // =====================================

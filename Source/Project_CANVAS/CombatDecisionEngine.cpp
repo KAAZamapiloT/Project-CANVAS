@@ -23,6 +23,7 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     // If enemy is stunned, use heavy attack for maximum damage
     if (Context.EnemyStateTags.HasTag(FGameplayTag::RequestGameplayTag(FName("State.Stunned"))))
     {
+        
         SelectedMove = FName("HeavyAttack");
         UE_LOG(LogTemp, Log, TEXT("Decision: Punish Stunned -> HeavyAttack"));
     }
@@ -33,6 +34,7 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     // If enemy is far away (>300 units), use dash to close distance
     else if (Context.DistanceToEnemy > 300.f)
     {
+        
         SelectedMove = FName("Dash");
         UE_LOG(LogTemp, Log, TEXT("Decision: Gap Closer -> Dash (distance: %.1f)"), Context.DistanceToEnemy);
     }
@@ -94,4 +96,6 @@ FActionCommand UCombatDecisionEngine::BuildActionCommand(FName MoveIdentifier, c
     
     return Command;
 }
+
+
 

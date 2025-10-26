@@ -65,7 +65,7 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
 	CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
 	CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
-	DecisionEngine = CreateDefaultSubobject<UCombatDecisionEngine>(TEXT("DecisionEngine"));
+
 }
 
 void ASideScrollingCharacter::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -97,6 +97,11 @@ void ASideScrollingCharacter::SetupPlayerInputComponent(class UInputComponent* P
 		EnhancedInputComponent->BindAction(DropAction, ETriggerEvent::Triggered, this, &ASideScrollingCharacter::Drop);
 		EnhancedInputComponent->BindAction(DropAction, ETriggerEvent::Completed, this, &ASideScrollingCharacter::DropReleased);
 
+		// Attack Action
+		EnhancedInputComponent->BindAction(LightAttackAction, ETriggerEvent::Started, this, &ASideScrollingCharacter::LightAttack);
+		EnhancedInputComponent->BindAction(HeavyAttackAction,ETriggerEvent::Started,this,&ASideScrollingCharacter::HeavyAttack);
+		//Dash Action
+		EnhancedInputComponent->BindAction(DashAction,ETriggerEvent::Started,this,&ASideScrollingCharacter::Dash);
 	}
 }
 
@@ -231,12 +236,16 @@ void ASideScrollingCharacter::BeginPlay()
 	// ═════════════════════════════════════════════════════════
 	// BIND HEALTH COMPONENT DELEGATES
 	// ═════════════════════════════════════════════════════════
+	
+	// ✅ Create UObject DecisionEngine in BeginPlay
+	DecisionEngine = NewObject<UCombatDecisionEngine>(this, UCombatDecisionEngine::StaticClass());
+    
 	if (HealthComp)
 	{
 		HealthComp->OnHealthChanged.AddDynamic(this, &ASideScrollingCharacter::OnHealthChanged);
 		HealthComp->OnHealthDepleted.AddDynamic(this, &ASideScrollingCharacter::OnDeath);
 	}
-    
+
 	// ═════════════════════════════════════════════════════════
 	// BIND COMBAT ANIMATION COMPONENT DELEGATES
 	// ═════════════════════════════════════════════════════════
@@ -245,7 +254,7 @@ void ASideScrollingCharacter::BeginPlay()
 		CombatAnimComp->OnHitWindowActive.AddDynamic(this, &ASideScrollingCharacter::OnHitWindowActive);
 		CombatAnimComp->OnMontageEnded.AddDynamic(this, &ASideScrollingCharacter::OnMoveCompleted);
 	}
-    
+
 	// ═════════════════════════════════════════════════════════
 	// AUTO-FIND ENEMY FOR COMBAT STATE COMPONENT
 	// ═════════════════════════════════════════════════════════
@@ -262,6 +271,19 @@ void ASideScrollingCharacter::BeginPlay()
 			}
 		}
 	}
+	if (DecisionEngine)
+	{
+		DecisionEngine->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Varient_SideScrolling/Blueprints/DT_CombatMoves"));
+	}
+	if (DecisionEngine->MoveDataTable)
+        {
+            UE_LOG(LogTemp, Log, TEXT("Decision Engine initialized with %d moves"),
+                DecisionEngine->MoveDataTable->GetRowNames().Num());
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Failed to load DT_CombatMoves!"));
+        }
 }
 
 void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
@@ -269,30 +291,30 @@ void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
 	// ═════════════════════════════════════════════════════════
 	// HIT DETECTION VIA SPHERE TRACE
 	// ═════════════════════════════════════════════════════════
-    
+
 	FVector Start = GetActorLocation();
 	FVector Forward = GetActorForwardVector();
 	FVector End = Start + (Forward * 150.f);  // 150 units forward
-    
+
 	FHitResult HitResult;
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(this);
-    
+
 	// Sphere sweep for hit detection
 	bool bHit = GetWorld()->SweepSingleByChannel(
-		HitResult, 
-		Start, 
-		End, 
+		HitResult,
+		Start,
+		End,
 		FQuat::Identity,
 		ECC_Pawn,  // Hit pawns only
 		FCollisionShape::MakeSphere(75.f),  // 75 unit radius
 		QueryParams
 	);
-    
+
 	if (bHit && HitResult.GetActor())
 	{
 		AActor* Target = HitResult.GetActor();
-        
+
 		// Check if target implements IDamagable
 		if (Target->GetClass()->ImplementsInterface(UDamagable::StaticClass()))
 		{
@@ -304,11 +326,11 @@ void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
 			DamageSpec.HitBone = HitResult.BoneName;
 			DamageSpec.InstigatorController = GetController();
 			DamageSpec.DamageCauser = this;
-            
+
 			// Apply damage through interface
 			IDamagable::Execute_ReceiveDamage(Target, DamageSpec);
-            
-			UE_LOG(LogTemp, Log, TEXT("Player hit %s for %.1f damage"), 
+
+			UE_LOG(LogTemp, Log, TEXT("Player hit %s for %.1f damage"),
 				   *Target->GetName(), Damage);
 		}
 	}
@@ -397,7 +419,7 @@ void ASideScrollingCharacter::MultiJump()
 
 		// no coyote time jump
 		} else {
-		
+
 			// The movement component handles double jump but we still need to manage the flag for animation
 			if (!bHasDoubleJumped)
 			{
@@ -416,7 +438,7 @@ void ASideScrollingCharacter::CheckForSoftCollision()
 	// reset the drop value
 	DropValue = 0.0f;
 
-	// trace down 
+	// trace down
 	FHitResult OutHit;
 
 	const FVector Start = GetActorLocation();
@@ -499,3 +521,32 @@ bool ASideScrollingCharacter::HasWallJumped() const
 {
 	return bHasWallJumped;
 }
+
+
+void ASideScrollingCharacter::LightAttack(const FInputActionValue& Value)
+{
+	// Player presses Light Attack button
+	// This is the INITIAL INPUT the engine sees
+	TArray<FName> LightAttackVariants = {
+		FName("LightAttack"),
+		FName("LightAttack_Combo3"),
+		FName("LightAttack_Combo2"),
+		FName("LightAttack_Combo4"),
+		FName("LightAttack_Combo1"),
+		FName("LightAttack_Combo5")
+	};
+	int32 RandomIndex = FMath::RandRange(0, LightAttackVariants.Num() - 1);
+	FName SelectedVariant = LightAttackVariants[RandomIndex];
+	ExecuteMove(SelectedVariant);
+}
+
+void ASideScrollingCharacter::HeavyAttack(const FInputActionValue& Value)
+{
+	ExecuteMove(FName("HeavyAttack"));
+}
+
+void ASideScrollingCharacter::Dash(const FInputActionValue& Value)
+{
+	ExecuteMove(FName("Dash"));
+}
+

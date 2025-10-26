@@ -101,7 +101,7 @@ FContextVector UCombatStateComponent::BuildContext(FName CurrentInput)
     // ===== ACTIVE COOLDOWNS =====
     ActiveCooldowns.GetKeys(Context.ActiveCooldowns);
 
-    // Log assembled context for debugging
+    Context.EnemyDirection=CalculateEnemyDirection();    // Log assembled context for debugging
     UE_LOG(LogTemp, Log, TEXT("Context built: Input=%s, LastMove=%s, Distance=%.1f, Cooldowns=%d"),
            *CurrentInput.ToString(),
            *Context.LastMoveExecuted.ToString(),
@@ -146,6 +146,44 @@ bool UCombatStateComponent::IsOnCooldown(FName MoveName) const
     float ExpirationTime = ActiveCooldowns[MoveName];
     
     return CurrentTime < ExpirationTime;
+}
+
+EInputDirection UCombatStateComponent::CalculateEnemyDirection()
+{
+   
+    EInputDirection Dir=EInputDirection::EID_NEUTRAL;
+    ACharacter* PlayerCharacter = Cast<ACharacter>(GetOwner());
+    if (!PlayerCharacter)
+    {
+        return EInputDirection::EID_NEUTRAL;
+    }
+    FVector PlayerLocation=OwnerCharacter->GetActorLocation();
+    FVector EnemyLocation=EnemyCharacter->GetActorLocation();
+    
+    // Vertical distance
+    float VerticalDelta = EnemyLocation.Z - PlayerLocation.Z;
+    
+    // Thresholds
+    const float VerticalThreshold = 50.0f;  // Tune this value
+    
+    if (VerticalDelta > VerticalThreshold)
+    {
+        return EInputDirection::EID_UP;  // Enemy above
+    }
+    else if (VerticalDelta < -VerticalThreshold)
+    {
+        return EInputDirection::EID_DOWN;  // Enemy below
+    }
+    
+    // Add horizontal left/right logic if needed for 2.5D
+    
+    if (PlayerLocation.X<EnemyLocation.X)
+    {
+        return EInputDirection::EID_RIGHT;
+    }else if (PlayerLocation.X>EnemyLocation.X){
+        return EInputDirection::EID_LEFT;
+    }
+    return Dir;
 }
 
 // =====================================
