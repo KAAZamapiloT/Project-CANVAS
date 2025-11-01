@@ -83,6 +83,9 @@ public:
     UFUNCTION(BlueprintCallable, Category="Combat State")
    EInputDirection CalculateEnemyDirection();
 
+    UFUNCTION(BlueprintCallable, Category="Combat State")
+    ACharacter* GetEnemy(){return EnemyCharacter;}
+    
 protected:
     /** Cached reference to owner character */
     UPROPERTY()

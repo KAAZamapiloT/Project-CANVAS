@@ -258,6 +258,9 @@ void ASideScrollingCharacter::BeginPlay()
 	// ═════════════════════════════════════════════════════════
 	// AUTO-FIND ENEMY FOR COMBAT STATE COMPONENT
 	// ═════════════════════════════════════════════════════════
+	// TEMPORARY - Test without enemy
+	
+
 	if (CombatStateComp)
 	{
 		TArray<AActor*> FoundEnemies;
@@ -271,9 +274,14 @@ void ASideScrollingCharacter::BeginPlay()
 			}
 		}
 	}
+	else if (CombatStateComp && !CombatStateComp->GetEnemy())
+	{
+		CombatStateComp->SetEnemy(this);  // Use self as dummy enemy
+		UE_LOG(LogTemp, Warning, TEXT("⚠️ Using self as enemy target for testing"));
+	}
 	if (DecisionEngine)
 	{
-		DecisionEngine->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Varient_SideScrolling/Blueprints/DT_CombatMoves"));
+		DecisionEngine->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Variant_SideScrolling/Blueprints/Combat/DT_MoveTable.DT_MoveTable"));
 	}
 	if (DecisionEngine->MoveDataTable)
         {
@@ -494,6 +502,25 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 // Clean separation of concerns
 void ASideScrollingCharacter::ExecuteMove(FName Input)
 {
+
+
+	if (!CombatStateComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ CombatStateComp is NULL!"));
+		return;
+	}
+    
+	if (!DecisionEngine)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ DecisionEngine is NULL!"));
+		return;
+	}
+    
+	if (!CombatAnimComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ CombatAnimComp is NULL!"));
+		return;
+	}
 	FContextVector Context = CombatStateComp->BuildContext(Input);
 	FActionCommand Command = DecisionEngine->DecideNextMove(Context);
 	CombatAnimComp->ExecuteActionCommand(Command);
@@ -529,14 +556,16 @@ void ASideScrollingCharacter::LightAttack(const FInputActionValue& Value)
 	// This is the INITIAL INPUT the engine sees
 	TArray<FName> LightAttackVariants = {
 		FName("LightAttack"),
-		FName("LightAttack_Combo3"),
-		FName("LightAttack_Combo2"),
-		FName("LightAttack_Combo4"),
-		FName("LightAttack_Combo1"),
-		FName("LightAttack_Combo5")
+		FName("LightAttack3"),
+		FName("LightAttack2"),
+		FName("LightAttack4"),
+		FName("LightAttack1"),
+		FName("LightAttack5"),
+		FName("LightAttack6")
 	};
 	int32 RandomIndex = FMath::RandRange(0, LightAttackVariants.Num() - 1);
 	FName SelectedVariant = LightAttackVariants[RandomIndex];
+	
 	ExecuteMove(SelectedVariant);
 }
 

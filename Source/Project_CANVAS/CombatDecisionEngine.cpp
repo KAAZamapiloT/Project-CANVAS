@@ -17,10 +17,19 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
 
     FName SelectedMove = NAME_None;
 
+    // RULE 0 : CHECK IF IT'S FORST MOVE
+    if (Context.LastMoveExecuted==NAME_None)
+    {
+        SelectedMove = Context.CurrentInput.IsNone() ? FName("LightAttack") : Context.CurrentInput;
+        UE_LOG(LogTemp, Log, TEXT("🎬 First Move: %s"), *SelectedMove.ToString());
+        
+    }else
+    {
     // =====================================
     // RULE 1: PUNISH STUNNED ENEMY
     // =====================================
     // If enemy is stunned, use heavy attack for maximum damage
+    
     if (Context.EnemyStateTags.HasTag(FGameplayTag::RequestGameplayTag(FName("State.Stunned"))))
     {
         
@@ -43,20 +52,35 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     // RULE 3: COMBO CHAINING
     // =====================================
     // If we just completed a move, check for follow-ups
+    // RULE 3: COMBO CHAINING (with directional follow-ups)
     else if (!Context.LastMoveExecuted.IsNone())
     {
-        // Query DataTable for the last move's data
         FMoveData* LastMove = MoveDataTable->FindRow<FMoveData>(Context.LastMoveExecuted, TEXT(""));
-        
-        if (LastMove && LastMove->FollowUpMoves.Contains(EInputDirection::EID_NEUTRAL))
+    
+        if (LastMove)
         {
-            // Get the follow-up move for neutral input
-            SelectedMove = LastMove->FollowUpMoves[EInputDirection::EID_NEUTRAL];
-            UE_LOG(LogTemp, Log, TEXT("Decision: Combo Chain -> %s (from %s)"), 
-                   *SelectedMove.ToString(), *Context.LastMoveExecuted.ToString());
+            // ✅ Check if follow-up exists for current enemy direction
+            // ✅ Check if follow-up exists for current enemy direction
+            if (LastMove->FollowUpMoves.Contains(Context.EnemyDirection))
+            {
+                SelectedMove = LastMove->FollowUpMoves[Context.EnemyDirection];
+                UE_LOG(LogTemp, Log, TEXT("🔗 Combo: %s → %s (Dir: %d)"),
+                       *Context.LastMoveExecuted.ToString(),
+                       *SelectedMove.ToString(),
+                       (int32)Context.EnemyDirection);
+            }
+
+            // Fallback: Try neutral combo if directional doesn't exist
+            else if (LastMove->FollowUpMoves.Contains(EInputDirection::EID_NEUTRAL))
+            {
+                SelectedMove = LastMove->FollowUpMoves[EInputDirection::EID_NEUTRAL];
+                UE_LOG(LogTemp, Log, TEXT("🔗 Combo (fallback): %s → %s"), 
+                    *Context.LastMoveExecuted.ToString(), 
+                    *SelectedMove.ToString());
+            }
         }
     }
-    
+
     // =====================================
     // RULE 4: DEFAULT FALLBACK
     // =====================================
@@ -66,7 +90,7 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
         SelectedMove = FName("LightAttack");
         UE_LOG(LogTemp, Log, TEXT("Decision: Default -> LightAttack"));
     }
-
+}
     // =====================================
     // QUERY DATATABLE AND BUILD COMMAND
     // =====================================

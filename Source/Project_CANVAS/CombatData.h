@@ -109,7 +109,7 @@ struct FContextVector
     /** The move that just completed (used for combo chaining via FollowUpMoves) */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     FName LastMoveExecuted = NAME_None;
-
+   
     /** Current state tags for the player (e.g., "State.Airborne", "State.Blocking") */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     FGameplayTagContainer PlayerStateTags;
@@ -117,7 +117,9 @@ struct FContextVector
     /** Current state tags for the enemy (e.g., "State.Stunned", "State.Blocking") */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     FGameplayTagContainer EnemyStateTags;
-
+    /** If enemy is valid */
+    //UPROPERTY(BlueprintReadWrite, Category = "Context")
+    //bool bIsEnemyValid=false;
     /** Distance to enemy in Unreal units */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     float DistanceToEnemy = 0.f;
@@ -135,7 +137,7 @@ struct FContextVector
     /** The Z-axis distance to the enemy. Positive = enemy is above, Negative = below. */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     float VerticalDistanceToEnemy = 0.f;
-    
+   
     /** Is the player currently facing the enemy? (False during a cross-up) */
     UPROPERTY(BlueprintReadWrite, Category = "Context")
     bool bIsFacingEnemy = true;
