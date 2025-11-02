@@ -282,7 +282,38 @@ FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
                 UE_LOG(LogTemp, Display, TEXT("PARSER: Parsed %d prop modifications"), Plan.Props.Num());
             }
         }
-
+        if (JsonObject->HasField(TEXT("SpawnRequest")))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* SpawnsArray; // This is the JSON array
+    
+            // Correct: Use TryGetArrayField for the array
+            if (JsonObject->TryGetArrayField(TEXT("SpawnRequest"), SpawnsArray)) 
+            {
+                // Loop over the JSON array
+                for (const TSharedPtr<FJsonValue>& SpawnValue : *SpawnsArray)
+                {
+                    // Get the object { ... } from the array
+                    const TSharedPtr<FJsonObject>* SpawnObject;
+                    if (SpawnValue->TryGetObject(SpawnObject))
+                    {
+                        // Create a new struct to hold the data
+                        FSpawnRequest SpawnReq; 
+                
+                        // Parse the data *into* the new struct
+                        ParseSpawnRequest(*SpawnObject, SpawnReq); // This is your helper function
+                
+                        // Add the single parsed request to your plan's TArray
+                        // This assumes Plan.SpawnRequest is your TArray<FSpawnRequest>
+                        Plan.SpawnRequest.Add(SpawnReq); 
+                    }
+                }
+                UE_LOG(LogTemp, Display, TEXT("PARSER: Parsed %d new actors to spawn"), Plan.SpawnRequest.Num());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("PARSER: 'SpawnRequest' field is not a JSON array!"));
+            }
+        }
         // DELTA CHANGES ADDITIONS
         if (JsonObject->HasField(TEXT("bModifyEnvironment")))
         {
@@ -304,6 +335,11 @@ FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
                     Plan.TargetPropTags.Add(TagValue->AsString());
                 }
             }
+        }
+        if (JsonObject->HasField(TEXT("bSpawnActors")))
+        {
+            Plan.bSpawnActors = JsonObject->GetBoolField(TEXT("bSpawnActors"));
+            
         }
         
         return Plan;
@@ -507,4 +543,57 @@ void UJsonParser::ParseTextureSet(const TSharedPtr<FJsonObject>& JsonObject, FTe
 
     UE_LOG(LogTemp, Display, TEXT("PARSER: TextureSet - BaseColor: %s, Normal: %s"), 
            *TextureSet.BaseColorPath, *TextureSet.NormalPath);
+}
+
+// At the bottom of JsonParser.cpp, add this new function
+void UJsonParser::ParseSpawnRequest(const TSharedPtr<FJsonObject>& JsonObject, FSpawnRequest& SpawnRequest)
+{
+    if (!JsonObject.IsValid()) return;
+
+    if (JsonObject->HasField(TEXT("AssetPath")))
+    {
+        SpawnRequest.AssetPath = JsonObject->GetStringField(TEXT("AssetPath"));
+    }
+    if (JsonObject->HasField(TEXT("Tag")))
+    {
+        SpawnRequest.Tag = JsonObject->GetStringField(TEXT("Tag"));
+    }
+
+    // Parse Location
+    if (JsonObject->HasField(TEXT("Location")))
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Arr;
+        if (JsonObject->TryGetArrayField(TEXT("Location"), Arr) && Arr->Num() == 3)
+        {
+            SpawnRequest.Location.X = (*Arr)[0]->AsNumber();
+            SpawnRequest.Location.Y = (*Arr)[1]->AsNumber();
+            SpawnRequest.Location.Z = (*Arr)[2]->AsNumber();
+        }
+    }
+    // Parse Rotation
+    if (JsonObject->HasField(TEXT("Rotation")))
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Arr;
+        if (JsonObject->TryGetArrayField(TEXT("Rotation"), Arr) && Arr->Num() == 3)
+        {
+            SpawnRequest.Rotation.Pitch = (*Arr)[0]->AsNumber();
+            SpawnRequest.Rotation.Yaw   = (*Arr)[1]->AsNumber();
+            SpawnRequest.Rotation.Roll  = (*Arr)[2]->AsNumber();
+        }
+    }
+    // Parse Scale
+    if (JsonObject->HasField(TEXT("Scale")))
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Arr;
+        if (JsonObject->TryGetArrayField(TEXT("Scale"), Arr) && Arr->Num() == 3)
+        {
+            SpawnRequest.Scale.X = (*Arr)[0]->AsNumber();
+            SpawnRequest.Scale.Y = (*Arr)[1]->AsNumber();
+            SpawnRequest.Scale.Z = (*Arr)[2]->AsNumber();
+        }
+    }
+    else
+    {
+        SpawnRequest.Scale = FVector(1.0f); // Default to 1
+    }
 }

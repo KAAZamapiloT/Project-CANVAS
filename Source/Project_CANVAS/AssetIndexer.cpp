@@ -11,6 +11,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Actor.h"
 #include"ScenePlan.h"
+#include "Engine/StaticMesh.h"
 void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
 {
     if (bIsScanning)
@@ -37,6 +38,7 @@ void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
     ScanForTexturesAsync(TEXT("/Game/DATABASE/textures"));
     ScanForParticlesAsync(TEXT("/Game/DATABASE/particles"));
     ScanForPostProcessMaterialsAsync(TEXT("/Game/DATABASE/postprocess"));
+    ScanForStaticMeshesAsync(TEXT("/Game/DATABASE/meshes"));
     ScanActorTagsInLevel(WorldContext);
 }
 
@@ -310,4 +312,13 @@ FTextureSet UAssetIndexer::ResolveTextureFromName(const FString& SearchName)
 
     UE_LOG(LogTemp, Warning, TEXT("No texture match found for %s"), *SearchName);
     return Result; // Empty set
+}
+void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
+{
+    AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
+    {
+        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning static meshes in %s"), *ScanPath);
+        ScanAssetsOfType(UStaticMesh::StaticClass(), ScanPath, DiscoveredStaticMeshNames);
+        CheckAllScansComplete();
+    });
 }

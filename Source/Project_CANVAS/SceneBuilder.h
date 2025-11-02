@@ -28,7 +28,7 @@ private:
 	// Environment helpers
 	void ApplyFogSettings(float FogDensity, FColor FogColor, UWorld* WorldContext);
 	void ApplyPostProcessing(const FString& PostProcessingName, UWorld* WorldContext);
-    
+	void SpawnNewActors(const TArray<FSpawnRequest>& SpawnRequests, UWorld* WorldContext);
 	// Props helpers
 	void ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext);
 	void ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet);
@@ -40,4 +40,5 @@ private:
 	// Texture loading helpers
 	UTexture2D* LoadTextureFromPath(const FString& TexturePath);
 	UMaterialInstanceDynamic* GetOrCreateDynamicMaterial(UStaticMeshComponent* Mesh, int32 MaterialIndex = 0);
+	
 };

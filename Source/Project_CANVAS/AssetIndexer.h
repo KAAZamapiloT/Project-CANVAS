@@ -76,6 +76,12 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
     FTextureSet ResolveTextureFromName(const FString& SearchName);
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    void ScanForStaticMeshesAsync(FString ScanPath = TEXT("/Game/DATABASE/meshes"));
+
+    // ... existing getters
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    TArray<FString> GetDiscoveredStaticMeshNames() const { return DiscoveredStaticMeshNames; }
 private:
     // Internal scan counter
     int32 PendingScans = 0;
@@ -96,6 +102,8 @@ private:
     
     UPROPERTY()
     TArray<FString> DiscoveredActorTags;
+    UPROPERTY()
+    TArray<FString> DiscoveredStaticMeshNames;
     UPROPERTY()
     TMap<FString, FTextureSet> MaterialDatabase;
     UPROPERTY()

@@ -274,11 +274,7 @@ void ASideScrollingCharacter::BeginPlay()
 			}
 		}
 	}
-	else if (CombatStateComp && !CombatStateComp->GetEnemy())
-	{
-		CombatStateComp->SetEnemy(this);  // Use self as dummy enemy
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ Using self as enemy target for testing"));
-	}
+	
 	if (DecisionEngine)
 	{
 		DecisionEngine->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Variant_SideScrolling/Blueprints/Combat/DT_MoveTable.DT_MoveTable"));

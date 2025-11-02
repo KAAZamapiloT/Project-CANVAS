@@ -248,14 +248,19 @@ struct FEnhancedScenePlan
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (DeprecatedProperty, DeprecationMessage = "Use bModifyProps instead"))
     bool bChangeProps = false;
-    
+
+    // Planing which actors to spawn
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TArray<FSpawnRequest> SpawnRequest;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bSpawnActors=false;
     
     // === FUTURE EXTENSIONS (Commented out for now) ===
     // UPROPERTY(EditAnywhere, BlueprintReadWrite)
     // TArray<FSpawnRequest> NewSpawns;
     //UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    // FStruct post process;
-     // Fstruct particle effects
+    // FStruct post process; 
     // fstruct dynamic objects loading
 
     

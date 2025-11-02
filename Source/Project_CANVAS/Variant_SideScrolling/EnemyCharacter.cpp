@@ -36,6 +36,7 @@ AEnemyCharacter::AEnemyCharacter()
     HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
     CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
     CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
+    Tags.Add("Enemy");
    
 }
 

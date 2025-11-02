@@ -24,13 +24,16 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/SkyLight.h"
 #include "Components/SkyLightComponent.h"
+#include "Engine/StaticMeshActor.h" // <-- Add this include at the top
+#include "Engine/StaticMesh.h"
+#include "Misc/Guid.h" // For unique tags
 // --- Define your content paths ---
 // You MUST place your assets in these folders, or change these paths.
 // The parser gets "T_Brick_Normal", this path turns it into "/Game/Textures/Generative/T_Brick_Normal.T_Brick_Normal"
 const FString GTextureBasePath = TEXT("/Game/DATABASE/textures/");
 const FString GParticleBasePath = TEXT("/Game/DATABASE/particles/");
 const FString GPostProcessBasePath = TEXT("/Game/DATABASE/postprocess/");
-
+const FString GStaticMeshBasePath = TEXT("/Game/DATABASE/meshes/"); // <-- Add this content path
 
 // --- Main Public Function ---
 
@@ -63,6 +66,14 @@ void USceneBuilder::BuildScene(const FEnhancedScenePlan& Plan, UWorld* WorldCont
     else
     {
         UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Skipping props (bModifyProps = false)"));
+    }
+    if (Plan.SpawnRequest.Num() > 0&&Plan.bSpawnActors)
+    {
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawning %d new actors"), Plan.SpawnRequest.Num());
+        SpawnNewActors(Plan.SpawnRequest, WorldContext);
+    }else
+    {
+        UE_LOG(Log_Temp,Display,TEXT("SceneBuilder:Skiiping Spawn request no of spawns %d"),Plan.SpawnRequest.Num());
     }
 }
 
@@ -175,6 +186,52 @@ void USceneBuilder::ApplyPostProcessing(const FString& PostProcessingName, UWorl
     else
     {
         UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: No APostProcessVolume actor found in level."));
+    }
+}
+
+void USceneBuilder::SpawnNewActors(const TArray<FSpawnRequest>& SpawnRequests, UWorld* WorldContext)
+{
+    if (!WorldContext || SpawnRequests.Num() == 0) return;
+
+    FStreamableManager& Streamer = UAssetManager::Get().GetStreamableManager();
+
+    for (const FSpawnRequest& Request : SpawnRequests)
+    {
+        if (Request.AssetPath.IsEmpty()) continue;
+
+        // Construct full path, e.g., "SM_Rock" -> "/Game/DATABASE/meshes/SM_Rock.SM_Rock"
+        FString FullPath = FString::Printf(TEXT("%s%s.%s"), *GStaticMeshBasePath, *Request.AssetPath, *Request.AssetPath);
+        FSoftObjectPath AssetPath = FSoftObjectPath(FullPath);
+
+        // Need to copy request data for the lambda
+        FSpawnRequest RequestCopy = Request;
+        TWeakObjectPtr<UWorld> WeakWorld = WorldContext;
+
+        Streamer.RequestAsyncLoad(AssetPath, [WeakWorld, AssetPath, RequestCopy]()
+        {
+            if (!WeakWorld.IsValid()) return; // World is gone
+
+            UStaticMesh* LoadedMesh = Cast<UStaticMesh>(AssetPath.ResolveObject());
+            if (!LoadedMesh)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Failed to load mesh for spawning: %s"), *AssetPath.ToString());
+                return;
+            }
+
+            // Spawn a simple StaticMeshActor
+            AStaticMeshActor* NewActor = WeakWorld->SpawnActor<AStaticMeshActor>(RequestCopy.Location, RequestCopy.Rotation);
+            if (NewActor)
+            {
+                NewActor->GetStaticMeshComponent()->SetStaticMesh(LoadedMesh);
+                NewActor->SetActorScale3D(RequestCopy.Scale);
+
+                if (!RequestCopy.Tag.IsEmpty())
+                {
+                    NewActor->Tags.Add(FName(*RequestCopy.Tag));
+                }
+                UE_LOG(LogTemp, Log, TEXT("SceneBuilder: Spawned asset %s"), *RequestCopy.AssetPath);
+            }
+        });
     }
 }
 
