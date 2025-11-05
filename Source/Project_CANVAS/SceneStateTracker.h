@@ -39,4 +39,7 @@ public:
 	void OnPlanReceived(const FEnhancedScenePlan& Plan,const FString& UserPrompt);
 	UFUNCTION()
 	void ResolveTexturesFromNames(FEnhancedScenePlan& Plan);
+	UFUNCTION()
+	void ResolveMeshesFromNames(FEnhancedScenePlan& Plan);
+
 };

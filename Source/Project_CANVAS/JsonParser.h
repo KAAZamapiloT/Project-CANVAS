@@ -24,5 +24,5 @@ private:
 	static void ParseEnvironment(const TSharedPtr<FJsonObject>& JsonObject, FEnvironmentPlan& Environment);
 	static void ParsePropModification(const TSharedPtr<FJsonObject>& JsonObject, FPropsModification& PropMod);
 	static void ParseTextureSet(const TSharedPtr<FJsonObject>& JsonObject, FTextureSet& TextureSet);
-	static void ParseSpawnRequest(const TSharedPtr<FJsonObject>& JsonObject, FSpawnRequest& SpawnRequest)
+	static void ParseSpawnRequest(const TSharedPtr<FJsonObject>& JsonObject, FSpawnRequest& SpawnRequest);
 };

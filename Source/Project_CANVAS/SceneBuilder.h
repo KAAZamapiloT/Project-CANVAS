@@ -28,7 +28,11 @@ private:
 	// Environment helpers
 	void ApplyFogSettings(float FogDensity, FColor FogColor, UWorld* WorldContext);
 	void ApplyPostProcessing(const FString& PostProcessingName, UWorld* WorldContext);
-	void SpawnNewActors(const TArray<FSpawnRequest>& SpawnRequests, UWorld* WorldContext);
+	void SpawnNewActors(
+	const TArray<FSpawnRequest>& SpawnRequests, 
+	UWorld* WorldContext, 
+	const FString& ThemeName    // The theme name (e.g., "Cyberpunk Noir")
+);
 	// Props helpers
 	void ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext);
 	void ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet);

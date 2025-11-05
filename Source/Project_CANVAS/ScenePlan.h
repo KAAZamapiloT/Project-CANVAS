@@ -70,21 +70,43 @@ struct FSpawnRequest
 {
     GENERATED_BODY()
     
+    /** Asset path for mesh (e.g., "SM_Rock") */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString AssetPath;
     
+    /** Name of the object (e.g., "Rock") */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    FVector Location = FVector::ZeroVector;
+    FString ObjectName;
     
+    /** Location Of Spawn*/
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FVector SpawnLocation;
+    
+    /** 🆕 SEMANTIC LOCATION STRING (e.g., "PLAYER_FRONT", "Arena_Center") */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString LocationName;
+    
+    /** Optional: Offset from resolved location (e.g., +50 units up) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FVector LocationOffset = FVector::ZeroVector;
+    
+    /** Rotation for the spawned actor */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FRotator Rotation = FRotator::ZeroRotator;
     
+    /** Scale for the spawned actor */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FVector Scale = FVector::OneVector;
     
+    /** Actor tag for tracking (e.g., "GenAI.Spawned.Rock") */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString Tag;
+    
+    /** 🆕 Minimum clearance radius required (default: 150 units) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float ClearanceRadius = 150.0f;
 };
+
 
 // === PBR TEXTURE SET ===
 /**

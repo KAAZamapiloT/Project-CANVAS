@@ -67,6 +67,7 @@ void USceneStateTracker::Init()
 		AssetIndexer->ScanForTexturesAsync(TEXT("/Game/DATABASE/textures"));
 		AssetIndexer->ScanForParticlesAsync(TEXT("/Game/DATABASE/particles"));
 		AssetIndexer->ScanForPostProcessMaterialsAsync(TEXT("/Game/DATABASE/postprocess"));
+		AssetIndexer->ScanForStaticMeshesAsync(TEXT("/Game/DATABASE/meshes")); 
 	}
 }
 
@@ -90,7 +91,7 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
 	FEnhancedScenePlan EnrichedPlan = Plan;
 
 	ResolveTexturesFromNames(EnrichedPlan); // ensures names map to texture paths
-
+	ResolveMeshesFromNames(EnrichedPlan);
 	if (HistoryManager)
 		HistoryManager->SavePlan(EnrichedPlan, UserPrompt);
 
@@ -130,6 +131,37 @@ void USceneStateTracker::ResolveTexturesFromNames(FEnhancedScenePlan& Plan)
 		UE_LOG(LogTemp, Display, TEXT("Resolved Prop '%s': Diff=%s, Norm=%s, Rough=%s, Metal=%s, AO=%s"),
 			*Prop.TagName,
 			*Set.BaseColorPath, *Set.NormalPath, *Set.RoughnessPath, *Set.MetallicPath, *Set.AOPath);
+	}
+}
+void USceneStateTracker::ResolveMeshesFromNames(FEnhancedScenePlan& Plan)
+{
+	if (!AssetIndexer)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SceneStateTracker: AssetIndexer not initialized."));
+		return;
+	}
+    
+	for (FSpawnRequest& Spawn : Plan.SpawnRequest)
+	{
+		if (Spawn.AssetPath.IsEmpty())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SceneStateTracker: Empty AssetPath in spawn request, skipping"));
+			continue;
+		}
+        
+		// Resolve mesh name to exact asset name from AssetIndexer
+		FString ResolvedMesh = AssetIndexer->ResolveStaticMeshName(Spawn.AssetPath);
+		if (!ResolvedMesh.IsEmpty())
+		{
+			Spawn.AssetPath = ResolvedMesh;
+			UE_LOG(LogTemp, Display, TEXT("Resolved Spawn '%s' -> '%s'"), 
+				*Spawn.ObjectName, *Spawn.AssetPath);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Could not resolve mesh '%s' for spawn '%s'"), 
+				*Spawn.AssetPath, *Spawn.ObjectName);
+		}
 	}
 }
 

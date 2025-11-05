@@ -29,11 +29,11 @@ void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
     DiscoveredParticleNames.Empty();
     DiscoveredPostProcessNames.Empty();
     DiscoveredActorTags.Empty();
-
+    DiscoveredStaticMeshNames.Empty();
     UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Starting comprehensive asset scan..."));
 
     // Launch all scans
-    PendingScans = 4; // Textures, Particles, PostProcess, ActorTags
+    PendingScans = 5; // Textures, Particles, PostProcess, ActorTags
     
     ScanForTexturesAsync(TEXT("/Game/DATABASE/textures"));
     ScanForParticlesAsync(TEXT("/Game/DATABASE/particles"));
@@ -159,6 +159,7 @@ void UAssetIndexer::CheckAllScansComplete()
         UE_LOG(LogTemp, Warning, TEXT("  Textures: %d"), DiscoveredTextureNames.Num());
         UE_LOG(LogTemp, Warning, TEXT("  Particles: %d"), DiscoveredParticleNames.Num());
         UE_LOG(LogTemp, Warning, TEXT("  PostProcess: %d"), DiscoveredPostProcessNames.Num());
+        UE_LOG(LogTemp, Warning, TEXT("  StaticMeshes: %d"), DiscoveredStaticMeshNames.Num()); 
         UE_LOG(LogTemp, Warning, TEXT("  Actor Tags: %d"), DiscoveredActorTags.Num());
         UE_LOG(LogTemp, Warning, TEXT("================================================"));
         
@@ -321,4 +322,50 @@ void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
         ScanAssetsOfType(UStaticMesh::StaticClass(), ScanPath, DiscoveredStaticMeshNames);
         CheckAllScansComplete();
     });
+}
+
+FString UAssetIndexer::ResolveStaticMeshName(const FString& SearchName)
+{
+    if (SearchName.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ResolveStaticMeshName: Empty search name"));
+        return TEXT("");
+    }
+
+    // 1. Try exact match (case-insensitive)
+    for (const FString& MeshName : DiscoveredStaticMeshNames)
+    {
+        if (MeshName.Equals(SearchName, ESearchCase::IgnoreCase))
+        {
+            UE_LOG(LogTemp, Display, TEXT("ResolveStaticMeshName: Exact match '%s' -> '%s'"), 
+                *SearchName, *MeshName);
+            return MeshName;
+        }
+    }
+
+    // 2. Try contains match (e.g., "Rock" finds "SM_Rock_Large")
+    for (const FString& MeshName : DiscoveredStaticMeshNames)
+    {
+        if (MeshName.Contains(SearchName, ESearchCase::IgnoreCase))
+        {
+            UE_LOG(LogTemp, Display, TEXT("ResolveStaticMeshName: Contains match '%s' -> '%s'"), 
+                *SearchName, *MeshName);
+            return MeshName;
+        }
+    }
+
+    // 3. Try fuzzy match using bIsNameMatch helper
+    for (const FString& MeshName : DiscoveredStaticMeshNames)
+    {
+        if (bIsNameMatch(SearchName, MeshName))
+        {
+            UE_LOG(LogTemp, Display, TEXT("ResolveStaticMeshName: Fuzzy match '%s' -> '%s'"), 
+                *SearchName, *MeshName);
+            return MeshName;
+        }
+    }
+
+    // 4. No match found
+    UE_LOG(LogTemp, Warning, TEXT("ResolveStaticMeshName: No match found for '%s'"), *SearchName);
+    return TEXT("");
 }

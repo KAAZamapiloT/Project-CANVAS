@@ -38,12 +38,12 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
     TArray<FString> AvailableTextures = GameInstance->AssetIndexer->GetDiscoveredTextureNames();
     TArray<FString> AvailableTags = GameInstance->TargetableActorTags;
     TArray<FString> AvailablePPMs = GameInstance->TargetablePostProcessMaterials;
-
+	TArray<FString> AvailableMeshes = GameInstance->AssetIndexer->GetDiscoveredStaticMeshNames(); // ADD THIS
     // Store user prompt
     LastUserPrompt = UserPrompt;
 
     // Construct master prompt
-    FString MasterPrompt = ConstructMasterPrompt(UserPrompt, AvailableTextures, AvailableTags, AvailablePPMs, HistoryManager);
+    FString MasterPrompt = ConstructMasterPrompt(UserPrompt, AvailableTextures, AvailableTags, AvailablePPMs,AvailableMeshes, HistoryManager);
 
     // === CHANGES START HERE ===
     
@@ -189,39 +189,36 @@ void UGenAISystem::OnGroqResponseReceived(FHttpRequestPtr Request, FHttpResponse
 
 
 FString UGenAISystem::ConstructMasterPrompt(
-    FString UserPrompt, 
+    FString UserPrompt,
     const TArray<FString>& AvailableTextures,
-    const TArray<FString>& AvailableTags, 
+    const TArray<FString>& AvailableTags,
     const TArray<FString>& AvailablePPMs,
+    const TArray<FString>& AvailableStaticMeshes,  // NEW PARAMETER
     USceneHistoryManager* HistoryManager)
 {
-	// === STEP 1: GROUP TEXTURES INTO MATERIAL SETS ===
-	TMap<FString, bool> MaterialBaseNames;  // Use as a set
-    
-	for (const FString& Texture : AvailableTextures)
-	{
-		FString BaseName = ExtractMaterialBaseName(Texture);
-		if (!BaseName.IsEmpty())
-		{
-			MaterialBaseNames.Add(BaseName, true);
-		}
-	}
-    
-	// Convert to array
-	TArray<FString> MaterialList;
-	MaterialBaseNames.GetKeys(MaterialList);
-    
-	UE_LOG(LogTemp, Display, TEXT("GenAI: Reduced %d textures → %d materials"), 
-		AvailableTextures.Num(), MaterialList.Num());
-    
-	UE_LOG(LogTemp, Display, TEXT("GenAI: Reduced %d textures → %d materials"), 
-		AvailableTextures.Num(), MaterialList.Num());
-	
-	// === STEP 2: BUILD STRINGS ===
-	FString MaterialListString = FString::Join(MaterialList, TEXT("\", \""));
-	FString TagListString = FString::Join(AvailableTags, TEXT("\", \""));
-	FString PPMListString = FString::Join(AvailablePPMs, TEXT("\", \""));
-	FString TexturesListString = FString::Join(AvailableTextures, TEXT("\", \""));
+    // === STEP 1: GROUP TEXTURES INTO MATERIAL SETS ===
+    TMap<FString, bool> MaterialBaseNames; // Use as a set
+    for (const FString& Texture : AvailableTextures)
+    {
+        FString BaseName = ExtractMaterialBaseName(Texture);
+        if (!BaseName.IsEmpty())
+        {
+            MaterialBaseNames.Add(BaseName, true);
+        }
+    }
+
+    // Convert to array
+    TArray<FString> MaterialList;
+    MaterialBaseNames.GetKeys(MaterialList);
+    UE_LOG(LogTemp, Display, TEXT("GenAI: Reduced %d textures → %d materials"), 
+        AvailableTextures.Num(), MaterialList.Num());
+
+    // === STEP 2: BUILD STRINGS ===
+    FString MaterialListString = FString::Join(MaterialList, TEXT("\", \""));
+    FString TagListString = FString::Join(AvailableTags, TEXT("\", \""));
+    FString PPMListString = FString::Join(AvailablePPMs, TEXT("\", \""));
+    FString MeshListString = FString::Join(AvailableStaticMeshes, TEXT("\", \""));  // NEW
+
     // === GET HISTORY CONTEXT (if available) ===
     FString HistoryContext = TEXT("");
     if (HistoryManager)
@@ -229,35 +226,58 @@ FString UGenAISystem::ConstructMasterPrompt(
         HistoryContext = HistoryManager->GetLLMContextString();
         UE_LOG(LogTemp, Display, TEXT("GenAISystem: Including history context in prompt"));
     }
-    
-    // === STEP 4: CONSTRUCT PROMPT ===
+
+    // === STEP 3: CONSTRUCT COMPLETE PROMPT WITH SPAWNING ===
     return FString::Printf(TEXT(
         "You are an expert game environment designer. Generate a JSON scene plan for this request:\n"
         "USER REQUEST: \"%s\"\n\n"
         "%s"  // History context
         
-       
         "=== CRITICAL MATERIAL RULES ===\n"
-	   "MATERIALS: Each material name represents a COMPLETE PBR texture set.\n"
-	   "- When you specify 'wood_floor', the system will automatically load:\n"
-	   "  * wood_floor_diff_2k (base color)\n"
-	   "  * wood_floor_rough_2k (roughness)\n"
-	   "  * wood_floor_nor_gl_2k (normal map)\n"
-	   "  * wood_floor_metal_2k (metallic)\n"
-	   "  * wood_floor_ao_2k (ambient occlusion)\n"
-	   "- In your JSON, ONLY use the base material name (e.g., 'wood_floor')\n"
-	   "- DO NOT specify individual texture map names (_diff, _rough, etc.)\n\n"
+        "MATERIALS: Each material name represents a COMPLETE PBR texture set.\n"
+        "- When you specify 'wood_floor', the system will automatically load:\n"
+        "  * wood_floor_diff_2k (base color)\n"
+        "  * wood_floor_rough_2k (roughness)\n"
+        "  * wood_floor_nor_gl_2k (normal map)\n"
+        "  * wood_floor_metal_2k (metallic)\n"
+        "  * wood_floor_ao_2k (ambient occlusion)\n"
+        "- In your JSON, ONLY use the base material name (e.g., 'wood_floor')\n"
+        "- DO NOT specify individual texture map names (_diff, _rough, etc.)\n\n"
+        
         "=== CRITICAL TAG RULES ===\n"
         "VALID TAGS: [\"%s\"]\n"
         "- TagName = Actor tag from this list (identifies WHICH object to modify)\n"
         "- Texture paths = Material names from MATERIAL LIST below\n"
         "- NEVER mix tags and materials!\n\n"
         
+        "=== STATIC MESH SPAWNING RULES ===\n"
+        "AVAILABLE STATIC MESHES: [\"%s\"]\n"
+        "To spawn new actors, use this exact format:\n"
+        "\"SpawnRequest\": [\n"
+        "  {\n"
+        "    \"AssetPath\": \"<exact mesh name from AVAILABLE STATIC MESHES>\",\n"
+        "    \"ObjectName\": \"<semantic category: car, plane, rock, furniture>\",\n"
+        "    \"Location\": [x, y, z],\n"
+        "    \"Rotation\": [pitch, yaw, roll],\n"
+        "    \"Scale\": [x, y, z],\n"
+        "    \"Tag\": \"<unique identifier for future modification/deletion, e.g., Props.Car.01>\"\n"
+        "  }\n"
+        "]\n"
+        "RULES:\n"
+        "- AssetPath: Exact name from AVAILABLE STATIC MESHES (e.g., 'SM_Rock_Large')\n"
+        "- ObjectName: Semantic category for readability (e.g., 'rock', 'car')\n"
+        "- Tag: MUST be unique per spawned actor; used for later modification/deletion\n"
+        "- Location: [X, Y, Z] in Unreal units (100 units = 1 meter)\n"
+        "- Rotation: [Pitch, Yaw, Roll] in degrees\n"
+        "- Scale: [X, Y, Z] (1.0 = original size)\n"
+        "- All meshes live in /Game/DATABASE/meshes/ (handled automatically)\n\n"
+        
         "=== JSON FORMAT ===\n"
         "{\n"
         "  \"ThemeName\": \"Your Theme Name\",\n"
         "  \"bModifyEnvironment\": true/false,\n"
         "  \"bModifyProps\": true/false,\n"
+        "  \"bSpawnActors\": true/false,\n"
         "  \"TargetPropTags\": [\"Ground.Floor\", \"Background.Wall\"],\n"
         "  \"Environment\": {\n"
         "    \"FogDensity\": 0.1,\n"
@@ -283,27 +303,46 @@ FString UGenAISystem::ConstructMasterPrompt(
         "      },\n"
         "      \"ParticleEffects\": \"\"\n"
         "    }\n"
+        "  ],\n"
+        "  \"SpawnRequest\": [\n"
+        "    {\n"
+        "      \"AssetPath\": \"SM_Crate_01\",\n"
+        "      \"ObjectName\": \"crate\",\n"
+        "      \"Location\": [500.0, 200.0, 100.0],\n"
+        "      \"Rotation\": [0.0, 45.0, 0.0],\n"
+        "      \"Scale\": [1.0, 1.0, 1.0],\n"
+        "      \"Tag\": \"Props.Crate.01\"\n"
+        "    }\n"
         "  ]\n"
         "}\n\n"
         
-        "=== AVAILABLE ACTOR TAGS ===\n"
+        "=== AVAILABLE ACTOR TAGS (for Props modification) ===\n"
         "[\"%s\"]\n\n"
         
-        "=== AVAILABLE MATERIALS ===\n"
+        "=== AVAILABLE MATERIALS (for Props textures) ===\n"
         "[\"%s\"]\n\n"
         
         "=== AVAILABLE POST-PROCESS MATERIALS ===\n"
         "[\"%s\"]\n\n"
         
-        "Generate ONLY valid JSON (no markdown, no code blocks):"
+        "=== IMPORTANT NOTES ===\n"
+        "- Set bSpawnActors to TRUE when spawning new objects\n"
+        "- Set bModifyProps to TRUE when modifying existing tagged actors\n"
+        "- Set bModifyEnvironment to TRUE when changing lighting/fog/post-process\n"
+        "- Each spawned actor needs a UNIQUE Tag for future updates/deletions\n"
+        "- You can spawn AND modify in the same plan\n\n"
+        
+        "Generate ONLY valid JSON (no markdown, no code blocks, no comments):"
     ),
     *UserPrompt,
     *HistoryContext,
     *TagListString,
-    *TagListString,
-    *MaterialListString,  // ✅ NOW USING FILTERED MATERIAL LIST
-    *PPMListString);
+    *MeshListString,       // NEW: Meshes for spawning
+    *TagListString,        // Tags for prop modification
+    *MaterialListString,   // Materials for prop textures
+    *PPMListString);       // Post-process materials
 }
+
 
 FString UGenAISystem::ExtractMaterialBaseName(const FString& TextureName)
 {

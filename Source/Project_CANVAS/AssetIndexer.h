@@ -79,6 +79,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
     void ScanForStaticMeshesAsync(FString ScanPath = TEXT("/Game/DATABASE/meshes"));
 
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
+    FString ResolveStaticMeshName(const FString& SearchName);
+
     // ... existing getters
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer")
     TArray<FString> GetDiscoveredStaticMeshNames() const { return DiscoveredStaticMeshNames; }

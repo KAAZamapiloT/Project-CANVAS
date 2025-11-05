@@ -24,7 +24,7 @@ public:
 	
 	// Helper function to build the final prompt for the LLM
 	FString ConstructMasterPrompt(FString UserPrompt,const TArray<FString>& AvailableTextures,const TArray<FString>& AvailableTags,
-		const TArray<FString>& AvailablePPMs,USceneHistoryManager* HistoryManager = nullptr);
+		const TArray<FString>& AvailablePPMs,const TArray<FString>&AvailibleMeshes,USceneHistoryManager* HistoryManager = nullptr);
 	
 	UFUNCTION(BlueprintCallable)
 	void RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager);

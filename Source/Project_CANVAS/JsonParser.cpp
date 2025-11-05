@@ -596,4 +596,12 @@ void UJsonParser::ParseSpawnRequest(const TSharedPtr<FJsonObject>& JsonObject, F
     {
         SpawnRequest.Scale = FVector(1.0f); // Default to 1
     }
+    if (JsonObject->HasField(TEXT("ObjectName")))
+    {
+        SpawnRequest.ObjectName = JsonObject->GetStringField(TEXT("ObjectName")); // <-- ADD THIS
+    }
+    if (JsonObject->HasField(TEXT("Tag")))
+    {
+        SpawnRequest.Tag=JsonObject->GetStringField(TEXT("Tag"));
+    }
 }

@@ -32,7 +32,13 @@ void USceneHistoryManager::SavePlan(const FEnhancedScenePlan& Plan, const FStrin
     {
         Delta.ChangeType = TEXT("Initial");
     }
-    
+    for (const FSpawnRequest& Spawn : Plan.SpawnRequest)
+    {
+        if (!Spawn.Tag.IsEmpty())
+        {
+            Delta.ModifiedTags.Add(Spawn.Tag);  // Track by unique Tag
+        }
+    }
     // 4. Update current state
     CurrentState = Plan;
     
@@ -173,8 +179,16 @@ FEnhancedScenePlan USceneHistoryManager::ComputeDelta(const FEnhancedScenePlan& 
         Delta.bModifyProps = (Delta.Props.Num() > 0);
     }
     
-    UE_LOG(LogTemp, Display, TEXT("HistoryManager: Delta computed - ModifyEnv:%d, Props:%d"), 
-           Delta.bModifyEnvironment, Delta.Props.Num());
+    if (NewPlan.bSpawnActors && NewPlan.SpawnRequest.Num() > 0)
+    {
+        Delta.bSpawnActors = true;
+        // For spawns, we typically add all as new (unless implementing update/remove logic)
+        Delta.SpawnRequest = NewPlan.SpawnRequest;
+        UE_LOG(LogTemp, Display, TEXT(" - Spawn requests: %d"), NewPlan.SpawnRequest.Num());
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("HistoryManager: Delta computed - ModifyEnv:%d, Props:%d, Spawns:%d"),
+        Delta.bModifyEnvironment, Delta.Props.Num(), Delta.SpawnRequest.Num());
     
     return Delta;
 }
@@ -225,7 +239,34 @@ FEnhancedScenePlan USceneHistoryManager::MergeWithCurrent(const FEnhancedScenePl
         Merged.bModifyProps = true;
     }
     
-    UE_LOG(LogTemp, Display, TEXT("HistoryManager: Merge complete - Total props: %d"), Merged.Props.Num());
+    if (PartialPlan.bSpawnActors)
+    {
+        for (const FSpawnRequest& NewSpawn : PartialPlan.SpawnRequest)
+        {
+            bool bFound = false;
+            // Check if spawn with same Tag already exists (for updates)
+            for (FSpawnRequest& ExistingSpawn : Merged.SpawnRequest)
+            {
+                if (ExistingSpawn.Tag == NewSpawn.Tag && !NewSpawn.Tag.IsEmpty())
+                {
+                    ExistingSpawn = NewSpawn;  // Update existing
+                    bFound = true;
+                    UE_LOG(LogTemp, Display, TEXT(" - Updated spawn '%s'"), *NewSpawn.Tag);
+                    break;
+                }
+            }
+            // Add new spawn if not found
+            if (!bFound)
+            {
+                Merged.SpawnRequest.Add(NewSpawn);
+                UE_LOG(LogTemp, Display, TEXT(" - Added new spawn '%s'"), *NewSpawn.Tag);
+            }
+        }
+        Merged.bSpawnActors = true;
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("HistoryManager: Merge complete - Total props: %d, Spawns: %d"), 
+        Merged.Props.Num(), Merged.SpawnRequest.Num());
     
     return Merged;
 }
