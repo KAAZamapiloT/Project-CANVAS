@@ -660,3 +660,366 @@ AActor* ULocationQueryEngine::FindActorWithTag(const FString& Tag) const
     return nullptr;
 }
 
+
+// ========================================
+// MISSING IMPLEMENTATIONS
+// ========================================
+
+void ULocationQueryEngine::BeginDestroy()
+{
+    UE_LOG(LogTemp, Display, TEXT("🗑️  LocationQueryEngine destroyed"));
+    Super::BeginDestroy();
+}
+
+// ========================================
+// MISSING: Debug & Visualization Functions
+// ========================================
+
+void ULocationQueryEngine::PrintAllLocationData() const
+{
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║   📊 Location Database Report             ║"));
+    UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════╝"));
+    
+    UE_LOG(LogTemp, Display, TEXT("Total Locations: %d"), DiscoveredLocations.Num());
+    UE_LOG(LogTemp, Display, TEXT("Discovered Tags: %d"), DiscoveredLocationTags.Num());
+    
+    if (DiscoveredLocations.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️  No locations registered"));
+        return;
+    }
+    
+    for (int32 i = 0; i < DiscoveredLocations.Num(); ++i)
+    {
+        const FSpawnLocation& Loc = DiscoveredLocations[i];
+        FString OccupiedStr = Loc.bIsOccupied ? TEXT("🔴 OCCUPIED") : TEXT("🟢 FREE");
+        
+        UE_LOG(LogTemp, Display, TEXT("[%d] %s | %s | Clearance: %.0f"),
+            i + 1, *Loc.LocationName, *OccupiedStr, Loc.ClearanceRadius);
+        UE_LOG(LogTemp, Display, TEXT("     Position: [%.0f, %.0f, %.0f]"),
+            Loc.WorldPosition.X, Loc.WorldPosition.Y, Loc.WorldPosition.Z);
+        UE_LOG(LogTemp, Display, TEXT("     Tags: %d | %s"),
+            Loc.Tags.Num(), *FString::Join(Loc.Tags, TEXT(", ")));
+        UE_LOG(LogTemp, Display, TEXT("     Desc: %s"), *Loc.Description);
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT(""));
+}
+
+void ULocationQueryEngine::VisualizeAllLocations(float Duration)
+{
+    if (!WorldContext)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️  VisualizeAllLocations: No world context"));
+        return;
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🎬 Visualizing %d locations for %.1f seconds"), 
+        DiscoveredLocations.Num(), Duration);
+    
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        // Draw sphere for clearance radius
+        FColor SphereColor = Loc.bIsOccupied ? FColor::Red : FColor::Green;
+        DrawDebugSphere(WorldContext, Loc.WorldPosition, Loc.ClearanceRadius, 
+                       16, SphereColor, false, Duration, 0, 1.0f);
+        
+        // Draw label above location
+        DrawDebugString(WorldContext, Loc.WorldPosition + FVector(0, 0, Loc.ClearanceRadius + 50.0f),
+                       *Loc.LocationName, nullptr, FColor::White, Duration, false, 1.0f);
+    }
+}
+
+void ULocationQueryEngine::PrintLocationsByStatus() const
+{
+    UE_LOG(LogTemp, Display, TEXT(""));
+    UE_LOG(LogTemp, Display, TEXT("📊 Location Status Report:"));
+    
+    int32 Occupied = 0, Free = 0;
+    
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        if (Loc.bIsOccupied)
+        {
+            Occupied++;
+            UE_LOG(LogTemp, Display, TEXT("   🔴 %s - OCCUPIED"), *Loc.LocationName);
+        }
+        else
+        {
+            Free++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("   🟢 %d free locations"), Free);
+    UE_LOG(LogTemp, Display, TEXT("   🔴 %d occupied locations"), Occupied);
+    UE_LOG(LogTemp, Display, TEXT(""));
+}
+
+// ========================================
+// MISSING: Batch Operations
+// ========================================
+
+void ULocationQueryEngine::AddMultipleLocations(const TArray<FSpawnLocation>& NewLocations)
+{
+    UE_LOG(LogTemp, Display, TEXT("🔄 Adding %d locations..."), NewLocations.Num());
+    
+    for (const FSpawnLocation& Loc : NewLocations)
+    {
+        AddLocation(Loc);
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("✅ Batch add complete: %d total"), DiscoveredLocations.Num());
+}
+
+bool ULocationQueryEngine::RemoveMultipleLocations(const TArray<FString>& LocationNames)
+{
+    UE_LOG(LogTemp, Display, TEXT("🗑️  Removing %d locations..."), LocationNames.Num());
+    
+    int32 RemovedCount = 0;
+    for (const FString& Name : LocationNames)
+    {
+        if (RemoveLocation(Name))
+        {
+            RemovedCount++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("✅ Removed: %d/%d"), RemovedCount, LocationNames.Num());
+    return RemovedCount == LocationNames.Num();
+}
+
+void ULocationQueryEngine::RenameLocation(const FString& OldName, const FString& NewName)
+{
+    FString UpperOld = OldName.ToUpper();
+    FString UpperNew = NewName.ToUpper();
+    
+    if (!LocationDatabase.Contains(UpperOld))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️  RenameLocation: '%s' not found"), *OldName);
+        return;
+    }
+    
+    FSpawnLocation Loc = LocationDatabase[UpperOld];
+    Loc.LocationName = NewName;
+    
+    RemoveLocation(OldName);
+    AddLocation(Loc);
+    
+    UE_LOG(LogTemp, Display, TEXT("✅ Renamed '%s' → '%s'"), *OldName, *NewName);
+}
+
+// ========================================
+// MISSING: Advanced Queries
+// ========================================
+
+FSpawnLocation ULocationQueryEngine::FindFarthestLocation(FVector FromPosition) const
+{
+    if (DiscoveredLocations.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️  FindFarthestLocation: No locations available"));
+        return FSpawnLocation();
+    }
+    
+    FSpawnLocation FarthestLoc = DiscoveredLocations[0];
+    float MaxDistance = FVector::Dist(FromPosition, FarthestLoc.WorldPosition);
+    
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        float Distance = FVector::Dist(FromPosition, Loc.WorldPosition);
+        if (Distance > MaxDistance)
+        {
+            MaxDistance = Distance;
+            FarthestLoc = Loc;
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 Farthest from [%.0f, %.0f, %.0f]: %s (%.0f units)"),
+        FromPosition.X, FromPosition.Y, FromPosition.Z, *FarthestLoc.LocationName, MaxDistance);
+    
+    return FarthestLoc;
+}
+
+FSpawnLocation ULocationQueryEngine::FindClosestLocation(FVector FromPosition) const
+{
+    if (DiscoveredLocations.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️  FindClosestLocation: No locations available"));
+        return FSpawnLocation();
+    }
+    
+    FSpawnLocation ClosestLoc = DiscoveredLocations[0];
+    float MinDistance = FVector::Dist(FromPosition, ClosestLoc.WorldPosition);
+    
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        float Distance = FVector::Dist(FromPosition, Loc.WorldPosition);
+        if (Distance < MinDistance)
+        {
+            MinDistance = Distance;
+            ClosestLoc = Loc;
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 Closest to [%.0f, %.0f, %.0f]: %s (%.0f units)"),
+        FromPosition.X, FromPosition.Y, FromPosition.Z, *ClosestLoc.LocationName, MinDistance);
+    
+    return ClosestLoc;
+}
+
+TArray<FSpawnLocation> ULocationQueryEngine::FindLocationsInRadius(FVector Center, float Radius) const
+{
+    TArray<FSpawnLocation> InRadius;
+    
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        float Distance = FVector::Dist(Center, Loc.WorldPosition);
+        if (Distance <= Radius)
+        {
+            InRadius.Add(Loc);
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 Found %d locations within %.0f radius"), 
+        InRadius.Num(), Radius);
+    
+    return InRadius;
+}
+
+int32 ULocationQueryEngine::GetFreeLocationCount() const
+{
+    int32 Count = 0;
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        if (!Loc.bIsOccupied)
+        {
+            Count++;
+        }
+    }
+    return Count;
+}
+
+int32 ULocationQueryEngine::GetOccupiedLocationCount() const
+{
+    return DiscoveredLocations.Num() - GetFreeLocationCount();
+}
+
+// ========================================
+// MISSING: Location Validation Enhancements
+// ========================================
+
+bool ULocationQueryEngine::IsLocationValidForSpawn(const FString& LocationName, float MinClearance) const
+{
+    if (!DoesLocationExist(LocationName))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ Location '%s' does not exist"), *LocationName);
+        return false;
+    }
+    
+    FString UpperName = LocationName.ToUpper();
+    const FSpawnLocation& Loc = LocationDatabase[UpperName];
+    
+    // Check occupancy
+    if (Loc.bIsOccupied)
+    {
+        UE_LOG(LogTemp, Display, TEXT("⚠️  Location '%s' is occupied"), *LocationName);
+        return false;
+    }
+    
+    // Check clearance
+    if (Loc.ClearanceRadius < MinClearance)
+    {
+        UE_LOG(LogTemp, Display, TEXT("⚠️  Location '%s' has insufficient clearance"), *LocationName);
+        return false;
+    }
+    
+    // Check collision
+    if (!IsLocationClear(Loc.WorldPosition, Loc.ClearanceRadius))
+    {
+        UE_LOG(LogTemp, Display, TEXT("⚠️  Location '%s' is obstructed"), *LocationName);
+        return false;
+    }
+    
+    return true;
+}
+
+FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& PreferredLocation, float MinClearance)
+{
+    // Try preferred first
+    if (IsLocationValidForSpawn(PreferredLocation, MinClearance))
+    {
+        FString UpperName = PreferredLocation.ToUpper();
+        return LocationDatabase[UpperName];
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("⚠️  Preferred location '%s' invalid, searching..."), 
+        *PreferredLocation);
+    
+    // Search all free locations
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        if (!Loc.bIsOccupied && Loc.ClearanceRadius >= MinClearance && 
+            IsLocationClear(Loc.WorldPosition, Loc.ClearanceRadius))
+        {
+            UE_LOG(LogTemp, Display, TEXT("✅ Found alternative: %s"), *Loc.LocationName);
+            return Loc;
+        }
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("❌ No valid spawn location found, using world origin"));
+    return FSpawnLocation();
+}
+
+// ========================================
+// MISSING: Utility Functions
+// ========================================
+
+float ULocationQueryEngine::GetAverageLocationDistance() const
+{
+    if (DiscoveredLocations.Num() < 2) return 0.0f;
+    
+    float TotalDistance = 0.0f;
+    int32 ComparisionCount = 0;
+    
+    for (int32 i = 0; i < DiscoveredLocations.Num(); ++i)
+    {
+        for (int32 j = i + 1; j < DiscoveredLocations.Num(); ++j)
+        {
+            TotalDistance += FVector::Dist(
+                DiscoveredLocations[i].WorldPosition,
+                DiscoveredLocations[j].WorldPosition
+            );
+            ComparisionCount++;
+        }
+    }
+    
+    return ComparisionCount > 0 ? TotalDistance / ComparisionCount : 0.0f;
+}
+
+FVector ULocationQueryEngine::GetLocationCentroid() const
+{
+    if (DiscoveredLocations.Num() == 0) return FVector::ZeroVector;
+    
+    FVector Sum = FVector::ZeroVector;
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        Sum += Loc.WorldPosition;
+    }
+    
+    return Sum / DiscoveredLocations.Num();
+}
+
+void ULocationQueryEngine::PrintLocationStats() const
+{
+    UE_LOG(LogTemp, Display, TEXT(""));
+    UE_LOG(LogTemp, Display, TEXT("📈 Location Statistics:"));
+    UE_LOG(LogTemp, Display, TEXT("   Total: %d"), DiscoveredLocations.Num());
+    UE_LOG(LogTemp, Display, TEXT("   Free: %d"), GetFreeLocationCount());
+    UE_LOG(LogTemp, Display, TEXT("   Occupied: %d"), GetOccupiedLocationCount());
+    UE_LOG(LogTemp, Display, TEXT("   Avg Distance: %.0f units"), GetAverageLocationDistance());
+    UE_LOG(LogTemp, Display, TEXT("   Centroid: %s"), *GetLocationCentroid().ToString());
+    UE_LOG(LogTemp, Display, TEXT(""));
+}
+
+

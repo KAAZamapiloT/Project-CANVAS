@@ -545,63 +545,162 @@ void UJsonParser::ParseTextureSet(const TSharedPtr<FJsonObject>& JsonObject, FTe
            *TextureSet.BaseColorPath, *TextureSet.NormalPath);
 }
 
-// At the bottom of JsonParser.cpp, add this new function
 void UJsonParser::ParseSpawnRequest(const TSharedPtr<FJsonObject>& JsonObject, FSpawnRequest& SpawnRequest)
 {
-    if (!JsonObject.IsValid()) return;
+   
+    if (!JsonObject.IsValid())
+    {
+        UE_LOG(LogTemp, Error, TEXT("JsonParser::ParseSpawnRequest: Invalid JSON object"));
+        return;
+    }
 
+    
     if (JsonObject->HasField(TEXT("AssetPath")))
     {
         SpawnRequest.AssetPath = JsonObject->GetStringField(TEXT("AssetPath"));
+        UE_LOG(LogTemp, Display, TEXT("JsonParser: AssetPath = '%s'"), *SpawnRequest.AssetPath);
     }
-    if (JsonObject->HasField(TEXT("Tag")))
+    else
     {
-        SpawnRequest.Tag = JsonObject->GetStringField(TEXT("Tag"));
+        UE_LOG(LogTemp, Warning, TEXT("JsonParser: SpawnRequest missing REQUIRED 'AssetPath' field"));
     }
-
-    // Parse Location
-    if (JsonObject->HasField(TEXT("Location")))
+    
+  
+    if (JsonObject->HasField(TEXT("ObjectName")))
     {
-        const TArray<TSharedPtr<FJsonValue>>* Arr;
-        if (JsonObject->TryGetArrayField(TEXT("Location"), Arr) && Arr->Num() == 3)
+        SpawnRequest.ObjectName = JsonObject->GetStringField(TEXT("ObjectName"));
+        UE_LOG(LogTemp, Display, TEXT("JsonParser: ObjectName = '%s'"), *SpawnRequest.ObjectName);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("JsonParser: SpawnRequest missing REQUIRED 'ObjectName' field"));
+    }
+    
+   
+    if (JsonObject->HasField(TEXT("LocationName")))
+    {
+        SpawnRequest.LocationName = JsonObject->GetStringField(TEXT("LocationName"));
+        UE_LOG(LogTemp, Display, TEXT("JsonParser: LocationName = '%s' (will be resolved by SceneStateTracker)"), 
+            *SpawnRequest.LocationName);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("JsonParser: SpawnRequest missing REQUIRED 'LocationName' field"));
+    }
+    
+    
+    if (JsonObject->HasField(TEXT("LocationOffset")))
+    {
+        const TArray<TSharedPtr<FJsonValue>>* OffsetArray;
+        if (JsonObject->TryGetArrayField(TEXT("LocationOffset"), OffsetArray) && OffsetArray->Num() == 3)
         {
-            SpawnRequest.Location.X = (*Arr)[0]->AsNumber();
-            SpawnRequest.Location.Y = (*Arr)[1]->AsNumber();
-            SpawnRequest.Location.Z = (*Arr)[2]->AsNumber();
+            SpawnRequest.LocationOffset.X = (*OffsetArray)[0]->AsNumber();
+            SpawnRequest.LocationOffset.Y = (*OffsetArray)[1]->AsNumber();
+            SpawnRequest.LocationOffset.Z = (*OffsetArray)[2]->AsNumber();
+            
+            UE_LOG(LogTemp, Display, TEXT("JsonParser: LocationOffset = [%.2f, %.2f, %.2f]"),
+                SpawnRequest.LocationOffset.X, 
+                SpawnRequest.LocationOffset.Y, 
+                SpawnRequest.LocationOffset.Z);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("JsonParser: LocationOffset array invalid - expected [X, Y, Z]"));
+            // Keep default FVector::ZeroVector (no offset)
         }
     }
-    // Parse Rotation
+   
     if (JsonObject->HasField(TEXT("Rotation")))
     {
-        const TArray<TSharedPtr<FJsonValue>>* Arr;
-        if (JsonObject->TryGetArrayField(TEXT("Rotation"), Arr) && Arr->Num() == 3)
+        const TArray<TSharedPtr<FJsonValue>>* RotationArray;
+        if (JsonObject->TryGetArrayField(TEXT("Rotation"), RotationArray) && RotationArray->Num() == 3)
         {
-            SpawnRequest.Rotation.Pitch = (*Arr)[0]->AsNumber();
-            SpawnRequest.Rotation.Yaw   = (*Arr)[1]->AsNumber();
-            SpawnRequest.Rotation.Roll  = (*Arr)[2]->AsNumber();
+            SpawnRequest.Rotation.Pitch = (*RotationArray)[0]->AsNumber();
+            SpawnRequest.Rotation.Yaw   = (*RotationArray)[1]->AsNumber();
+            SpawnRequest.Rotation.Roll  = (*RotationArray)[2]->AsNumber();
+            
+            UE_LOG(LogTemp, Display, TEXT("JsonParser: Rotation = [%.2f, %.2f, %.2f] (P, Y, R)"),
+                SpawnRequest.Rotation.Pitch,
+                SpawnRequest.Rotation.Yaw,
+                SpawnRequest.Rotation.Roll);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("JsonParser: Rotation array invalid - expected [Pitch, Yaw, Roll]"));
+            // Keep default FRotator::ZeroRotator
         }
     }
-    // Parse Scale
+    
     if (JsonObject->HasField(TEXT("Scale")))
     {
-        const TArray<TSharedPtr<FJsonValue>>* Arr;
-        if (JsonObject->TryGetArrayField(TEXT("Scale"), Arr) && Arr->Num() == 3)
+        const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
+        if (JsonObject->TryGetArrayField(TEXT("Scale"), ScaleArray) && ScaleArray->Num() == 3)
         {
-            SpawnRequest.Scale.X = (*Arr)[0]->AsNumber();
-            SpawnRequest.Scale.Y = (*Arr)[1]->AsNumber();
-            SpawnRequest.Scale.Z = (*Arr)[2]->AsNumber();
+            SpawnRequest.Scale.X = (*ScaleArray)[0]->AsNumber();
+            SpawnRequest.Scale.Y = (*ScaleArray)[1]->AsNumber();
+            SpawnRequest.Scale.Z = (*ScaleArray)[2]->AsNumber();
+            
+            UE_LOG(LogTemp, Display, TEXT("JsonParser: Scale = [%.2f, %.2f, %.2f]"),
+                SpawnRequest.Scale.X,
+                SpawnRequest.Scale.Y,
+                SpawnRequest.Scale.Z);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("JsonParser: Scale array invalid - expected [X, Y, Z]"));
+            // Default to 1.0
+            SpawnRequest.Scale = FVector::OneVector;
         }
     }
     else
     {
-        SpawnRequest.Scale = FVector(1.0f); // Default to 1
+        // If not specified, default to original size (1.0, 1.0, 1.0)
+        SpawnRequest.Scale = FVector::OneVector;
     }
-    if (JsonObject->HasField(TEXT("ObjectName")))
-    {
-        SpawnRequest.ObjectName = JsonObject->GetStringField(TEXT("ObjectName")); // <-- ADD THIS
-    }
+    
+   
     if (JsonObject->HasField(TEXT("Tag")))
     {
-        SpawnRequest.Tag=JsonObject->GetStringField(TEXT("Tag"));
+        SpawnRequest.Tag = JsonObject->GetStringField(TEXT("Tag"));
+        UE_LOG(LogTemp, Display, TEXT("JsonParser: Tag = '%s'"), *SpawnRequest.Tag);
     }
+
+    if (JsonObject->HasField(TEXT("ClearanceRadius")))
+    {
+        SpawnRequest.ClearanceRadius = JsonObject->GetNumberField(TEXT("ClearanceRadius"));
+        
+        if (SpawnRequest.ClearanceRadius <= 0.0f)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("JsonParser: ClearanceRadius %.2f is invalid (must be > 0), using default"),
+                SpawnRequest.ClearanceRadius);
+            SpawnRequest.ClearanceRadius = 150.0f; // Use default
+        }
+        else
+        {
+            UE_LOG(LogTemp, Display, TEXT("JsonParser: ClearanceRadius = %.2f"), SpawnRequest.ClearanceRadius);
+        }
+    }
+    else
+    {
+        // If not specified, use default 150 units (defined in FSpawnRequest struct)
+        // This is a reasonable default for most objects
+        UE_LOG(LogTemp, Display, TEXT("JsonParser: ClearanceRadius not specified, using default 150.0"));
+    }
+    
+   
+    // Log complete spawn request summary
+    UE_LOG(LogTemp, Display, TEXT("JsonParser: ✅ Parsed SpawnRequest complete"));
+    UE_LOG(LogTemp, Display, TEXT("   Asset='%s', Object='%s', Location='%s' (semantic)"),
+        *SpawnRequest.AssetPath, 
+        *SpawnRequest.ObjectName,
+        *SpawnRequest.LocationName);
+    UE_LOG(LogTemp, Display, TEXT("   Rotation=[%.0f°, %.0f°, %.0f°], Scale=[%.1f, %.1f, %.1f]"),
+        SpawnRequest.Rotation.Pitch,
+        SpawnRequest.Rotation.Yaw,
+        SpawnRequest.Rotation.Roll,
+        SpawnRequest.Scale.X,
+        SpawnRequest.Scale.Y,
+        SpawnRequest.Scale.Z);
 }
+
+

@@ -2,17 +2,15 @@
 
 
 #include "GenAISystem.h"
-#include"SceneStateTracker.h"
+#include "SceneStateTracker.h"
 #include "JsonParser.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
-#include"Kismet/GameplayStatics.h"
+#include "Kismet/GameplayStatics.h"
 #include "Json.h"
 #include "JsonUtilities.h"
-#include "API_KEY.h"
 #include "AssetIndexer.h"
-#include "SceneHistoryManager.h"
 
 
 void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager)
@@ -34,16 +32,16 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
         return;
     }
 
-    // 3. Fetch the asset list
-    TArray<FString> AvailableTextures = GameInstance->AssetIndexer->GetDiscoveredTextureNames();
-    TArray<FString> AvailableTags = GameInstance->TargetableActorTags;
-    TArray<FString> AvailablePPMs = GameInstance->TargetablePostProcessMaterials;
-	TArray<FString> AvailableMeshes = GameInstance->AssetIndexer->GetDiscoveredStaticMeshNames(); // ADD THIS
+    
     // Store user prompt
     LastUserPrompt = UserPrompt;
 
     // Construct master prompt
-    FString MasterPrompt = ConstructMasterPrompt(UserPrompt, AvailableTextures, AvailableTags, AvailablePPMs,AvailableMeshes, HistoryManager);
+	// Inside RequestSceneChange()
+	FString MasterPrompt = ConstructMasterPrompt(
+		UserPrompt,
+		GameInstance->AssetIndexer  // Pass directly
+	);
 
     // === CHANGES START HERE ===
     
@@ -77,14 +75,14 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
     Request->SetContentAsString(Payload);
 
     // Bind callback
-    Request->OnProcessRequestComplete().BindUObject(this, &UGenAISystem::OnGroqResponseReceived);
+    Request->OnProcessRequestComplete().BindUObject(this, &UGenAISystem::OnLLMResponseReceived);
 
     // Send request
     Request->ProcessRequest();
 	
 }
 
-void UGenAISystem::OnGroqResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
+void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
 	if (!bWasSuccessful || !Response.IsValid())
     {
@@ -190,159 +188,110 @@ void UGenAISystem::OnGroqResponseReceived(FHttpRequestPtr Request, FHttpResponse
 
 FString UGenAISystem::ConstructMasterPrompt(
     FString UserPrompt,
-    const TArray<FString>& AvailableTextures,
-    const TArray<FString>& AvailableTags,
-    const TArray<FString>& AvailablePPMs,
-    const TArray<FString>& AvailableStaticMeshes,  // NEW PARAMETER
-    USceneHistoryManager* HistoryManager)
+    UAssetIndexer* AssetIndexer)
 {
-    // === STEP 1: GROUP TEXTURES INTO MATERIAL SETS ===
-    TMap<FString, bool> MaterialBaseNames; // Use as a set
-    for (const FString& Texture : AvailableTextures)
+    if (!AssetIndexer)
     {
-        FString BaseName = ExtractMaterialBaseName(Texture);
-        if (!BaseName.IsEmpty())
-        {
-            MaterialBaseNames.Add(BaseName, true);
-        }
+        UE_LOG(LogTemp, Error, TEXT("GenAISystem: AssetIndexer is null"));
+        return TEXT("");
     }
 
-    // Convert to array
-    TArray<FString> MaterialList;
-    MaterialBaseNames.GetKeys(MaterialList);
-    UE_LOG(LogTemp, Display, TEXT("GenAI: Reduced %d textures → %d materials"), 
-        AvailableTextures.Num(), MaterialList.Num());
+    // === STEP 1: GET ALL ASSETS FROM INDEXER ===
+    TArray<FString> AvailableTextures = AssetIndexer->GetDiscoveredTextureNames();
+    TArray<FString> AvailableMeshes = AssetIndexer->GetDiscoveredStaticMeshNames();
+    TArray<FString> AvailableTags = AssetIndexer->GetDiscoveredActorTags();
+    TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
 
-    // === STEP 2: BUILD STRINGS ===
-    FString MaterialListString = FString::Join(MaterialList, TEXT("\", \""));
-    FString TagListString = FString::Join(AvailableTags, TEXT("\", \""));
-    FString PPMListString = FString::Join(AvailablePPMs, TEXT("\", \""));
-    FString MeshListString = FString::Join(AvailableStaticMeshes, TEXT("\", \""));  // NEW
+    // === STEP 2: GET MATERIAL BASE NAMES ===
+    TArray<FString> MaterialBaseNames = AssetIndexer->GetMaterialBaseNames();
+    UE_LOG(LogTemp, Display, TEXT("GenAI: Using %d materials from %d textures"),
+        MaterialBaseNames.Num(), AvailableTextures.Num());
 
-    // === GET HISTORY CONTEXT (if available) ===
-    FString HistoryContext = TEXT("");
-    if (HistoryManager)
-    {
-        HistoryContext = HistoryManager->GetLLMContextString();
-        UE_LOG(LogTemp, Display, TEXT("GenAISystem: Including history context in prompt"));
-    }
+    // === STEP 3: CONVERT TO CSV STRINGS ===
+    FString MaterialString = FString::Join(MaterialBaseNames, TEXT("\", \""));
+    FString TagString = FString::Join(AvailableTags, TEXT("\", \""));
+    FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
+    FString MeshString = FString::Join(AvailableMeshes, TEXT("\", \""));
 
-    // === STEP 3: CONSTRUCT COMPLETE PROMPT WITH SPAWNING ===
+    // === STEP 4: BUILD COMPREHENSIVE PROMPT ===
     return FString::Printf(TEXT(
-        "You are an expert game environment designer. Generate a JSON scene plan for this request:\n"
+        "You are an expert game environment designer specializing in Unreal Engine scenes.\n"
+        "Generate a JSON scene plan based on the user request.\n\n"
         "USER REQUEST: \"%s\"\n\n"
-        "%s"  // History context
-        
-        "=== CRITICAL MATERIAL RULES ===\n"
-        "MATERIALS: Each material name represents a COMPLETE PBR texture set.\n"
-        "- When you specify 'wood_floor', the system will automatically load:\n"
-        "  * wood_floor_diff_2k (base color)\n"
-        "  * wood_floor_rough_2k (roughness)\n"
-        "  * wood_floor_nor_gl_2k (normal map)\n"
-        "  * wood_floor_metal_2k (metallic)\n"
-        "  * wood_floor_ao_2k (ambient occlusion)\n"
-        "- In your JSON, ONLY use the base material name (e.g., 'wood_floor')\n"
-        "- DO NOT specify individual texture map names (_diff, _rough, etc.)\n\n"
-        
-        "=== CRITICAL TAG RULES ===\n"
-        "VALID TAGS: [\"%s\"]\n"
-        "- TagName = Actor tag from this list (identifies WHICH object to modify)\n"
-        "- Texture paths = Material names from MATERIAL LIST below\n"
-        "- NEVER mix tags and materials!\n\n"
-        
-        "=== STATIC MESH SPAWNING RULES ===\n"
-        "AVAILABLE STATIC MESHES: [\"%s\"]\n"
-        "To spawn new actors, use this exact format:\n"
-        "\"SpawnRequest\": [\n"
-        "  {\n"
-        "    \"AssetPath\": \"<exact mesh name from AVAILABLE STATIC MESHES>\",\n"
-        "    \"ObjectName\": \"<semantic category: car, plane, rock, furniture>\",\n"
-        "    \"Location\": [x, y, z],\n"
-        "    \"Rotation\": [pitch, yaw, roll],\n"
-        "    \"Scale\": [x, y, z],\n"
-        "    \"Tag\": \"<unique identifier for future modification/deletion, e.g., Props.Car.01>\"\n"
-        "  }\n"
-        "]\n"
-        "RULES:\n"
-        "- AssetPath: Exact name from AVAILABLE STATIC MESHES (e.g., 'SM_Rock_Large')\n"
-        "- ObjectName: Semantic category for readability (e.g., 'rock', 'car')\n"
-        "- Tag: MUST be unique per spawned actor; used for later modification/deletion\n"
-        "- Location: [X, Y, Z] in Unreal units (100 units = 1 meter)\n"
-        "- Rotation: [Pitch, Yaw, Roll] in degrees\n"
-        "- Scale: [X, Y, Z] (1.0 = original size)\n"
-        "- All meshes live in /Game/DATABASE/meshes/ (handled automatically)\n\n"
-        
-        "=== JSON FORMAT ===\n"
+        "=== AVAILABLE STATIC MESHES (for SpawnRequest.AssetPath) ===\n"
+        "Use exact names from this list:\n"
+        "[\"%s\"]\n\n"
+        "=== AVAILABLE ACTOR TAGS (for Props.TagName) ===\n"
+        "Modify only actors with these tags:\n"
+        "[\"%s\"]\n\n"
+        "=== AVAILABLE MATERIALS (for Props.Texture.BaseColorPath) ===\n"
+        "Use these material base names (system auto-loads PBR textures):\n"
+        "[\"%s\"]\n\n"
+        "=== AVAILABLE POST-PROCESS MATERIALS (for Environment.PostProcessingName) ===\n"
+        "[\"%s\"]\n\n"
+        "=== CRITICAL RULES ===\n"
+        "1. MESHES: Use ONLY names from AVAILABLE STATIC MESHES\n"
+        "2. MATERIALS: Use ONLY base names (NOT full paths)\n"
+        "   System handles loading: material_name_diff_2k, material_name_rough_2k, etc.\n"
+        "3. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
+        "4. SPAWNING: Each spawned actor must have unique ObjectName\n"
+        "5. LOCATIONS: Use semantic names (e.g., 'PLAYER_FRONT', 'CENTER', 'LEFT_CORNER')\n"
+        "6. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n\n"
+        "=== JSON SCHEMA ===\n"
         "{\n"
-        "  \"ThemeName\": \"Your Theme Name\",\n"
+        "  \"ThemeName\": \"descriptive_name\",\n"
         "  \"bModifyEnvironment\": true/false,\n"
         "  \"bModifyProps\": true/false,\n"
         "  \"bSpawnActors\": true/false,\n"
-        "  \"TargetPropTags\": [\"Ground.Floor\", \"Background.Wall\"],\n"
+        "  \"TargetPropTags\": [\"tag1\", \"tag2\"],\n"
         "  \"Environment\": {\n"
-        "    \"FogDensity\": 0.1,\n"
-        "    \"FogColor\": [R, G, B],\n"
+        "    \"FogDensity\": 0.0-5.0,\n"
+        "    \"FogColor\": [R:0-255, G:0-255, B:0-255],\n"
+        "    \"PostProcessingName\": \"material_name\",\n"
         "    \"Lighting\": {\n"
-        "      \"SunColor\": [R, G, B],\n"
-        "      \"SunIntensity\": 10.0,\n"
-        "      \"SunPitch\": -45.0,\n"
-        "      \"SkyLightColor\": [R, G, B],\n"
-        "      \"SkyLightIntensity\": 1.0\n"
+        "      \"SunColor\": [R:0-255, G:0-255, B:0-255],\n"
+        "      \"SunIntensity\": 0.0-50.0,\n"
+        "      \"SunPitch\": -90.0 to 90.0,\n"
+        "      \"SunYaw\": -360.0 to 360.0,\n"
+        "      \"SkyLightColor\": [R:0-255, G:0-255, B:0-255],\n"
+        "      \"SkyLightIntensity\": 0.0-10.0,\n"
+        "      \"SunTemperature\": 1000-15000\n"
         "    }\n"
         "  },\n"
         "  \"Props\": [\n"
         "    {\n"
-        "      \"TagName\": \"Ground.Floor\",\n"
-        "      \"PropColor\": [R, G, B],\n"
+        "      \"TagName\": \"exact_tag\",\n"
+        "      \"PropColor\": [R:0-255, G:0-255, B:0-255],\n"
         "      \"Texture\": {\n"
-        "        \"BaseColorPath\": \"black_painted_planks\",\n"
+        "        \"BaseColorPath\": \"material_base_name\",\n"
         "        \"NormalPath\": \"\",\n"
         "        \"RoughnessPath\": \"\",\n"
-        "        \"MetallicPath\": \"\",\n"
-        "        \"AOPath\": \"\"\n"
+        "        \"MetallicPath\": \"\"\n"
         "      },\n"
         "      \"ParticleEffects\": \"\"\n"
         "    }\n"
         "  ],\n"
         "  \"SpawnRequest\": [\n"
         "    {\n"
-        "      \"AssetPath\": \"SM_Crate_01\",\n"
-        "      \"ObjectName\": \"crate\",\n"
-        "      \"Location\": [500.0, 200.0, 100.0],\n"
-        "      \"Rotation\": [0.0, 45.0, 0.0],\n"
-        "      \"Scale\": [1.0, 1.0, 1.0],\n"
-        "      \"Tag\": \"Props.Crate.01\"\n"
+        "      \"AssetPath\": \"exact_mesh_name\",\n"
+        "      \"ObjectName\": \"unique_instance_name\",\n"
+        "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
+        "      \"LocationOffset\": [0, 0, 0],\n"
+        "      \"Rotation\": [Pitch, Yaw, Roll],\n"
+        "      \"Scale\": [X, Y, Z],\n"
+        "      \"Tag\": \"optional_tag\",\n"
+        "      \"ClearanceRadius\": 150\n"
         "    }\n"
         "  ]\n"
         "}\n\n"
-        
-        "=== AVAILABLE ACTOR TAGS (for Props modification) ===\n"
-        "[\"%s\"]\n\n"
-        
-        "=== AVAILABLE MATERIALS (for Props textures) ===\n"
-        "[\"%s\"]\n\n"
-        
-        "=== AVAILABLE POST-PROCESS MATERIALS ===\n"
-        "[\"%s\"]\n\n"
-        
-        "=== IMPORTANT NOTES ===\n"
-        "- Set bSpawnActors to TRUE when spawning new objects\n"
-        "- Set bModifyProps to TRUE when modifying existing tagged actors\n"
-        "- Set bModifyEnvironment to TRUE when changing lighting/fog/post-process\n"
-        "- Each spawned actor needs a UNIQUE Tag for future updates/deletions\n"
-        "- You can spawn AND modify in the same plan\n\n"
-        
-        "Generate ONLY valid JSON (no markdown, no code blocks, no comments):"
+        "Generate the JSON now:"
     ),
     *UserPrompt,
-    *HistoryContext,
-    *TagListString,
-    *MeshListString,       // NEW: Meshes for spawning
-    *TagListString,        // Tags for prop modification
-    *MaterialListString,   // Materials for prop textures
-    *PPMListString);       // Post-process materials
+    *MeshString,
+    *TagString,
+    *MaterialString,
+    *PPMString);
 }
-
 
 FString UGenAISystem::ExtractMaterialBaseName(const FString& TextureName)
 {
@@ -380,105 +329,3 @@ FString UGenAISystem::ExtractMaterialBaseName(const FString& TextureName)
 }
 //A LOCAL OLLAMA FUNCTION CAN BE USED IF WE HAVE MORE RAM AVALIBLE BUT WE DONT
 
-
-/**
- *
- *
-*"=== CRITICAL MATERIAL RULES ===\n"
-	   "MATERIALS: Each material name represents a COMPLETE PBR texture set.\n"
-	   "- When you specify 'wood_floor', the system will automatically load:\n"
-	   "  * wood_floor_diff_2k (base color)\n"
-	   "  * wood_floor_rough_2k (roughness)\n"
-	   "  * wood_floor_nor_gl_2k (normal map)\n"
-	   "  * wood_floor_metal_2k (metallic)\n"
-	   "  * wood_floor_ao_2k (ambient occlusion)\n"
-	   "- In your JSON, ONLY use the base material name (e.g., 'wood_floor')\n"
-	   "- DO NOT specify individual texture map names (_diff, _rough, etc.)\n\n"
- *
- *
- *void UGenAISystem::OnOllamaResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
-{
-	if (!bWasSuccessful || !Response.IsValid())
-    {
-        UE_LOG(LogTemp, Error, TEXT("Ollama request failed!"));
-        return;
-    }
-    
-    FString ResponseString = Response->GetContentAsString();
-    UE_LOG(LogTemp, Warning, TEXT("RAW OLLAMA RESPONSE:\n%s"), *ResponseString);
-    
-    TSharedPtr<FJsonObject> OllamaJsonObject;
-    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseString);
-    
-    if (FJsonSerializer::Deserialize(Reader, OllamaJsonObject) && OllamaJsonObject.IsValid())
-    {
-        FString LlmResponseString = OllamaJsonObject->GetStringField(TEXT("response"));
-        UE_LOG(LogTemp, Log, TEXT("Extracted LLM response (raw): %s"), *LlmResponseString);
-        
-        // === STEP 1: Extract JSON between first { and last } ===
-        int32 JsonStart = -1;
-        int32 JsonEnd = -1;
-        
-        if (LlmResponseString.FindChar(TEXT('{'), JsonStart) && 
-            LlmResponseString.FindLastChar(TEXT('}'), JsonEnd) && 
-            JsonStart < JsonEnd)
-        {
-            LlmResponseString = LlmResponseString.Mid(JsonStart, (JsonEnd - JsonStart) + 1);
-            UE_LOG(LogTemp, Log, TEXT("Step 1 - Extracted JSON block"));
-        }
-        else
-        {
-            UE_LOG(LogTemp, Error, TEXT("JSON parsing error: Could not find valid braces."));
-            LlmResponseString = "";
-        }
-        
-        // === STEP 2: Remove JSON comments (// ...) ===
-        if (!LlmResponseString.IsEmpty())
-        {
-            TArray<FString> Lines;
-            LlmResponseString.ParseIntoArrayLines(Lines);
-            FString CleanedJSON;
-            
-            for (const FString& Line : Lines)
-            {
-                FString ProcessedLine = Line;
-                
-                // Find and remove single-line comments
-                int32 CommentIndex = ProcessedLine.Find(TEXT("//"));
-                if (CommentIndex != INDEX_NONE)
-                {
-                    ProcessedLine = ProcessedLine.Left(CommentIndex);
-                }
-                
-                // Trim and keep non-empty lines
-                ProcessedLine = ProcessedLine.TrimStartAndEnd();
-                if (!ProcessedLine.IsEmpty())
-                {
-                    CleanedJSON += ProcessedLine + TEXT("\n");
-                }
-            }
-            
-            LlmResponseString = CleanedJSON.TrimStartAndEnd();
-            UE_LOG(LogTemp, Log, TEXT("Step 2 - Removed comments"));
-        }
-        
-        // === STEP 3: Final log and parse ===
-        UE_LOG(LogTemp, Warning, TEXT("Cleaned LLM response for parser:\n%s"), *LlmResponseString);
-        
-        // Parse the cleaned JSON
-        FEnhancedScenePlan Plan = UJsonParser::CreatePlan(LlmResponseString);
-        
-        // Log the parsed plan data
-        UE_LOG(LogTemp, Warning, TEXT("GENAI: Parsed Plan - Theme: %s, Prop Modifications: %d"),
-            *Plan.ThemeName, Plan.Props.Num());
-        
-    	OnThemeDataReady.Broadcast(Plan, LastUserPrompt);
-        UE_LOG(LogTemp, Warning, TEXT("GENAI: Broadcast OnThemeDataReady"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to parse Ollama's MAIN response: %s"), *ResponseString);
-    }
-
-	
-}**/

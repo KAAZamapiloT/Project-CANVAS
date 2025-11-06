@@ -31,7 +31,7 @@ private:
 	void SpawnNewActors(
 	const TArray<FSpawnRequest>& SpawnRequests, 
 	UWorld* WorldContext, 
-	const FString& ThemeName    // The theme name (e.g., "Cyberpunk Noir")
+	const FString& ThemeName    
 );
 	// Props helpers
 	void ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext);

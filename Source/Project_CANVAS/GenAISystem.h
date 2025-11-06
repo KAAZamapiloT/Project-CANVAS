@@ -6,7 +6,7 @@
 #include "UObject/Object.h"
 #include "ScenePlan.h" 
 #include "HttpModule.h"
-#include "SceneStateTracker.h"
+#include "API_KEY.h"
 #include "GenAISystem.generated.h"
 class USceneHistoryManager;
 /**
@@ -22,15 +22,24 @@ class PROJECT_CANVAS_API UGenAISystem : public UObject
 	GENERATED_BODY()
 public:
 	
-	// Helper function to build the final prompt for the LLM
-	FString ConstructMasterPrompt(FString UserPrompt,const TArray<FString>& AvailableTextures,const TArray<FString>& AvailableTags,
-		const TArray<FString>& AvailablePPMs,const TArray<FString>&AvailibleMeshes,USceneHistoryManager* HistoryManager = nullptr);
-	
+	/**
+ * Construct comprehensive LLM prompt with available assets from AssetIndexer
+ * Gets all materials, meshes, tags, and post-process materials directly
+ * 
+ * @param UserPrompt - User's request
+ * @param AssetIndexer - Populated asset database (already scanned)
+ * @return Formatted prompt for LLM
+ */
+	FString ConstructMasterPrompt(
+		FString UserPrompt,
+		class UAssetIndexer* AssetIndexer
+	);
+
 	UFUNCTION(BlueprintCallable)
 	void RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager);
 	
 	// --- Internal HTTP Callback ---
-	void OnGroqResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+	void OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	
 	// We need a reference to our parser

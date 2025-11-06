@@ -191,219 +191,69 @@ void USceneBuilder::ApplyPostProcessing(const FString& PostProcessingName, UWorl
 }
 
 
-/**
- * ========================================
- * SPAWN NEW ACTORS FROM SCENE PLAN
- * ========================================
- * 
- * This function converts an array of FSpawnRequest data structures into actual
- * spawned actors in the Unreal world. It handles:
- * 
- * 1. Async mesh loading (non-blocking)
- * 2. Location resolution (SpawnLocation is pre-resolved by GenAI)
- * 3. Actor spawning with proper transform (position, rotation, scale)
- * 4. Tag application for tracking and management
- * 
- * IMPORTANT: This function expects SpawnLocation to be ALREADY RESOLVED
- * by GenAISystem before the plan reaches here. SceneBuilder is a "dumb executor"
- * that just spawns at the given coordinates.
- * 
- * @param SpawnRequests    Array of spawn requests from the FEnhancedScenePlan
- * @param WorldContext     Current game world instance
- * @param ThemeName        Theme name for tagging (e.g., "Cyberpunk Noir")
- */
+// ============================================================================
+// ACTOR SPAWNING
+// ============================================================================
+
 void USceneBuilder::SpawnNewActors(
-    const TArray<FSpawnRequest>& SpawnRequests, 
-    UWorld* WorldContext, 
+    const TArray<FSpawnRequest>& SpawnRequests,
+    UWorld* WorldContext,
     const FString& ThemeName)
 {
-    // ========================================
-    // STEP 1: VALIDATION
-    // ========================================
-    // Check if we have a valid world to spawn actors into
-    if (!WorldContext)
-    {
-        UE_LOG(LogTemp, Error, TEXT("SceneBuilder: WorldContext is null - cannot spawn actors"));
-        return;
-    }
-    
-    // If no actors requested, exit early (not an error, just nothing to do)
-    if (SpawnRequests.Num() == 0)
-    {
-        UE_LOG(LogTemp, Log, TEXT("SceneBuilder: No spawn requests in plan (SpawnRequests array is empty)"));
-        return;
-    }
+    if (!WorldContext || SpawnRequests.Num() == 0) return;
 
-    // ========================================
-    // STEP 2: PREPARE SERVICES & TAGS
-    // ========================================
-    // Get Unreal's streaming manager for async asset loading
-    // This prevents frame drops by loading meshes in the background
-    FStreamableManager& Streamer = UAssetManager::Get().GetStreamableManager();
-    
-    // Create timestamp tag for this spawn batch
-    // Format: "Timestamp_20251106_050100"
-    // Used to identify all actors spawned in this single operation
     FString TimestampTag = FDateTime::Now().ToString(TEXT("Timestamp_%Y%m%d_%H%M%S"));
-    
-    // Create theme tag from the plan's theme name
-    // Convert spaces to underscores: "Cyberpunk Noir" → "Theme_Cyberpunk_Noir"
     FString CleanThemeName = ThemeName.Replace(TEXT(" "), TEXT("_"));
     FString ThemeTag = FString::Printf(TEXT("Theme_%s"), *CleanThemeName);
-    
-    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Starting spawn batch with %d requests"), 
-        SpawnRequests.Num());
-    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Timestamp=%s, Theme=%s"), 
-        *TimestampTag, *ThemeTag);
 
-    // ========================================
-    // STEP 3: PROCESS EACH SPAWN REQUEST
-    // ========================================
     for (const FSpawnRequest& Request : SpawnRequests)
     {
-        // --- 3.1: Validate Request Data ---
         if (Request.AssetPath.IsEmpty())
         {
-            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Skipping spawn request with empty AssetPath"));
-            continue;
-        }
-        
-        if (Request.ObjectName.IsEmpty())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Skipping spawn request with empty ObjectName"));
+            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Spawn request has empty AssetPath"));
             continue;
         }
 
-        // --- 3.2: Construct Full Asset Path ---
-        // Convert short name "SM_Rock" to full Unreal path:
-        // "/Game/DATABASE/meshes/SM_Rock.SM_Rock"
-        // Note: Asset name appears twice (folder.asset) in Unreal's path format
-        FString FullPath = FString::Printf(TEXT("%s%s.%s"), 
-            *GStaticMeshBasePath,  // Defined elsewhere: "/Game/DATABASE/meshes/"
-            *Request.AssetPath,     // e.g., "SM_Rock"
-            *Request.AssetPath      // e.g., "SM_Rock" (again)
+        // SYNCHRONOUS LOAD (since mesh names are from AssetIndexer)
+        FString FullPath = FString::Printf(TEXT("/Game/DATABASE/meshes/%s.%s"), 
+            *Request.AssetPath, *Request.AssetPath);
+        
+        UStaticMesh* LoadedMesh = Cast<UStaticMesh>(
+            StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *FullPath)
         );
-        FSoftObjectPath AssetPath(FullPath);
-        
-        // --- 3.3: Prepare Data for Async Lambda ---
-        // Copy request data because it will be used in async callback
-        // The original 'Request' reference will be invalid by then
-        FSpawnRequest RequestCopy = Request;
-        
-        // Store weak pointer to world (safe for async operations)
-        // If world is destroyed before callback, this will become invalid
-        TWeakObjectPtr<UWorld> WeakWorld = WorldContext;
-        
-        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Loading mesh for '%s' from %s"), 
-            *Request.ObjectName, *FullPath);
 
-        // ========================================
-        // STEP 4: ASYNC MESH LOADING
-        // ========================================
-        // RequestAsyncLoad runs on a background thread and calls the lambda
-        // on the GAME THREAD when loading completes (safe for spawning)
-        Streamer.RequestAsyncLoad(AssetPath, 
-            [WeakWorld, AssetPath, RequestCopy, ThemeTag, TimestampTag]()
+        if (!LoadedMesh)
         {
-            // --- 4.1: Validate World Still Exists ---
-            // World could have been destroyed during loading
-            if (!WeakWorld.IsValid())
-            {
-                UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: World destroyed before mesh loaded"));
-                return;
-            }
-            
-            // --- 4.2: Resolve Loaded Mesh ---
-            UStaticMesh* LoadedMesh = Cast<UStaticMesh>(AssetPath.ResolveObject());
-            if (!LoadedMesh)
-            {
-                UE_LOG(LogTemp, Error, TEXT("SceneBuilder: Failed to load mesh: %s"), 
-                    *AssetPath.ToString());
-                return;
-            }
-            
-            UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Mesh loaded successfully: %s"), 
-                *LoadedMesh->GetName());
+            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Failed to load mesh: %s"), *Request.AssetPath);
+            continue;  // SKIP if not found
+        }
 
-            // ========================================
-            // STEP 5: SPAWN THE ACTOR
-            // ========================================
-            // SpawnActor creates a new AStaticMeshActor at the specified location
-            // NOTE: RequestCopy.SpawnLocation was ALREADY RESOLVED by GenAI
-            // (e.g., "PLAYER_FRONT" → FVector(500, 200, 0))
-            AStaticMeshActor* NewActor = WeakWorld->SpawnActor<AStaticMeshActor>(
-                RequestCopy.SpawnLocation,  // ✅ Pre-resolved world coordinates
-                RequestCopy.Rotation         // Rotation from the plan
-            );
-            
-            // --- 5.1: Configure Actor if Spawn Succeeded ---
-            if (NewActor)
-            {
-                // Set the visual mesh
-                NewActor->GetStaticMeshComponent()->SetStaticMesh(LoadedMesh);
-                
-                // Apply scale from the plan
-                NewActor->SetActorScale3D(RequestCopy.Scale);
-                
-                // ========================================
-                // STEP 6: APPLY TAGS FOR TRACKING
-                // ========================================
-                // Tags are used by SceneStateTracker and ClearScene functions
-                // to identify and manage spawned actors
-                
-                // TAG 1: Base identifier for all GenAI spawned actors
-                NewActor->Tags.Add(FName(TEXT("GenAI.Spawned")));
-                
-                // TAG 2: Theme identifier (e.g., "Theme_Cyberpunk_Noir")
-                // Allows filtering by theme for partial scene updates
-                NewActor->Tags.Add(FName(*ThemeTag));
-                
-                // TAG 3: Object type identifier (e.g., "Object_Rock")
-                // Useful for finding all instances of a specific object type
-                FString ObjectTag = FString::Printf(TEXT("Object_%s"), *RequestCopy.ObjectName);
-                NewActor->Tags.Add(FName(*ObjectTag));
-                
-                // TAG 4: Timestamp of spawn batch (e.g., "Timestamp_20251106_050100")
-                // Allows identifying and managing all actors from this spawn operation
-                NewActor->Tags.Add(FName(*TimestampTag));
-                
-                // TAG 5: Custom user tag (if provided in the plan)
-                if (!RequestCopy.Tag.IsEmpty())
-                {
-                    NewActor->Tags.Add(FName(*RequestCopy.Tag));
-                }
-                
-                // ========================================
-                // STEP 7: SET ACTOR LABEL (OUTLINER NAME)
-                // ========================================
-                // This name appears in the World Outliner in Unreal Editor
-                // Format: "BP_SM_Rock" (BP = Blueprint, but we're using C++)
-                FString ActorLabel = FString::Printf(TEXT("BP_%s"), *RequestCopy.AssetPath);
-                NewActor->SetActorLabel(ActorLabel);
-                
-                // ========================================
-                // STEP 8: LOG SUCCESS
-                // ========================================
-                UE_LOG(LogTemp, Log, 
-                    TEXT("SceneBuilder: ✅ Spawned '%s' at location %s (from semantic name: '%s')"),
-                    *RequestCopy.ObjectName,
-                    *RequestCopy.SpawnLocation.ToString(),
-                    *RequestCopy.LocationName  // Shows the semantic name for debugging
-                );
-            }
-            else
-            {
-                // Spawn failed (rare, usually means world is invalid)
-                UE_LOG(LogTemp, Error, 
-                    TEXT("SceneBuilder: ❌ Failed to spawn actor for '%s'"),
-                    *RequestCopy.ObjectName
-                );
-            }
-        }); // End of async lambda
-    } // End of for loop
-    
-    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawn batch initiated - %d actors queued for loading"), 
-        SpawnRequests.Num());
+        // SPAWN IMMEDIATELY
+        AStaticMeshActor* NewActor = WorldContext->SpawnActor<AStaticMeshActor>(
+            Request.SpawnLocation,
+            Request.Rotation
+        );
+
+        if (NewActor)
+        {
+            NewActor->GetStaticMeshComponent()->SetStaticMesh(LoadedMesh);
+            NewActor->SetActorScale3D(Request.Scale);
+            NewActor->SetActorLabel(FString::Printf(TEXT("BP_%s"), *Request.AssetPath));
+
+            FString ObjectTag = FString::Printf(TEXT("Object_%s"), *Request.ObjectName);
+            NewActor->Tags.Add(FName(TEXT("GenAI.Spawned")));
+            NewActor->Tags.Add(FName(*ObjectTag));
+            NewActor->Tags.Add(FName(*TimestampTag));
+
+            UE_LOG(LogTemp, Display, TEXT("SceneBuilder: ✅ Spawned %s at [%.1f, %.1f, %.1f]"),
+                *ObjectTag,
+                Request.SpawnLocation.X,
+                Request.SpawnLocation.Y,
+                Request.SpawnLocation.Z);
+        }
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawned %d actors"), SpawnRequests.Num());
 }
 
 // --- Private: Props Helpers ---

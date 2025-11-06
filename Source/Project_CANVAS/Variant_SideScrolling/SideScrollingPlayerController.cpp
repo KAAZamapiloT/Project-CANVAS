@@ -15,7 +15,8 @@
 #include "GenAISystem.h"
 #include "SceneBuilder.h"
 #include "EnhancedInputComponent.h"
-#include "UObject/UObjectGlobals.h" 
+#include "UObject/UObjectGlobals.h"
+#include"SceneStateTracker.h"
 #include "UObject/Class.h"
 
 void ASideScrollingPlayerController::BeginPlay()
