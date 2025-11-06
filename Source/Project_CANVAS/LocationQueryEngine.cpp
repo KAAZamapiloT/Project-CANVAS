@@ -1,13 +1,5 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-// Fill out your copyright notice in the Description page of Project Settings.
-
-// Fill out your copyright notice in the Description page of Project Settings.
-
-// Fill out your copyright notice in the Description page of Project Settings.
-
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #include "LocationQueryEngine.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h"
@@ -19,7 +11,6 @@
 #include "CollisionQueryParams.h"
 #include "WorldCollision.h"
 #include "PhysicsEngine/PhysicsSettings.h"
-#include "Components/PrimitiveComponent.h"
 #include "Components/PrimitiveComponent.h"
 
 // ========================================
@@ -48,7 +39,7 @@ void ULocationQueryEngine::ScanWorldLocationsAsync(UWorld* InWorldContext)
     // Scan for tagged spawn points in level
     ScanForNamedLocations(WorldContext);
     
-    // Register default locations (similar to default textures)
+    // Register default locations
     FSpawnLocation CenterLocation;
     CenterLocation.LocationName = TEXT("CENTER");
     CenterLocation.WorldPosition = FVector::ZeroVector;
@@ -67,7 +58,6 @@ void ULocationQueryEngine::ScanForNamedLocations(UWorld* InWorldContext)
 {
     if (!InWorldContext) return;
     
-    // Find all actors with "Loc_*" tags (similar to how AssetIndexer scans)
     TArray<AActor*> AllActors;
     UGameplayStatics::GetAllActorsOfClass(InWorldContext, AActor::StaticClass(), AllActors);
     
@@ -75,20 +65,18 @@ void ULocationQueryEngine::ScanForNamedLocations(UWorld* InWorldContext)
     {
         if (!Actor) continue;
         
-        // Check actor tags for "Loc_" prefix
         for (const FName& Tag : Actor->Tags)
         {
             FString TagStr = Tag.ToString();
             if (TagStr.StartsWith(TEXT("Loc_")))
             {
                 FSpawnLocation NewLocation;
-                NewLocation.LocationName = TagStr.RightChop(4); // Remove "Loc_" prefix
+                NewLocation.LocationName = TagStr.RightChop(4);
                 NewLocation.WorldPosition = Actor->GetActorLocation();
                 NewLocation.WorldRotation = Actor->GetActorRotation();
                 NewLocation.Description = FString::Printf(TEXT("Named spawn point: %s"), 
                     *NewLocation.LocationName);
                 
-                // Extract additional tags
                 for (const FName& OtherTag : Actor->Tags)
                 {
                     FString OtherTagStr = OtherTag.ToString();
@@ -138,88 +126,13 @@ TArray<FString> ULocationQueryEngine::GetDiscoveredLocationTags() const
     return DiscoveredLocationTags;
 }
 
-// ========================================
-// LOCATION RESOLUTION
-// ========================================
-
-FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
-{
-    FString UpperName = LocationName.ToUpper();
-    
-    // 1. Check database for named locations
-    if (LocationDatabase.Contains(UpperName))
-    {
-        return LocationDatabase[UpperName].WorldPosition;
-    }
-    
-    // 2. Handle player-relative locations
-    if (UpperName.Contains(TEXT("PLAYER")))
-    {
-        if (UpperName.Contains(TEXT("FRONT"))) return GetPlayerFrontPosition();
-        if (UpperName.Contains(TEXT("BACK"))) return GetPlayerBackPosition();
-        if (UpperName.Contains(TEXT("LEFT"))) return GetPlayerLeftPosition();
-        if (UpperName.Contains(TEXT("RIGHT"))) return GetPlayerRightPosition();
-        if (UpperName.Contains(TEXT("POSITION"))) return GetPlayerPosition();
-        if (UpperName.Contains(TEXT("NEAR"))) return GetRandomPositionNearPlayer();
-    }
-    
-    // 3. Handle custom coordinates: "CUSTOM:[X,Y,Z]"
-    if (UpperName.StartsWith(TEXT("CUSTOM:")))
-    {
-        return ParseCustomCoordinate(UpperName);
-    }
-    
-    // 4. Handle actor-relative: "NEAR:ActorTag"
-    if (UpperName.StartsWith(TEXT("NEAR:")))
-    {
-        FString ActorTag = UpperName.RightChop(5).TrimStartAndEnd();
-        AActor* TargetActor = FindActorWithTag(ActorTag);
-        if (TargetActor)
-        {
-            return TargetActor->GetActorLocation();
-        }
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("LocationEngine: Could not resolve '%s', using world origin"), 
-        *LocationName);
-    return FVector::ZeroVector;
-}
-
-FSpawnLocation ULocationQueryEngine::ResolveLocation(const FString& LocationName)
-{
-    FString UpperName = LocationName.ToUpper();
-    
-    if (LocationDatabase.Contains(UpperName))
-    {
-        return LocationDatabase[UpperName];
-    }
-    
-    // Create dynamic location for unregistered names
-    FSpawnLocation DynamicLocation;
-    DynamicLocation.LocationName = LocationName;
-    DynamicLocation.WorldPosition = ResolveLocationName(LocationName);
-    DynamicLocation.Description = TEXT("Dynamic location");
-    return DynamicLocation;
-}
-
-bool ULocationQueryEngine::DoesLocationExist(const FString& LocationName) const
-{
-    return LocationDatabase.Contains(LocationName.ToUpper());
-}
-
-// ========================================
-// ADD/REMOVE/MODIFY LOCATIONS
-// ========================================
-
 void ULocationQueryEngine::AddLocation(const FSpawnLocation& NewLocation)
 {
     FString UpperName = NewLocation.LocationName.ToUpper();
     
-    // Add to database
     LocationDatabase.Add(UpperName, NewLocation);
     DiscoveredLocations.Add(NewLocation);
     
-    // Update tag list
     for (const FString& Tag : NewLocation.Tags)
     {
         DiscoveredLocationTags.AddUnique(Tag);
@@ -246,7 +159,6 @@ bool ULocationQueryEngine::RemoveLocation(const FString& LocationName)
     {
         LocationDatabase.Remove(UpperName);
         
-        // Remove from array
         DiscoveredLocations.RemoveAll([&](const FSpawnLocation& Loc) {
             return Loc.LocationName.Equals(LocationName, ESearchCase::IgnoreCase);
         });
@@ -266,7 +178,6 @@ bool ULocationQueryEngine::ModifyLocation(const FString& LocationName, const FSp
     {
         LocationDatabase[UpperName] = UpdatedLocation;
         
-        // Update in array
         for (FSpawnLocation& Loc : DiscoveredLocations)
         {
             if (Loc.LocationName.Equals(LocationName, ESearchCase::IgnoreCase))
@@ -292,6 +203,275 @@ void ULocationQueryEngine::ClearAllLocations()
 }
 
 // ========================================
+// LOCATION RESOLUTION - ENHANCED WITH ACTOR TAG SUPPORT
+// ========================================
+
+FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
+{
+    FString UpperName = LocationName.ToUpper();
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 ResolveLocationName: '%s'"), *LocationName);
+    
+    // 1. Check database for named locations
+    if (LocationDatabase.Contains(UpperName))
+    {
+        FVector Pos = LocationDatabase[UpperName].WorldPosition;
+        UE_LOG(LogTemp, Warning, TEXT("   ✅ Found in database: [%.0f, %.0f, %.0f]"), 
+            Pos.X, Pos.Y, Pos.Z);
+        return Pos;
+    }
+    
+    // 2. Handle player-relative locations
+    if (UpperName.Contains(TEXT("PLAYER")))
+    {
+        if (UpperName.Contains(TEXT("FRONT"))) 
+        {
+            FVector Pos = GetPlayerFrontPosition();
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Player front: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("BACK"))) 
+        {
+            FVector Pos = GetPlayerBackPosition();
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Player back: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("LEFT"))) 
+        {
+            FVector Pos = GetPlayerLeftPosition();
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Player left: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("RIGHT"))) 
+        {
+            FVector Pos = GetPlayerRightPosition();
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Player right: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("POSITION"))) 
+        {
+            FVector Pos = GetPlayerPosition();
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Player position: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("NEAR"))) 
+        {
+            FVector Pos = GetRandomPositionNearPlayer();
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Near player: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+    }
+    
+    // 2b. Handle enemy-relative locations
+    if (UpperName.Contains(TEXT("ENEMY")))
+    {
+        AActor* EnemyActor = FindActorWithTag(TEXT("Player"));
+
+        if (!EnemyActor)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Enemy actor not found, using background fallback"));
+            return GetRandomBackgroundPosition();
+        }
+
+        FVector EnemyPos = EnemyActor->GetActorLocation();
+        FVector EnemyForward = EnemyActor->GetActorForwardVector();
+        FVector EnemyRight = EnemyActor->GetActorRightVector();
+
+        if (UpperName.Contains(TEXT("FRONT")))
+        {
+            FVector Pos = EnemyPos + EnemyForward * 300.0f;
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Enemy front: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("BACK")))
+        {
+            FVector Pos = EnemyPos - EnemyForward * 300.0f;
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Enemy back: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("LEFT")))
+        {
+            FVector Pos = EnemyPos - EnemyRight * 300.0f;
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Enemy left: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("RIGHT")))
+        {
+            FVector Pos = EnemyPos + EnemyRight * 300.0f;
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Enemy right: [%.0f, %.0f, %.0f]"), 
+                Pos.X, Pos.Y, Pos.Z);
+            return Pos;
+        }
+        if (UpperName.Contains(TEXT("POSITION")))
+        {
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Enemy position: [%.0f, %.0f, %.0f]"), 
+                EnemyPos.X, EnemyPos.Y, EnemyPos.Z);
+            return EnemyPos;
+        }
+    }
+    
+    // 3. Handle custom coordinates: "CUSTOM:[X,Y,Z]"
+    if (UpperName.StartsWith(TEXT("CUSTOM:")))
+    {
+        FVector Pos = ParseCustomCoordinate(UpperName);
+        UE_LOG(LogTemp, Display, TEXT("   ✅ Parsed custom: [%.0f, %.0f, %.0f]"), 
+            Pos.X, Pos.Y, Pos.Z);
+        return Pos;
+    }
+    
+    // 4. Handle NEAREST:Tag (closest actor with tag)
+    if (UpperName.StartsWith(TEXT("CLOSEST:")))
+    {
+        FString ActorTag = UpperName.RightChop(8).TrimStartAndEnd();
+        FVector PlayerPos = GetPlayerPosition();
+        
+        AActor* ClosestActor = GetClosestActorWithTag(ActorTag, PlayerPos);
+        
+        if (ClosestActor)
+        {
+            FVector ActorLocation = ClosestActor->GetActorLocation();
+            
+            FVector Origin, BoxExtent;
+            ClosestActor->GetActorBounds(false, Origin, BoxExtent);
+            
+            float OffsetDistance = BoxExtent.Size() + 150.0f;
+            FVector TowardsPlayer = (PlayerPos - ActorLocation).GetSafeNormal();
+            FVector NearPosition = ActorLocation + TowardsPlayer * OffsetDistance;
+            
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Closest '%s' found, spawning near player-facing side"), *ActorTag);
+            
+            return NearPosition;
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("   ⚠️ No actors with tag '%s' found"), *ActorTag);
+    }
+    
+    // 4b. Handle NEAR:ActorTag (random actor with tag)
+    if (UpperName.StartsWith(TEXT("NEAR:")))
+    {
+        FString ActorTag = UpperName.RightChop(5).TrimStartAndEnd();
+        
+        TArray<AActor*> FoundActors = GetActorsWithTag(ActorTag);
+        
+        if (FoundActors.Num() > 0)
+        {
+            int32 RandomIndex = FMath::RandRange(0, FoundActors.Num() - 1);
+            AActor* TargetActor = FoundActors[RandomIndex];
+            
+            if (IsValid(TargetActor))
+            {
+                FVector ActorLocation = TargetActor->GetActorLocation();
+                FVector ActorExtent = FVector(100, 100, 100);
+                
+                FVector Origin, BoxExtent;
+                TargetActor->GetActorBounds(false, Origin, BoxExtent);
+                if (!BoxExtent.IsNearlyZero())
+                {
+                    ActorExtent = BoxExtent;
+                }
+                
+                float OffsetDistance = ActorExtent.Size() + 150.0f;
+                FVector RandomOffset = FVector(
+                    FMath::RandRange(-OffsetDistance, OffsetDistance),
+                    FMath::RandRange(-OffsetDistance, OffsetDistance),
+                    0.0f
+                );
+                
+                FVector NearPosition = ActorLocation + RandomOffset;
+                
+                UE_LOG(LogTemp, Display, TEXT("   ✅ Found actor '%s', spawning NEAR at offset [%.0f, %.0f]"), 
+                    *ActorTag, RandomOffset.X, RandomOffset.Y);
+                UE_LOG(LogTemp, Display, TEXT("   📍 Final position: [%.0f, %.0f, %.0f]"), 
+                    NearPosition.X, NearPosition.Y, NearPosition.Z);
+                
+                return NearPosition;
+            }
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Actor tag '%s' not found"), *ActorTag);
+    }
+    
+    // ========================================
+    // 2.5D FALLBACK SYSTEM
+    // ========================================
+    
+    UE_LOG(LogTemp, Warning, TEXT("   ⚠️  '%s' not found - using 2.5D fallback..."), *LocationName);
+    
+    if (UpperName.Contains(TEXT("CORNER")))
+    {
+        return GetRandomCornerPosition(UpperName);
+    }
+    
+    if (UpperName.Contains(TEXT("BACKGROUND")) || 
+        UpperName.Contains(TEXT("FAR")) || 
+        UpperName.Contains(TEXT("DISTANT")))
+    {
+        return GetRandomBackgroundPosition();
+    }
+    
+    if (UpperName.Contains(TEXT("FOREGROUND")) || 
+        UpperName.Contains(TEXT("CLOSE")))
+    {
+        return GetRandomForegroundPosition();
+    }
+    
+    if (UpperName.Contains(TEXT("OVERHEAD")) || 
+        UpperName.Contains(TEXT("SKY")) || 
+        UpperName.Contains(TEXT("CEILING")) ||
+        UpperName.Contains(TEXT("ABOVE")))
+    {
+        return GetRandomOverheadPosition();
+    }
+    
+    if (UpperName.Contains(TEXT("LEFT")))
+    {
+        return GetRandomLeftSidePosition();
+    }
+    if (UpperName.Contains(TEXT("RIGHT")))
+    {
+        return GetRandomRightSidePosition();
+    }
+    
+    if (UpperName.Contains(TEXT("CENTER")) || UpperName.Contains(TEXT("MIDDLE")))
+    {
+        return GetRandomCenterPosition();
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("   ❌ No fallback matched, using random background"));
+    return GetRandomBackgroundPosition();
+}
+
+FSpawnLocation ULocationQueryEngine::ResolveLocation(const FString& LocationName)
+{
+    FString UpperName = LocationName.ToUpper();
+    
+    if (LocationDatabase.Contains(UpperName))
+    {
+        return LocationDatabase[UpperName];
+    }
+    
+    FSpawnLocation DynamicLocation;
+    DynamicLocation.LocationName = LocationName;
+    DynamicLocation.WorldPosition = ResolveLocationName(LocationName);
+    DynamicLocation.Description = TEXT("Dynamic location");
+    return DynamicLocation;
+}
+
+bool ULocationQueryEngine::DoesLocationExist(const FString& LocationName) const
+{
+    return LocationDatabase.Contains(LocationName.ToUpper());
+}
+
+// ========================================
 // TAG-BASED QUERIES
 // ========================================
 
@@ -309,7 +489,6 @@ void ULocationQueryEngine::AddTagToLocation(const FString& LocationName, const F
         LocationDatabase[UpperName].Tags.AddUnique(Tag);
         DiscoveredLocationTags.AddUnique(Tag);
         
-        // Update array
         for (FSpawnLocation& Loc : DiscoveredLocations)
         {
             if (Loc.LocationName.Equals(LocationName, ESearchCase::IgnoreCase))
@@ -329,7 +508,6 @@ void ULocationQueryEngine::RemoveTagFromLocation(const FString& LocationName, co
     {
         LocationDatabase[UpperName].Tags.Remove(Tag);
         
-        // Update array
         for (FSpawnLocation& Loc : DiscoveredLocations)
         {
             if (Loc.LocationName.Equals(LocationName, ESearchCase::IgnoreCase))
@@ -342,7 +520,7 @@ void ULocationQueryEngine::RemoveTagFromLocation(const FString& LocationName, co
 }
 
 // ========================================
-// PLAYER-RELATIVE QUERIES
+// PLAYER-RELATIVE POSITIONS
 // ========================================
 
 FVector ULocationQueryEngine::GetPlayerFrontPosition(float Distance)
@@ -417,7 +595,6 @@ void ULocationQueryEngine::SetLocationOccupied(const FString& LocationName, bool
         LocationDatabase[UpperName].bIsOccupied = bOccupied;
         LocationDatabase[UpperName].OccupyingActor = OccupyingActor;
         
-        // Update array
         for (FSpawnLocation& Loc : DiscoveredLocations)
         {
             if (Loc.LocationName.Equals(LocationName, ESearchCase::IgnoreCase))
@@ -476,7 +653,6 @@ void ULocationQueryEngine::ClearAllOccupancy()
 
 FSpawnLocation ULocationQueryEngine::FindNearestFreeLocation(FVector PreferredLocation, float MinClearance)
 {
-    // Check if preferred location is clear
     if (IsLocationClear(PreferredLocation, MinClearance))
     {
         FSpawnLocation Result;
@@ -486,7 +662,6 @@ FSpawnLocation ULocationQueryEngine::FindNearestFreeLocation(FVector PreferredLo
         return Result;
     }
     
-    // Search in concentric rings
     const float SearchStep = 250.0f;
     const int32 MaxRings = 5;
     const int32 SamplesPerRing = 12;
@@ -516,7 +691,6 @@ FSpawnLocation ULocationQueryEngine::FindNearestFreeLocation(FVector PreferredLo
         }
     }
     
-    // Return preferred location if nothing found
     FSpawnLocation Result;
     Result.LocationName = TEXT("Dynamic");
     Result.WorldPosition = PreferredLocation;
@@ -528,13 +702,10 @@ bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
 {
     if (!WorldContext) return false;
     
-    // Use sphere overlap test without FOverlapResult
     FCollisionShape SphereShape = FCollisionShape::MakeSphere(Radius);
-    
     FCollisionQueryParams QueryParams;
     QueryParams.bTraceComplex = false;
     
-    // Use the simpler API that returns bool directly
     bool bHasBlockingHit = WorldContext->OverlapAnyTestByChannel(
         Location,
         FQuat::Identity,
@@ -543,10 +714,8 @@ bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
         QueryParams
     );
     
-    // Return true if location is clear (no blocking hit)
     return !bHasBlockingHit;
 }
-
 
 FVector ULocationQueryEngine::SnapToGround(FVector Location, float MaxTraceDistance)
 {
@@ -568,111 +737,352 @@ FVector ULocationQueryEngine::SnapToGround(FVector Location, float MaxTraceDista
 }
 
 // ========================================
-// LLM INTEGRATION
+// DYNAMIC ACTOR TAG CACHING
 // ========================================
 
-FString ULocationQueryEngine::GetLocationContextForLLM() const
+void ULocationQueryEngine::ScanAndCacheActorsByTags(UWorld* InWorldContext, bool bLogResults)
 {
-    FString Context = TEXT("=== AVAILABLE SPAWN LOCATIONS ===\n\n");
-    
-    // Named locations
-    if (DiscoveredLocations.Num() > 0)
+    if (!InWorldContext)
     {
-        Context += TEXT("[Named Locations]\n");
-        for (const FSpawnLocation& Loc : DiscoveredLocations)
+        UE_LOG(LogTemp, Error, TEXT("LocationEngine: Cannot scan - no world context"));
+        return;
+    }
+    
+    WorldContext = InWorldContext;
+    ActorTagCache.Empty();
+    
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(InWorldContext, AActor::StaticClass(), AllActors);
+    
+    UE_LOG(LogTemp, Warning, TEXT("🔍 Scanning %d actors for tags..."), AllActors.Num());
+    
+    for (AActor* Actor : AllActors)
+    {
+        if (!IsValid(Actor) || Actor->Tags.Num() == 0) continue;
+        
+        for (const FName& TagName : Actor->Tags)
         {
-            FString OccupiedStatus = Loc.bIsOccupied ? TEXT(" [OCCUPIED]") : TEXT("");
-            Context += FString::Printf(TEXT("  - \"%s\": %s%s\n"), 
-                *Loc.LocationName, *Loc.Description, *OccupiedStatus);
+            FString TagStr = TagName.ToString().ToUpper();
+            
+            if (TagStr.StartsWith(TEXT("LOC_"))) continue;
+            
+            if (!ActorTagCache.Contains(TagStr))
+            {
+                ActorTagCache.Add(TagStr, TArray<AActor*>());
+            }
+            
+            ActorTagCache[TagStr].AddUnique(Actor);
         }
-        Context += TEXT("\n");
     }
     
-    // Player-relative options
-    Context += TEXT("[Player-Relative]\n");
-    Context += TEXT("  - \"PLAYER_FRONT\", \"PLAYER_BACK\", \"PLAYER_LEFT\", \"PLAYER_RIGHT\"\n");
-    Context += TEXT("  - \"PLAYER_POSITION\", \"NEAR_PLAYER\"\n\n");
+    UE_LOG(LogTemp, Warning, TEXT("✅ Tag scan complete. Found %d unique tags"), ActorTagCache.Num());
     
-    // Custom coordinates
-    Context += TEXT("[Custom Coordinates]\n");
-    Context += TEXT("  - Format: \"CUSTOM:[X,Y,Z]\"\n\n");
-    
-    return Context;
-}
-
-TMap<FString, FSpawnLocation> ULocationQueryEngine::BuildLocationDatabase()
-{
-    return LocationDatabase;
-}
-
-// ========================================
-// INTERNAL HELPERS
-// ========================================
-
-FVector ULocationQueryEngine::ParseCustomCoordinate(const FString& CoordString) const
-{
-    FString CleanString = CoordString.RightChop(7).TrimStartAndEnd();
-    CleanString.RemoveFromStart(TEXT("["));
-    CleanString.RemoveFromEnd(TEXT("]"));
-    
-    TArray<FString> Coords;
-    CleanString.ParseIntoArray(Coords, TEXT(","));
-    
-    if (Coords.Num() == 3)
+    if (bLogResults)
     {
-        return FVector(
-            FCString::Atof(*Coords[0]),
-            FCString::Atof(*Coords[1]),
-            FCString::Atof(*Coords[2])
-        );
+        PrintActorTagCache();
     }
-    
-    return FVector::ZeroVector;
 }
 
-APawn* ULocationQueryEngine::GetPlayerPawn() const
+void ULocationQueryEngine::RefreshTagCache(const FString& Tag)
 {
-    if (!WorldContext) return nullptr;
-    
-    APlayerController* PC = UGameplayStatics::GetPlayerController(WorldContext, 0);
-    return PC ? PC->GetPawn() : nullptr;
-}
-
-AActor* ULocationQueryEngine::FindActorWithTag(const FString& Tag) const
-{
-    if (!WorldContext || Tag.IsEmpty())
+    if (!WorldContext)
     {
-        return nullptr;
+        UE_LOG(LogTemp, Error, TEXT("⚠️ RefreshTagCache: No world context"));
+        return;
     }
     
-    TArray<AActor*> FoundActors;
-    UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*Tag), FoundActors);
+    FString TagUpper = Tag.ToUpper();
     
-    // Return first valid actor
-    for (AActor* Actor : FoundActors)
+    ActorTagCache.Remove(TagUpper);
+    
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(WorldContext, AActor::StaticClass(), AllActors);
+    
+    int32 Count = 0;
+    ActorTagCache.Add(TagUpper, TArray<AActor*>());
+    
+    for (AActor* Actor : AllActors)
+    {
+        if (!IsValid(Actor) || !Actor->Tags.Contains(FName(*TagUpper))) continue;
+        
+        ActorTagCache[TagUpper].Add(Actor);
+        Count++;
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔄 Refreshed tag '%s': %d actors found"), *Tag, Count);
+}
+
+void ULocationQueryEngine::ClearActorTagCache()
+{
+    ActorTagCache.Empty();
+    UE_LOG(LogTemp, Display, TEXT("🗑️  Cleared actor tag cache"));
+}
+
+TArray<AActor*> ULocationQueryEngine::GetActorsWithTag(const FString& Tag)
+{
+    FString TagUpper = Tag.ToUpper();
+    if (ActorTagCache.Contains(TagUpper))
+    {
+        return ActorTagCache[TagUpper];
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("⚠️ GetActorsWithTag: Tag '%s' not cached"), *Tag);
+    return TArray<AActor*>();
+}
+
+TArray<FVector> ULocationQueryEngine::GetPositionsByTag(const FString& Tag)
+{
+    TArray<FVector> Positions;
+    TArray<AActor*> Actors = GetActorsWithTag(Tag);
+    
+    for (AActor* Actor : Actors)
     {
         if (IsValid(Actor))
         {
-            return Actor;
+            Positions.Add(Actor->GetActorLocation());
         }
     }
     
-    return nullptr;
+    if (Positions.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ GetPositionsByTag: No valid positions for tag '%s'"), *Tag);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Display, TEXT("✅ GetPositionsByTag: Retrieved %d positions for tag '%s'"), 
+            Positions.Num(), *Tag);
+    }
+    
+    return Positions;
 }
 
-
-// ========================================
-// MISSING IMPLEMENTATIONS
-// ========================================
-
-void ULocationQueryEngine::BeginDestroy()
+AActor* ULocationQueryEngine::GetRandomActorWithTag(const FString& Tag)
 {
-    UE_LOG(LogTemp, Display, TEXT("🗑️  LocationQueryEngine destroyed"));
-    Super::BeginDestroy();
+    TArray<AActor*> Actors = GetActorsWithTag(Tag);
+    
+    if (Actors.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ GetRandomActorWithTag: No actors with tag '%s'"), *Tag);
+        return nullptr;
+    }
+    
+    int32 RandomIndex = FMath::RandRange(0, Actors.Num() - 1);
+    AActor* SelectedActor = Actors[RandomIndex];
+    
+    UE_LOG(LogTemp, Display, TEXT("🎲 Random actor for tag '%s': %s"), *Tag, *SelectedActor->GetName());
+    
+    return SelectedActor;
+}
+
+FVector ULocationQueryEngine::GetRandomPositionFromTag(const FString& Tag)
+{
+    TArray<FVector> Positions = GetPositionsByTag(Tag);
+    
+    if (Positions.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ GetRandomPositionFromTag: No positions for tag '%s'"), *Tag);
+        return FVector::ZeroVector;
+    }
+    
+    int32 RandomIndex = FMath::RandRange(0, Positions.Num() - 1);
+    FVector SelectedPos = Positions[RandomIndex];
+    
+    UE_LOG(LogTemp, Display, TEXT("🎲 Random position for tag '%s': [%.0f, %.0f, %.0f]"),
+        *Tag, SelectedPos.X, SelectedPos.Y, SelectedPos.Z);
+    
+    return SelectedPos;
+}
+
+AActor* ULocationQueryEngine::GetClosestActorWithTag(const FString& Tag, FVector FromLocation)
+{
+    TArray<AActor*> Actors = GetActorsWithTag(Tag);
+    
+    if (Actors.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ GetClosestActorWithTag: No actors with tag '%s'"), *Tag);
+        return nullptr;
+    }
+    
+    AActor* ClosestActor = Actors[0];
+    float MinDistance = FVector::Dist(FromLocation, ClosestActor->GetActorLocation());
+    
+    for (AActor* Actor : Actors)
+    {
+        if (!IsValid(Actor)) continue;
+        float Distance = FVector::Dist(FromLocation, Actor->GetActorLocation());
+        if (Distance < MinDistance)
+        {
+            MinDistance = Distance;
+            ClosestActor = Actor;
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 Closest '%s' actor: %.0f units away"), *Tag, MinDistance);
+    return ClosestActor;
+}
+
+AActor* ULocationQueryEngine::GetFarthestActorWithTag(const FString& Tag, FVector FromLocation)
+{
+    TArray<AActor*> Actors = GetActorsWithTag(Tag);
+    
+    if (Actors.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ GetFarthestActorWithTag: No actors with tag '%s'"), *Tag);
+        return nullptr;
+    }
+    
+    AActor* FarthestActor = Actors[0];
+    float MaxDistance = FVector::Dist(FromLocation, FarthestActor->GetActorLocation());
+    
+    for (AActor* Actor : Actors)
+    {
+        if (!IsValid(Actor)) continue;
+        float Distance = FVector::Dist(FromLocation, Actor->GetActorLocation());
+        if (Distance > MaxDistance)
+        {
+            MaxDistance = Distance;
+            FarthestActor = Actor;
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 Farthest '%s' actor: %.0f units away"), *Tag, MaxDistance);
+    return FarthestActor;
+}
+
+TArray<FString> ULocationQueryEngine::GetAllActorTags() const
+{
+    TArray<FString> Tags;
+    ActorTagCache.GetKeys(Tags);
+    return Tags;
+}
+
+int32 ULocationQueryEngine::GetActorCountWithTag(const FString& Tag) const
+{
+    FString TagUpper = Tag.ToUpper();
+    if (ActorTagCache.Contains(TagUpper))
+    {
+        return ActorTagCache[TagUpper].Num();
+    }
+    return 0;
+}
+
+void ULocationQueryEngine::PrintActorTagCache() const
+{
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║ 🏷️  Actor Tag Cache Report ║"));
+    UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════╝"));
+    
+    if (ActorTagCache.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ No actor tags cached"));
+        return;
+    }
+    
+    for (const auto& Pair : ActorTagCache)
+    {
+        UE_LOG(LogTemp, Display, TEXT("🏷️  Tag: '%s'"), *Pair.Key);
+        UE_LOG(LogTemp, Display, TEXT("   Actors: %d"), Pair.Value.Num());
+        
+        for (int32 i = 0; i < Pair.Value.Num(); ++i)
+        {
+            AActor* Actor = Pair.Value[i];
+            if (IsValid(Actor))
+            {
+                FVector Pos = Actor->GetActorLocation();
+                UE_LOG(LogTemp, Display, TEXT("   [%d] %s at [%.0f, %.0f, %.0f]"),
+                    i + 1, *Actor->GetName(), Pos.X, Pos.Y, Pos.Z);
+            }
+        }
+        UE_LOG(LogTemp, Display, TEXT(""));
+    }
+}
+
+void ULocationQueryEngine::VisualizeActorTagCache(float Duration, bool bCentered, float Radius)
+{
+    if (!WorldContext)
+    {
+        UE_LOG(LogTemp, Error, TEXT("⚠️ VisualizeActorTagCache: No world context"));
+        return;
+    }
+    
+    TMap<FString, FColor> TagColors;
+    TagColors.Add(TEXT("ENEMY"), FColor::Red);
+    TagColors.Add(TEXT("ALLY"), FColor::Green);
+    TagColors.Add(TEXT("ITEM"), FColor::Yellow);
+    TagColors.Add(TEXT("NPC"), FColor::Cyan);
+    TagColors.Add(TEXT("PLAYER"), FColor::Blue);
+    TagColors.Add(TEXT("WALL"), FColor::Magenta);
+    
+    for (const auto& TagPair : ActorTagCache)
+    {
+        FColor TagColor = TagColors.Contains(TagPair.Key) 
+            ? TagColors[TagPair.Key] 
+            : FColor::White;
+        
+        for (const AActor* Actor : TagPair.Value)
+        {
+            if (IsValid(Actor))
+            {
+                FVector ActorPos = Actor->GetActorLocation();
+                DrawDebugSphere(WorldContext, ActorPos, Radius, 16, TagColor, false, Duration);
+                DrawDebugString(WorldContext, ActorPos + FVector(0, 0, 100), *Actor->GetName(), 
+                    nullptr, FColor::White, Duration);
+            }
+        }
+    }
+}
+
+float ULocationQueryEngine::GetAverageActorDistance(const FString& Tag) const
+{
+    TArray<FVector> Positions = GetPositionsByTag(Tag);
+    
+    if (Positions.Num() <= 1) return 0.0f;
+    
+    float TotalDistance = 0.0f;
+    int32 PairCount = 0;
+    
+    for (int32 i = 0; i < Positions.Num(); ++i)
+    {
+        for (int32 j = i + 1; j < Positions.Num(); ++j)
+        {
+            TotalDistance += FVector::Dist(Positions[i], Positions[j]);
+            PairCount++;
+        }
+    }
+    
+    return PairCount > 0 ? TotalDistance / PairCount : 0.0f;
+}
+
+FVector ULocationQueryEngine::GetActorCentroid(const FString& Tag) const
+{
+    TArray<FVector> Positions = GetPositionsByTag(Tag);
+    
+    if (Positions.Num() == 0) return FVector::ZeroVector;
+    
+    FVector Sum = FVector::ZeroVector;
+    for (const FVector& Pos : Positions)
+    {
+        Sum += Pos;
+    }
+    
+    return Sum / Positions.Num();
+}
+
+void ULocationQueryEngine::PrintActorTagStats(const FString& Tag) const
+{
+    int32 Count = GetActorCountWithTag(Tag);
+    float AvgDist = GetAverageActorDistance(Tag);
+    FVector Centroid = GetActorCentroid(Tag);
+    
+    UE_LOG(LogTemp, Warning, TEXT("📊 Stats for tag '%s':"), *Tag);
+    UE_LOG(LogTemp, Display, TEXT("   Actor Count: %d"), Count);
+    UE_LOG(LogTemp, Display, TEXT("   Average Distance: %.2f units"), AvgDist);
+    UE_LOG(LogTemp, Display, TEXT("   Centroid: [%.0f, %.0f, %.0f]"), Centroid.X, Centroid.Y, Centroid.Z);
 }
 
 // ========================================
-// MISSING: Debug & Visualization Functions
+// DEBUG & VISUALIZATION
 // ========================================
 
 void ULocationQueryEngine::PrintAllLocationData() const
@@ -721,12 +1131,10 @@ void ULocationQueryEngine::VisualizeAllLocations(float Duration)
     
     for (const FSpawnLocation& Loc : DiscoveredLocations)
     {
-        // Draw sphere for clearance radius
         FColor SphereColor = Loc.bIsOccupied ? FColor::Red : FColor::Green;
         DrawDebugSphere(WorldContext, Loc.WorldPosition, Loc.ClearanceRadius, 
                        16, SphereColor, false, Duration, 0, 1.0f);
         
-        // Draw label above location
         DrawDebugString(WorldContext, Loc.WorldPosition + FVector(0, 0, Loc.ClearanceRadius + 50.0f),
                        *Loc.LocationName, nullptr, FColor::White, Duration, false, 1.0f);
     }
@@ -758,88 +1166,8 @@ void ULocationQueryEngine::PrintLocationsByStatus() const
 }
 
 // ========================================
-// MISSING: Batch Operations
+// ADVANCED QUERIES
 // ========================================
-
-void ULocationQueryEngine::AddMultipleLocations(const TArray<FSpawnLocation>& NewLocations)
-{
-    UE_LOG(LogTemp, Display, TEXT("🔄 Adding %d locations..."), NewLocations.Num());
-    
-    for (const FSpawnLocation& Loc : NewLocations)
-    {
-        AddLocation(Loc);
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("✅ Batch add complete: %d total"), DiscoveredLocations.Num());
-}
-
-bool ULocationQueryEngine::RemoveMultipleLocations(const TArray<FString>& LocationNames)
-{
-    UE_LOG(LogTemp, Display, TEXT("🗑️  Removing %d locations..."), LocationNames.Num());
-    
-    int32 RemovedCount = 0;
-    for (const FString& Name : LocationNames)
-    {
-        if (RemoveLocation(Name))
-        {
-            RemovedCount++;
-        }
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("✅ Removed: %d/%d"), RemovedCount, LocationNames.Num());
-    return RemovedCount == LocationNames.Num();
-}
-
-void ULocationQueryEngine::RenameLocation(const FString& OldName, const FString& NewName)
-{
-    FString UpperOld = OldName.ToUpper();
-    FString UpperNew = NewName.ToUpper();
-    
-    if (!LocationDatabase.Contains(UpperOld))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("⚠️  RenameLocation: '%s' not found"), *OldName);
-        return;
-    }
-    
-    FSpawnLocation Loc = LocationDatabase[UpperOld];
-    Loc.LocationName = NewName;
-    
-    RemoveLocation(OldName);
-    AddLocation(Loc);
-    
-    UE_LOG(LogTemp, Display, TEXT("✅ Renamed '%s' → '%s'"), *OldName, *NewName);
-}
-
-// ========================================
-// MISSING: Advanced Queries
-// ========================================
-
-FSpawnLocation ULocationQueryEngine::FindFarthestLocation(FVector FromPosition) const
-{
-    if (DiscoveredLocations.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("⚠️  FindFarthestLocation: No locations available"));
-        return FSpawnLocation();
-    }
-    
-    FSpawnLocation FarthestLoc = DiscoveredLocations[0];
-    float MaxDistance = FVector::Dist(FromPosition, FarthestLoc.WorldPosition);
-    
-    for (const FSpawnLocation& Loc : DiscoveredLocations)
-    {
-        float Distance = FVector::Dist(FromPosition, Loc.WorldPosition);
-        if (Distance > MaxDistance)
-        {
-            MaxDistance = Distance;
-            FarthestLoc = Loc;
-        }
-    }
-    
-    UE_LOG(LogTemp, Display, TEXT("🔍 Farthest from [%.0f, %.0f, %.0f]: %s (%.0f units)"),
-        FromPosition.X, FromPosition.Y, FromPosition.Z, *FarthestLoc.LocationName, MaxDistance);
-    
-    return FarthestLoc;
-}
 
 FSpawnLocation ULocationQueryEngine::FindClosestLocation(FVector FromPosition) const
 {
@@ -866,6 +1194,33 @@ FSpawnLocation ULocationQueryEngine::FindClosestLocation(FVector FromPosition) c
         FromPosition.X, FromPosition.Y, FromPosition.Z, *ClosestLoc.LocationName, MinDistance);
     
     return ClosestLoc;
+}
+
+FSpawnLocation ULocationQueryEngine::FindFarthestLocation(FVector FromPosition) const
+{
+    if (DiscoveredLocations.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️  FindFarthestLocation: No locations available"));
+        return FSpawnLocation();
+    }
+    
+    FSpawnLocation FarthestLoc = DiscoveredLocations[0];
+    float MaxDistance = FVector::Dist(FromPosition, FarthestLoc.WorldPosition);
+    
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        float Distance = FVector::Dist(FromPosition, Loc.WorldPosition);
+        if (Distance > MaxDistance)
+        {
+            MaxDistance = Distance;
+            FarthestLoc = Loc;
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 Farthest from [%.0f, %.0f, %.0f]: %s (%.0f units)"),
+        FromPosition.X, FromPosition.Y, FromPosition.Z, *FarthestLoc.LocationName, MaxDistance);
+    
+    return FarthestLoc;
 }
 
 TArray<FSpawnLocation> ULocationQueryEngine::FindLocationsInRadius(FVector Center, float Radius) const
@@ -906,74 +1261,108 @@ int32 ULocationQueryEngine::GetOccupiedLocationCount() const
 }
 
 // ========================================
-// MISSING: Location Validation Enhancements
+// 2.5D FIGHTING GAME FALLBACK POSITIONS
 // ========================================
 
-bool ULocationQueryEngine::IsLocationValidForSpawn(const FString& LocationName, float MinClearance) const
+FVector ULocationQueryEngine::GetRandomCornerPosition(const FString& CornerType)
 {
-    if (!DoesLocationExist(LocationName))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ Location '%s' does not exist"), *LocationName);
-        return false;
-    }
+    float XBase = CornerType.Contains(TEXT("LEFT")) ? -800.0f : 800.0f;
+    float YBase = 1500.0f;
+    float ZBase = 100.0f;
     
-    FString UpperName = LocationName.ToUpper();
-    const FSpawnLocation& Loc = LocationDatabase[UpperName];
+    float XOffset = FMath::RandRange(-100.0f, 100.0f);
+    float YOffset = FMath::RandRange(-50.0f, 50.0f);
     
-    // Check occupancy
-    if (Loc.bIsOccupied)
-    {
-        UE_LOG(LogTemp, Display, TEXT("⚠️  Location '%s' is occupied"), *LocationName);
-        return false;
-    }
-    
-    // Check clearance
-    if (Loc.ClearanceRadius < MinClearance)
-    {
-        UE_LOG(LogTemp, Display, TEXT("⚠️  Location '%s' has insufficient clearance"), *LocationName);
-        return false;
-    }
-    
-    // Check collision
-    if (!IsLocationClear(Loc.WorldPosition, Loc.ClearanceRadius))
-    {
-        UE_LOG(LogTemp, Display, TEXT("⚠️  Location '%s' is obstructed"), *LocationName);
-        return false;
-    }
-    
-    return true;
+    FVector Pos = FVector(XBase + XOffset, YBase + YOffset, ZBase);
+    UE_LOG(LogTemp, Display, TEXT("   🎲 Corner fallback: [%.0f, %.0f, %.0f]"), 
+        Pos.X, Pos.Y, Pos.Z);
+    return Pos;
 }
 
-FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& PreferredLocation, float MinClearance)
+FVector ULocationQueryEngine::GetRandomBackgroundPosition()
 {
-    // Try preferred first
-    if (IsLocationValidForSpawn(PreferredLocation, MinClearance))
-    {
-        FString UpperName = PreferredLocation.ToUpper();
-        return LocationDatabase[UpperName];
-    }
+    float X = FMath::RandRange(-700.0f, 700.0f);
+    float Y = FMath::RandRange(1200.0f, 1800.0f);
+    float Z = FMath::RandRange(80.0f, 150.0f);
     
-    UE_LOG(LogTemp, Display, TEXT("⚠️  Preferred location '%s' invalid, searching..."), 
-        *PreferredLocation);
+    FVector Pos = FVector(X, Y, Z);
+    UE_LOG(LogTemp, Display, TEXT("   🎲 Background fallback: [%.0f, %.0f, %.0f]"), 
+        Pos.X, Pos.Y, Pos.Z);
+    return Pos;
+}
+
+FVector ULocationQueryEngine::GetRandomForegroundPosition()
+{
+    float X = FMath::RandRange(-500.0f, 500.0f);
+    float Y = FMath::RandRange(200.0f, 400.0f);
+    float Z = FMath::RandRange(80.0f, 120.0f);
     
-    // Search all free locations
+    FVector Pos = FVector(X, Y, Z);
+    UE_LOG(LogTemp, Display, TEXT("   🎲 Foreground fallback: [%.0f, %.0f, %.0f]"), 
+        Pos.X, Pos.Y, Pos.Z);
+    return Pos;
+}
+
+FVector ULocationQueryEngine::GetRandomOverheadPosition()
+{
+    float X = FMath::RandRange(-600.0f, 600.0f);
+    float Y = FMath::RandRange(500.0f, 1200.0f);
+    float Z = FMath::RandRange(400.0f, 600.0f);
+    
+    FVector Pos = FVector(X, Y, Z);
+    UE_LOG(LogTemp, Display, TEXT("   🎲 Overhead fallback: [%.0f, %.0f, %.0f]"), 
+        Pos.X, Pos.Y, Pos.Z);
+    return Pos;
+}
+
+FVector ULocationQueryEngine::GetRandomLeftSidePosition()
+{
+    float X = FMath::RandRange(-800.0f, -400.0f);
+    float Y = FMath::RandRange(400.0f, 1200.0f);
+    float Z = FMath::RandRange(80.0f, 150.0f);
+    
+    FVector Pos = FVector(X, Y, Z);
+    UE_LOG(LogTemp, Display, TEXT("   🎲 Left side fallback: [%.0f, %.0f, %.0f]"), 
+        Pos.X, Pos.Y, Pos.Z);
+    return Pos;
+}
+
+FVector ULocationQueryEngine::GetRandomRightSidePosition()
+{
+    float X = FMath::RandRange(400.0f, 800.0f);
+    float Y = FMath::RandRange(400.0f, 1200.0f);
+    float Z = FMath::RandRange(80.0f, 150.0f);
+    
+    FVector Pos = FVector(X, Y, Z);
+    UE_LOG(LogTemp, Display, TEXT("   🎲 Right side fallback: [%.0f, %.0f, %.0f]"), 
+        Pos.X, Pos.Y, Pos.Z);
+    return Pos;
+}
+
+FVector ULocationQueryEngine::GetRandomCenterPosition()
+{
+    float X = FMath::RandRange(-200.0f, 200.0f);
+    float Y = FMath::RandRange(600.0f, 900.0f);
+    float Z = 100.0f;
+    
+    FVector Pos = FVector(X, Y, Z);
+    UE_LOG(LogTemp, Display, TEXT("   🎲 Center fallback: [%.0f, %.0f, %.0f]"), 
+        Pos.X, Pos.Y, Pos.Z);
+    return Pos;
+}
+
+FVector ULocationQueryEngine::GetLocationCentroid() const
+{
+    if (DiscoveredLocations.Num() == 0) return FVector::ZeroVector;
+    
+    FVector Sum = FVector::ZeroVector;
     for (const FSpawnLocation& Loc : DiscoveredLocations)
     {
-        if (!Loc.bIsOccupied && Loc.ClearanceRadius >= MinClearance && 
-            IsLocationClear(Loc.WorldPosition, Loc.ClearanceRadius))
-        {
-            UE_LOG(LogTemp, Display, TEXT("✅ Found alternative: %s"), *Loc.LocationName);
-            return Loc;
-        }
+        Sum += Loc.WorldPosition;
     }
     
-    UE_LOG(LogTemp, Warning, TEXT("❌ No valid spawn location found, using world origin"));
-    return FSpawnLocation();
+    return Sum / DiscoveredLocations.Num();
 }
-
-// ========================================
-// MISSING: Utility Functions
-// ========================================
 
 float ULocationQueryEngine::GetAverageLocationDistance() const
 {
@@ -997,19 +1386,6 @@ float ULocationQueryEngine::GetAverageLocationDistance() const
     return ComparisionCount > 0 ? TotalDistance / ComparisionCount : 0.0f;
 }
 
-FVector ULocationQueryEngine::GetLocationCentroid() const
-{
-    if (DiscoveredLocations.Num() == 0) return FVector::ZeroVector;
-    
-    FVector Sum = FVector::ZeroVector;
-    for (const FSpawnLocation& Loc : DiscoveredLocations)
-    {
-        Sum += Loc.WorldPosition;
-    }
-    
-    return Sum / DiscoveredLocations.Num();
-}
-
 void ULocationQueryEngine::PrintLocationStats() const
 {
     UE_LOG(LogTemp, Display, TEXT(""));
@@ -1022,4 +1398,112 @@ void ULocationQueryEngine::PrintLocationStats() const
     UE_LOG(LogTemp, Display, TEXT(""));
 }
 
+void ULocationQueryEngine::RenameLocation(const FString& OldName, const FString& NewName)
+{
+    FString UpperOld = OldName.ToUpper();
+    FString UpperNew = NewName.ToUpper();
+    
+    if (!LocationDatabase.Contains(UpperOld))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️  RenameLocation: '%s' not found"), *OldName);
+        return;
+    }
+    
+    FSpawnLocation Loc = LocationDatabase[UpperOld];
+    Loc.LocationName = NewName;
+    
+    RemoveLocation(OldName);
+    AddLocation(Loc);
+    
+    UE_LOG(LogTemp, Display, TEXT("✅ Renamed '%s' → '%s'"), *OldName, *NewName);
+}
 
+FString ULocationQueryEngine::GetLocationContextForLLM() const
+{
+    FString Context = TEXT("=== AVAILABLE SPAWN LOCATIONS ===\n\n");
+    
+    if (DiscoveredLocations.Num() > 0)
+    {
+        Context += TEXT("[Named Locations]\n");
+        for (const FSpawnLocation& Loc : DiscoveredLocations)
+        {
+            FString OccupiedStatus = Loc.bIsOccupied ? TEXT(" [OCCUPIED]") : TEXT("");
+            Context += FString::Printf(TEXT("  - \"%s\": %s%s\n"), 
+                *Loc.LocationName, *Loc.Description, *OccupiedStatus);
+        }
+        Context += TEXT("\n");
+    }
+    
+    Context += TEXT("[Player-Relative]\n");
+    Context += TEXT("  - \"PLAYER_FRONT\", \"PLAYER_BACK\", \"PLAYER_LEFT\", \"PLAYER_RIGHT\"\n");
+    Context += TEXT("  - \"PLAYER_POSITION\", \"NEAR_PLAYER\"\n\n");
+    
+    Context += TEXT("[Actor Tags]\n");
+    Context += TEXT("  - \"NEAR:TagName\" for random actor with tag\n");
+    Context += TEXT("  - \"CLOSEST:TagName\" for nearest actor to player\n\n");
+    
+    Context += TEXT("[Custom Coordinates]\n");
+    Context += TEXT("  - Format: \"CUSTOM:[X,Y,Z]\"\n\n");
+    
+    return Context;
+}
+
+// ========================================
+// INTERNAL HELPERS
+// ========================================
+
+FVector ULocationQueryEngine::ParseCustomCoordinate(const FString& CoordString) const
+{
+    FString CleanString = CoordString.RightChop(7).TrimStartAndEnd();
+    CleanString.RemoveFromStart(TEXT("["));
+    CleanString.RemoveFromEnd(TEXT("]"));
+    
+    TArray<FString> Coords;
+    CleanString.ParseIntoArray(Coords, TEXT(","));
+    
+    if (Coords.Num() == 3)
+    {
+        return FVector(
+            FCString::Atof(*Coords[0]),
+            FCString::Atof(*Coords[1]),
+            FCString::Atof(*Coords[2])
+        );
+    }
+    
+    return FVector::ZeroVector;
+}
+
+APawn* ULocationQueryEngine::GetPlayerPawn() const
+{
+    if (!WorldContext) return nullptr;
+    
+    APlayerController* PC = UGameplayStatics::GetPlayerController(WorldContext, 0);
+    return PC ? PC->GetPawn() : nullptr;
+}
+
+AActor* ULocationQueryEngine::FindActorWithTag(const FString& Tag) const
+{
+    if (!WorldContext || Tag.IsEmpty())
+    {
+        return nullptr;
+    }
+    
+    TArray<AActor*> FoundActors;
+    UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*Tag), FoundActors);
+    
+    for (AActor* Actor : FoundActors)
+    {
+        if (IsValid(Actor))
+        {
+            return Actor;
+        }
+    }
+    
+    return nullptr;
+}
+
+void ULocationQueryEngine::BeginDestroy()
+{
+    UE_LOG(LogTemp, Display, TEXT("🗑️  LocationQueryEngine destroyed"));
+    Super::BeginDestroy();
+}

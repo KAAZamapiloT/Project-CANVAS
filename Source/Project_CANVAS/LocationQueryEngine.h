@@ -1315,4 +1315,786 @@ private:
     /// Used for safety checks and preventing concurrent scans
     UPROPERTY()
     bool bIsScanning = false;
+
+    private:
+    // ========================================
+    // 2.5D FIGHTING GAME FALLBACK SYSTEM
+    // ========================================
+    
+    /**
+     * Generates random corner position for 2.5D fighting game.
+     * 
+     * Positions actors in far background at left/right extremes.
+     * Used when GenAI requests "LEFT_CORNER", "RIGHT_CORNER", etc.
+     * 
+     * Position Range:
+     *   - X: ±800 ± 100 (extreme left/right)
+     *   - Y: 1500 ± 50 (deep background for fighting arena)
+     *   - Z: 100 (ground level)
+     * 
+     * @param CornerType String indicating which corner ("LEFT_CORNER", "RIGHT_CORNER")
+     * @return Random position in corner zone
+     * 
+     * Example:
+     *   FVector CornerPos = GetRandomCornerPosition("LEFT_CORNER");
+     *   // Possible result: [-856.2, 1523.8, 100.0]
+     */
+    FVector GetRandomCornerPosition(const FString& CornerType);
+    
+    /**
+     * Generates random background position (far from camera).
+     * 
+     * Useful for spawning props, decorations, or enemies in deep background.
+     * Position Range:
+     *   - X: -700 to 700 (wide horizontal spread)
+     *   - Y: 1200 to 1800 (very far background)
+     *   - Z: 80 to 150 (slight height variation for terrain)
+     * 
+     * 2.5D Context:
+     *   - Large Y depth creates perspective illusion
+     *   - Wide X spread fills arena width
+     *   - Low Z keeps ground level
+     * 
+     * @return Random position in background zone
+     */
+    FVector GetRandomBackgroundPosition();
+    
+    /**
+     * Generates random foreground position (close to camera).
+     * 
+     * Useful for close-range spawns, props near player.
+     * Position Range:
+     *   - X: -500 to 500 (medium horizontal spread)
+     *   - Y: 200 to 400 (close to camera)
+     *   - Z: 80 to 120 (ground level with slight variation)
+     * 
+     * @return Random position in foreground zone
+     */
+    FVector GetRandomForegroundPosition();
+    
+    /**
+     * Generates random overhead position (high Z, for projectiles/hazards).
+     * 
+     * Useful for:
+     *   - Projectile spawn (arrows, spells)
+     *   - Ceiling hazards
+     *   - Sky effects or enemies
+     * 
+     * Position Range:
+     *   - X: -600 to 600 (wide spread)
+     *   - Y: 500 to 1200 (varied depth)
+     *   - Z: 400 to 600 (elevated above ground)
+     * 
+     * @return Random position in overhead zone
+     */
+    FVector GetRandomOverheadPosition();
+    
+    /**
+     * Generates random left side position for 2.5D arena.
+     * 
+     * Useful for:
+     *   - Left-side combat spawns
+     *   - Environmental objects on left
+     *   - Asymmetric arena design
+     * 
+     * Position Range:
+     *   - X: -800 to -400 (left side only)
+     *   - Y: 400 to 1200 (varied depth)
+     *   - Z: 80 to 150 (ground level)
+     * 
+     * @return Random position on left side
+     */
+    FVector GetRandomLeftSidePosition();
+    
+    /**
+     * Generates random right side position for 2.5D arena.
+     * 
+     * Counterpart to GetRandomLeftSidePosition().
+     * Position Range:
+     *   - X: 400 to 800 (right side only)
+     *   - Y: 400 to 1200 (varied depth)
+     *   - Z: 80 to 150 (ground level)
+     * 
+     * @return Random position on right side
+     */
+    FVector GetRandomRightSidePosition();
+    
+    /**
+     * Generates random center arena position.
+     * 
+     * Used for central encounters, boss spawns, center-focus battles.
+     * Position Range:
+     *   - X: -200 to 200 (near center X)
+     *   - Y: 600 to 900 (moderate depth, fighting distance)
+     *   - Z: 100 (ground level)
+     * 
+     * @return Random position near arena center
+     */
+    FVector GetRandomCenterPosition();
+// ========================================
+// DYNAMIC ACTOR TAG CACHING - RUNTIME ACTOR DISCOVERY
+// ========================================
+
+/**
+ * ============================================================================
+ * ACTOR TAG CACHING SUBSYSTEM
+ * ============================================================================
+ * 
+ * Scans the world for actors with arbitrary tags (not just "Loc_*") and
+ * maintains a runtime cache for fast positional queries.
+ * 
+ * Architecture:
+ * - Storage: TMap<FString TagName, TArray<AActor*> ActorsWithTag>
+ * - Synchronized: ActorLocationCache parallels actor positions
+ * - Queryable: Multiple access patterns (by tag, closest, random, etc)
+ * 
+ * Use Cases:
+ * - Find all "Enemy" tagged actors and get their positions
+ * - Spawn something near random "Ally" actor
+ * - Get closest "PickUp" item from player location
+ * - Implement "NEAR:Enemy" style spawn directives from LLM
+ * 
+ * Integration:
+ * - Called during init: ScanAndCacheActorsByTags()
+ * - Used by GenAI: For dynamic actor-relative location queries
+ * - Updated at runtime: RefreshTagCache() for dynamic spawned actors
+ * 
+ * Performance Considerations:
+ * - ScanAndCacheActorsByTags(): O(n*m) initial scan (n=actors, m=tags per actor)
+ * - GetActorsWithTag(): O(1) map lookup
+ * - RefreshTagCache(): O(n) single-tag rescan
+ * - Memory: Linear with actor count and unique tags
+ * 
+ * @see ScanAndCacheActorsByTags() to populate on init
+ * @see GetActorsWithTag() for actor lists
+ * @see GetPositionsByTag() for spatial queries
+ * @see GetRandomPositionFromTag() for random spawn selection
+ */
+    /**
+        * Gets array of world positions for all actors with tag.
+        * 
+        * WHEN TO USE:
+        * - Need spatial data without actor references
+        * - Spawn multiple objects near tagged positions
+        * - Analyze spatial distribution
+        * 
+        * @param Tag Tag name (case-insensitive)
+        * @return Array of FVector world positions
+        *         Empty array if tag not cached
+        * 
+        * Performance: O(n) where n = actors with tag (computes positions)
+        * 
+        * @see GetActorsWithTag() for actor references
+        */
+   
+
+public:
+    // ========================================
+    // CACHE INITIALIZATION & MANAGEMENT
+    // ========================================
+    
+    /**
+     * Scans entire world and builds actor tag cache.
+     * 
+     * WHEN TO CALL:
+     * - During game initialization (from SceneStateTracker::Init())
+     * - After major level changes
+     * - When dynamic spawned actors need inclusion
+     * 
+     * PROCESS:
+     * 1. Iterate all actors in world (UGameplayStatics::GetAllActorsOfClass)
+     * 2. For each actor with tags:
+     *    - Skip "Loc_" prefixed tags (handled by ScanForNamedLocations)
+     *    - Add actor to ActorTagCache[TagName]
+     *    - Store position in ActorLocationCache[TagName]
+     * 3. Log summary of discovered tags
+     * 4. Print cache report if bLogResults = true
+     * 
+     * TAG FILTERING:
+     * - Includes: "Player", "Enemy", "Ally", "Item", custom tags
+     * - Excludes: "Loc_*" (location markers), internal engine tags
+     * - Case: Tags converted to UPPERCASE for case-insensitive matching
+     * 
+     * MEMORY ALLOCATION:
+     * - Clears existing caches before rebuild
+     * - Pre-allocates TArray space if available (optimization)
+     * - Empty caches if world has no actors
+     * 
+     * LOGGING OUTPUT:
+     * 🔍 "Scanning X actors for tags..."
+     * ✅ "Tag scan complete. Found Y unique tags"
+     * 📍 "'EnemyTag': 3 actors"
+     * 📍 "'ItemTag': 5 actors"
+     * 
+     * @param InWorldContext World to scan (usually GetWorld())
+     * @param bLogResults If true, prints full cache report (default: true)
+     * 
+     * @return void - Populates ActorTagCache and ActorLocationCache
+     * 
+     * Performance: O(n*m) where n=actors, m=avg tags per actor
+     * Typical: 100 actors with 2 tags each = ~200 operations
+     * 
+     * @see RefreshTagCache() for updating single tags
+     * @see PrintActorTagCache() to see results after scan
+     * 
+     * Example Usage:
+     * ```
+     * // In SceneStateTracker::Init()
+     * LocationEngine->ScanAndCacheActorsByTags(GetWorld(), true);
+     * 
+     * // Now can query:
+     * TArray<AActor*> AllEnemies = LocationEngine->GetActorsWithTag("Enemy");
+     * TArray<FVector> EnemyPositions = LocationEngine->GetPositionsByTag("Enemy");
+     * ```
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+    void ScanAndCacheActorsByTags(
+        UWorld* InWorldContext,
+        bool bLogResults = true
+    );
+    
+    /**
+     * Refreshes cache for a single tag (incremental update).
+     * 
+     * WHEN TO USE:
+     * - After spawning new actors with specific tag
+     * - When actors with tag have moved significantly
+     * - Periodic refresh for dynamic scenes (every 5-10 seconds)
+     * - More efficient than full ScanAndCacheActorsByTags()
+     * 
+     * PROCESS:
+     * 1. Clear old data for specified tag
+     * 2. Rescan world for actors with that tag
+     * 3. Rebuild position cache for tag
+     * 4. Log update count
+     * 
+     * PERFORMANCE:
+     * - O(n) where n = total actors in world (linear scan)
+     * - Much cheaper than full rebuild
+     * - Use this in gameplay loops, not full ScanAndCacheActorsByTags()
+     * 
+     * @param Tag Tag name to refresh (e.g., "Enemy", "Item")
+     * 
+     * @return void - Updates ActorTagCache[Tag] and ActorLocationCache[Tag]
+     * 
+     * Logging:
+     * 🔄 "Refreshing tag 'TagName': N actors found"
+     * 
+     * Example Usage:
+     * ```
+     * // After spawning new enemy
+     * LocationEngine->RefreshTagCache("Enemy");
+     * 
+     * // Now GetActorsWithTag("Enemy") includes new actor
+     * ```
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+    void RefreshTagCache(const FString& Tag);
+    
+    /**
+     * Clears all cached actor tags.
+     * 
+     * Side Effects:
+     * - Empties ActorTagCache
+     * - Empties ActorLocationCache
+     * - All GetActorsWithTag() calls return empty after this
+     * 
+     * Use Cases:
+     * - Level unload
+     * - Memory cleanup
+     * - Reset for testing
+     * 
+     * Logging:
+     * 🗑️  "Cleared actor tag cache"
+     * 
+     * @return void
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+    void ClearActorTagCache();
+
+    // ========================================
+    // ACTOR QUERY BY TAG - CORE RETRIEVAL FUNCTIONS
+    // ========================================
+    
+    /**
+     * Gets all actors with specific tag.
+     * 
+     * WHEN TO USE:
+     * - Need array of all actors matching tag
+     * - Iterate and process multiple actors
+     * - Build complex queries from multiple tags
+     * 
+     * @param Tag Tag to search for (case-insensitive, auto-uppercased)
+     * @return Array of AActor* pointers with matching tag
+     *         Returns empty array if tag not found in cache
+     * 
+     * Performance: O(1) map lookup (extremely fast)
+     * Memory: Returned as reference (no copy)
+     * 
+     * Return Safety:
+     * - Actors may be destroyed outside of LocationEngine
+     * - Check IsValid() on returned actors before use
+     * - Stale references possible after actor destruction
+     * 
+     * Logging:
+     * ⚠️  "GetActorsWithTag: Tag 'X' not cached" (if not found)
+     * 
+     * Example Usage:
+     * ```
+     * // Get all enemies
+     * TArray<AActor*> Enemies = LocationEngine->GetActorsWithTag("Enemy");
+     * for (AActor* Enemy : Enemies)
+     * {
+     *     if (IsValid(Enemy))
+     *     {
+     *         // Do something with enemy
+     *     }
+     * }
+     * ```
+     * 
+     * @see GetPositionsByTag() for positions of tagged actors
+     * @see GetClosestActorWithTag() for single nearest actor
+     * @see GetRandomActorWithTag() for random selection
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    TArray<AActor*> GetActorsWithTag(const FString& Tag);
+
+    
+    /**
+     * Gets array of world positions for all actors with tag.
+     * 
+     * WHEN TO USE:
+     * - Need spatial data without actor references
+     * - Spawn multiple objects near tagged positions
+     * - Analyze spatial distribution
+     * - Generate LLM context about actor positions
+     * 
+     * Returns: Parallel array to GetActorsWithTag()
+     * Positions[i] = GetActorsWithTag()[i]->GetActorLocation()
+     * 
+     * @param Tag Tag name (case-insensitive)
+     * @return Array of FVector world positions
+     *         Empty array if tag not cached
+     * 
+     * Performance: O(1) map lookup
+     * Memory: Returns reference to internal cache
+     * 
+     * Cache Validity:
+     * - Positions valid when actors are stationary
+     * - Positions stale if tagged actors have moved
+     * - Call RefreshTagCache() if actors are mobile
+     * 
+     * Logging:
+     * ⚠️  "GetPositionsByTag: Tag 'X' not in cache"
+     * 
+     * Example Usage:
+     * ```
+     * // Get all pickup locations
+     * TArray<FVector> PickupPositions = LocationEngine->GetPositionsByTag("Item");
+     * 
+     * // Spawn collectible particle at each
+     * for (const FVector& Pos : PickupPositions)
+     * {
+     *     SpawnParticleEffect(Pos);
+     * }
+     * ```
+     * 
+     * @see GetActorsWithTag() for actor references
+     * @see RefreshTagCache() to update positions for mobile actors
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    TArray<FVector> GetPositionsByTag(const FString& Tag);
+    
+    /**
+     * Gets random actor from all actors with tag.
+     * 
+     * WHEN TO USE:
+     * - Spawn near random tagged actor
+     * - Random NPC dialogue assignment
+     * - Spawn patterns with variety
+     * - GenAI "RANDOM_NEARBY_ENEMY" type directives
+     * 
+     * Algorithm:
+     * 1. Get all actors with tag
+     * 2. Pick random index
+     * 3. Return that actor
+     * 
+     * @param Tag Tag to search
+     * @return Random actor with tag, or nullptr if tag not found/empty
+     * 
+     * Distribution: Uniform random (all actors equally likely)
+     * 
+     * Logging:
+     * 🎲 "GetRandomActorWithTag: Picked random actor" (Display level)
+     * ⚠️  "GetRandomActorWithTag: No actors with tag 'X'" (Warning)
+     * 
+     * Null Safety:
+     * - Returns nullptr if tag empty
+     * - Caller should check null
+     * - Returned actor may be destroyed later
+     * 
+     * Example Usage:
+     * ```
+     * // Spawn powerup near random enemy
+     * AActor* RandomEnemy = LocationEngine->GetRandomActorWithTag("Enemy");
+     * if (RandomEnemy)
+     * {
+     *     FVector NearbyPos = RandomEnemy->GetActorLocation() + FVector(200, 0, 0);
+     *     SpawnPowerUp(NearbyPos);
+     * }
+     * ```
+     * 
+     * @see GetActorsWithTag() for all actors with tag
+     * @see GetRandomPositionFromTag() for position without actor
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    AActor* GetRandomActorWithTag(const FString& Tag);
+    
+    /**
+     * Gets random position from all actors with tag.
+     * 
+     * Like GetRandomActorWithTag() but returns position only.
+     * Doesn't return actor reference (safer if actor destroyed).
+     * 
+     * @param Tag Tag to search
+     * @return Random position from tagged actors, FVector::ZeroVector if not found
+     * 
+     * Use Cases:
+     * - Spawn at random enemy location
+     * - Projectile targets
+     * - Area effect spawning
+     * 
+     * Logging:
+     * 🎲 "Random position for tag 'X': [pos coordinates]"
+     * ⚠️  "GetRandomPositionFromTag: No positions for tag 'X'"
+     * 
+     * Example Usage:
+     * ```
+     * // Spawn explosion at random pickup location
+     * FVector ExplosionPos = LocationEngine->GetRandomPositionFromTag("Item");
+     * if (!ExplosionPos.IsZero())
+     * {
+     *     SpawnExplosion(ExplosionPos);
+     * }
+     * ```
+     * 
+     * @see GetRandomActorWithTag() for actor reference version
+     * @see GetPositionsByTag() for all positions with tag
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    FVector GetRandomPositionFromTag(const FString& Tag);
+    
+    /**
+     * Gets closest actor with tag from reference position.
+     * 
+     * WHEN TO USE:
+     * - Find nearest enemy to player
+     * - Closest ally for support
+     * - Nearest item/objective
+     * - Target selection logic
+     * 
+     * Algorithm:
+     * 1. Get all actors with tag
+     * 2. Iterate, tracking minimum distance
+     * 3. Return closest actor
+     * 
+     * @param Tag Tag to search
+     * @param FromLocation Reference point (typically player position)
+     * @return Closest actor with tag, or nullptr if none found
+     * 
+     * Distance Metric: Euclidean distance (standard 3D)
+     * Calculation: FVector::Dist(FromLocation, ActorPosition)
+     * 
+     * Performance: O(n) where n = actors with tag
+     * 
+     * Logging:
+     * 🔍 "Closest 'Tag' actor: XX units away"
+     * ⚠️  "GetClosestActorWithTag: No actors with tag 'X'"
+     * 
+     * Example Usage:
+     * ```
+     * // Find closest enemy to player
+     * AActor* NearestEnemy = LocationEngine->GetClosestActorWithTag(
+     *     "Enemy",
+     *     PlayerPos
+     * );
+     * if (NearestEnemy)
+     * {
+     *     LookAtEnemy(NearestEnemy);
+     * }
+     * ```
+     * 
+     * @see GetFarthestActorWithTag() for farthest distance
+     * @see FindLocationsInRadius() for area-based search
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    AActor* GetClosestActorWithTag(const FString& Tag, FVector FromLocation);
+    
+    /**
+     * Gets farthest actor with tag from reference position.
+     * 
+     * Inverse of GetClosestActorWithTag().
+     * Used for "escape" patterns, "spawn far from player", etc.
+     * 
+     * @param Tag Tag to search
+     * @param FromLocation Reference point
+     * @return Farthest actor with tag, or nullptr if none found
+     * 
+     * Use Cases:
+     * - Spawn away from player
+     * - Find safe zone
+     * - Avoid proximity spawning
+     * 
+     * Example Usage:
+     * ```
+     * // Spawn far from player for ambush setup
+     * AActor* SafeSpot = LocationEngine->GetFarthestActorWithTag("SpawnZone", PlayerPos);
+     * ```
+     * 
+     * @see GetClosestActorWithTag() for nearest
+     * @see FindFarthestLocation() for named location version
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    AActor* GetFarthestActorWithTag(const FString& Tag, FVector FromLocation);
+
+    // ========================================
+    // BATCH TAG OPERATIONS
+    // ========================================
+    
+    /**
+     * Gets all unique tags in cache.
+     * 
+     * Returns list of tag names that have actors.
+     * Useful for debugging and UI generation.
+     * 
+     * @return Array of discovered tag names
+     * 
+     * Example Output:
+     * ["Enemy", "Ally", "Item", "NPC", "SpawnZone", "Hazard"]
+     * 
+     * Use Cases:
+     * - Debug: See what tags are available
+     * - UI: Populate tag filter dropdowns
+     * - GenAI: Understand available entity types
+     * 
+     * Performance: O(1) - returns map keys
+     * 
+     * Example Usage:
+     * ```
+     * TArray<FString> AllTags = LocationEngine->GetAllActorTags();
+     * for (const FString& Tag : AllTags)
+     * {
+     *     UE_LOG(LogTemp, Display, TEXT("Tag: %s"), *Tag);
+     * }
+     * ```
+     * 
+     * @see PrintActorTagCache() for detailed tag info
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    TArray<FString> GetAllActorTags() const;
+    
+    /**
+     * Gets count of actors with specific tag.
+     * 
+     * Lightweight query without retrieving full actor array.
+     * 
+     * @param Tag Tag to count
+     * @return Number of actors with tag, 0 if tag not found
+     * 
+     * Use Cases:
+     * - Check if any enemies remain
+     * - Gate gameplay on actor count
+     * - Performance/debug monitoring
+     * 
+     * Example Usage:
+     * ```
+     * int32 EnemyCount = LocationEngine->GetActorCountWithTag("Enemy");
+     * if (EnemyCount == 0)
+     * {
+     *     OnAllEnemiesDead();
+     * }
+     * ```
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
+    int32 GetActorCountWithTag(const FString& Tag) const;
+
+    // ========================================
+    // DEBUG & VISUALIZATION
+    // ========================================
+    
+    /**
+     * Prints complete actor tag cache to log.
+     * 
+     * DETAILED REPORT including:
+     * - Total unique tags in cache
+     * - Per-tag breakdown:
+     *   * Tag name
+     *   * Actor count
+     *   * List of actor names
+     *   * World positions of each actor
+     * 
+     * Output Format:
+     * ```
+     * ╔═══════════════════════════════════════════╗
+     * ║ 🏷️  Actor Tag Cache Report ║
+     * ╚═══════════════════════════════════════════╝
+     * 🏷️  Tag: 'Enemy'
+     *    Actors: 3
+     *     Enemy_01 at [123.0, 456.0, 789.0][2]
+     *     Enemy_02 at [234.0, 567.0, 890.0][3]
+     *     Enemy_03 at [345.0, 678.0, 901.0][4]
+     * 
+     * 🏷️  Tag: 'Item'
+     *    Actors: 5
+     *     Sword_01 at [500.0, 100.0, 85.0][2]
+     *    ...
+     * ```
+     * 
+     * Use Cases:
+     * - Debug: Verify cache contents
+     * - Testing: Check actor discovery
+     * - Development: Confirm tags are working
+     * 
+     * Logging Level: Warning/Display (verbose)
+     * Performance: O(n) where n = cached actors
+     * 
+     * Timing: Call in BeginPlay() or from console
+     * 
+     * Example Usage:
+     * ```
+     * // In editor console:
+     * // LocationEngine.PrintActorTagCache
+     * 
+     * // Or in code:
+     * LocationEngine->PrintActorTagCache();
+     * ```
+     * 
+     * @return void - Prints to log only
+     * 
+     * @see GetAllActorTags() for programmatic tag list
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
+    void PrintActorTagCache() const;
+    
+    /**
+     * Visualizes all cached actors in world with debug geometry.
+     * 
+     * VISUAL REPRESENTATION:
+     * - Colored sphere at each actor location
+     * - Color indicates tag (can be customized)
+     * - Text label above showing actor name
+     * - Temporarily rendered (1-frame to N-frames)
+     * 
+     * Visual Elements:
+     * - Sphere radius: 50 units (configurable)
+     * - Colors: Different per tag type (red=enemy, green=ally, etc)
+     * - Text: Actor name + distance from center
+     * 
+     * Use Cases:
+     * - Level design: Verify actor placement
+     * - Debugging: Visualize cache contents in viewport
+     * - Development: Check spatial distribution
+     * 
+     * @param Duration How long to display (seconds, default 5.0)
+     * @param bCentered If true, also show line to world center
+     * @param Radius Sphere radius for visualization (default 50.0)
+     * 
+     * Performance:
+     * - Draw calls per actor: 1 (sphere) + 1 (text)
+     * - Duration measured in frames (Duration * TickRate)
+     * - Temporary (cleared after Duration)
+     * 
+     * Example Usage:
+     * ```
+     * // Show actors for 10 seconds
+     * LocationEngine->VisualizeActorTagCache(10.0f, true, 50.0f);
+     * ```
+     * 
+     * @return void - Registers debug draw commands
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
+    void VisualizeActorTagCache(
+        float Duration = 5.0f,
+        bool bCentered = false,
+        float Radius = 50.0f
+    );
+
+    // ========================================
+    // STATISTICS & ANALYSIS
+    // ========================================
+    
+    /**
+     * Gets average distance between all actors with tag.
+     * 
+     * Metric for spatial distribution density.
+     * 
+     * Calculation:
+     * - Compute distance between every pair
+     * - Average all pairwise distances
+     * 
+     * @param Tag Tag to analyze
+     * @return Average distance between actors with tag
+     *         Returns 0 if tag has 0 or 1 actors
+     * 
+     * Use Cases:
+     * - Check if enemies are clustered (low avg dist)
+     * - Verify spawn spread (high avg dist)
+     * - Level analysis
+     * 
+     * Performance: O(n²) where n = actors with tag
+     * Cache: Results not cached - recalculated each call
+     * 
+     * Example Usage:
+     * ```
+     * float EnemySpacing = LocationEngine->GetAverageActorDistance("Enemy");
+     * if (EnemySpacing < 300.0f)
+     * {
+     *     UE_LOG(LogTemp, Warning, TEXT("Enemies clustered!"));
+     * }
+     * ```
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Stats")
+    float GetAverageActorDistance(const FString& Tag) const;
+    
+    /**
+     * Gets center of mass position for all actors with tag.
+     * 
+     * Centroid = Average of all actor positions
+     * Useful for area-of-effect calculations and analysis.
+     * 
+     * @param Tag Tag to analyze
+     * @return Average position of all actors with tag
+     *         Returns FVector::ZeroVector if no actors with tag
+     * 
+     * Use Cases:
+     * - Find center of enemy group
+     * - Area effect targeting
+     * - Spatial analysis
+     * 
+     * Example Usage:
+     * ```
+     * FVector EnemyGroupCenter = LocationEngine->GetActorCentroid("Enemy");
+     * // Explode at center of all enemies
+     * CastAreaEffect(EnemyGroupCenter, 500.0f);
+     * ```
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Stats")
+    FVector GetActorCentroid(const FString& Tag) const;
+    
+    /**
+     * Prints statistics about actors with tag.
+     * 
+     * Includes:
+     * - Actor count
+     * - Average spacing
+     * - Centroid position
+     * - Distance bounds (min/max separation)
+     * 
+     * @param Tag Tag to analyze
+     * 
+     * Logging:
+     * 📊 Summary of tag statistics
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Stats")
+    void PrintActorTagStats(const FString& Tag) const;
 };

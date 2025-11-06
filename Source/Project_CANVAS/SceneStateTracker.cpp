@@ -125,6 +125,8 @@ void USceneStateTracker::OnLocationScanFinished()
     bLocationScanComplete = true;
 
     TArray<FSpawnLocation> Locations = LocationEngine->GetAllLocations();
+    LocationEngine->ScanAndCacheActorsByTags(GetWorld());
+    LocationEngine->PrintActorTagCache();
     UE_LOG(LogTemp, Warning, TEXT("✅ LocationScan: %d spawn points"), Locations.Num());
 
     CheckSystemsReady();
@@ -506,3 +508,4 @@ void USceneStateTracker::LogSceneStateVerbose()
     UE_LOG(LogTemp, Display, TEXT("   Spawned: %d actors"), SpawnedActors.Num());
     UE_LOG(LogTemp, Display, TEXT(""));
 }
+
