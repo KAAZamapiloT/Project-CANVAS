@@ -21,7 +21,7 @@
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
-     Tags.Add("Player");
+     Tags.Add("Player.Character");
 	// create the camera component
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(RootComponent);
@@ -320,7 +320,7 @@ void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
 		AActor* Target = HitResult.GetActor();
 
 		// Check if target implements IDamagable
-		if (Target->GetClass()->ImplementsInterface(UDamagable::StaticClass()))
+		if (IDamagable* DamagableTarget = Cast<IDamagable>(Target))
 		{
 			// Build damage specification
 			FDamageSpec DamageSpec;
@@ -346,11 +346,53 @@ void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
 
 void ASideScrollingCharacter::OnMoveCompleted(FName CompletedMove)
 {
-	// TODO: Handle combo window logic here
-	// - Check for buffered inputs
-	// - Allow follow-up moves
-	// - Reset combo state if no input
+	UE_LOG(LogTemp, Log, TEXT("✅ Move completed: %s"), *CompletedMove.ToString());
+    
+	// Open combo window
+	bCanBufferInput = true;
+    
+	// Set timer to close combo window
+	GetWorldTimerManager().SetTimer(
+		ComboWindowTimer, 
+		this, 
+		&ASideScrollingCharacter::CloseComboWindow, 
+		ComboWindowDuration, 
+		false
+	);
+    
+	UE_LOG(LogTemp, Log, TEXT("⏱️ Combo window opened for %.2f seconds"), ComboWindowDuration);
 }
+void ASideScrollingCharacter::CloseComboWindow()
+{
+	bCanBufferInput = false;
+    
+	// Check if player buffered a follow-up input
+	if (bHasBufferedInput)
+	{
+		// Execute buffered move via Decision Engine
+		ComboCounter++;
+        
+		UE_LOG(LogTemp, Log, TEXT("🔗 Executing buffered combo move: %s (Hit #%d)"), 
+			*BufferedInput.ToString(), ComboCounter);
+        
+		ExecuteMove(BufferedInput);
+        
+		// Clear buffer
+		bHasBufferedInput = false;
+		BufferedInput = FName();
+	}
+	else
+	{
+		// No follow-up input - reset combo state
+		bIsInCombo = false;
+		bIsAttacking = false;
+		ComboCounter = 0;
+		CurrentComboStarter = FName();
+        
+		UE_LOG(LogTemp, Log, TEXT("🔄 Combo ended - no buffered input"));
+	}
+}
+
 
 void ASideScrollingCharacter::MultiJump()
 {
@@ -472,29 +514,87 @@ void ASideScrollingCharacter::ResetWallJump()
 
 void ASideScrollingCharacter::OnHealthChanged(float Current, float Max)
 {
-	UE_LOG(LogTemp, Log, TEXT("Enemy Health: %.1f / %.1f"), Current, Max);
+	UE_LOG(LogTemp, Log, TEXT("Player Health: %.1f / %.1f"), Current, Max);
 }
 
 void ASideScrollingCharacter::OnDeath()
 {
-	UE_LOG(LogTemp, Warning, TEXT("Enemy died!"));
+	UE_LOG(LogTemp, Warning, TEXT("Player died!"));
 	// Disable AI, play death anim, destroy after delay
 	SetLifeSpan(3.0f);
 }
 
 void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Spec)
 {
-	if (HealthComp && HealthComp->IsAlive())
+	// ===== VALIDATION =====
+	if (!HealthComp || !HealthComp->IsAlive())
 	{
-		HealthComp->ApplyDamage(Spec.Amount);
-		// Play hit react or stun anim
-		// TODO: Apply stun, play hit-react animation, etc.
-		// HealthComp->StunDuration = Stun;
-		// CombatAnimComp->StopCurrentAction();
-		// PlayAnimMontage(HitReactMontage);
+		return; // Already dead or missing component
+	}
+    
+	// ===== APPLY DAMAGE (HealthComponent handles this) =====
+	HealthComp->ApplyDamage(Spec.Amount);
+    
+	UE_LOG(LogTemp, Warning, TEXT("💥 Player took %.1f damage from %s"), 
+		Spec.Amount, 
+		Spec.DamageCauser ? *Spec.DamageCauser->GetName() : TEXT("Unknown"));
+    
+	// ===== CALCULATE STUN (Character-level logic) =====
+	// Since FDamageSpec doesn't have StunDuration yet, calculate it here
+	// You can use damage amount to determine stun (e.g., 10 damage = 0.3s stun)
+	float StunDuration = FMath::Clamp(Spec.Amount * 0.015f, 0.2f, 1.0f); // 0.2s to 1.0s stun
+    
+	if (StunDuration > 0.0f)
+	{
+		// ===== SET STUN ON HEALTH COMPONENT (Direct access to public variable) =====
+		HealthComp->StunDuration = StunDuration;
+        
+		UE_LOG(LogTemp, Warning, TEXT("⚡ Player stunned for %.2f seconds"), StunDuration);
+        
+		// ===== RESET COMBO STATE =====
+		bIsInCombo = false;
+		bIsAttacking = false;
+		bCanBufferInput = false;
+		bHasBufferedInput = false;
+		ComboCounter = 0;
+		CurrentComboStarter = FName();
+        
+		// Clear timers
+		GetWorldTimerManager().ClearTimer(ComboWindowTimer);
+        
+		// ===== INTERRUPT ANIMATION =====
+		if (CombatAnimComp)
+		{
+			CombatAnimComp->StopCurrentAction();
+		}
+        
+		// ===== AUTO-CLEAR STUN TIMER =====
+		GetWorldTimerManager().SetTimer(
+			StunTimer, 
+			this, 
+			&ASideScrollingCharacter::OnStunExpired, 
+			StunDuration, 
+			false
+		);
+	}
+    
+	// ===== VISUAL FEEDBACK (Future work) =====
+	// TODO: Play hit-react animation
+	// TODO: Spawn hit particles at Spec.HitLocation
+}
+void ASideScrollingCharacter::OnStunExpired()
+{
+	if (HealthComp)
+	{
+		HealthComp->StunDuration = 0.0f;  // ✅ Direct access to public variable
+		UE_LOG(LogTemp, Log, TEXT("✅ Player stun cleared - can act again"));
 	}
 }
-// Clean separation of concerns
+bool ASideScrollingCharacter::IsStunned() const
+{
+	return HealthComp && HealthComp->StunDuration > 0.0f;
+}
+
 // Clean separation of concerns
 void ASideScrollingCharacter::ExecuteMove(FName Input)
 {
@@ -550,24 +650,38 @@ void ASideScrollingCharacter::LightAttack(const FInputActionValue& Value)
 {
 	// Player presses Light Attack button
 	// This is the INITIAL INPUT the engine sees
-	TArray<FName> LightAttackVariants = {
-		FName("LightAttack"),
-		FName("LightAttack3"),
-		FName("LightAttack2"),
-		FName("LightAttack4"),
-		FName("LightAttack1"),
-		FName("LightAttack5"),
-		FName("LightAttack6")
-	};
-	int32 RandomIndex = FMath::RandRange(0, LightAttackVariants.Num() - 1);
-	FName SelectedVariant = LightAttackVariants[RandomIndex];
+	if (IsStunned())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⚡ Cannot attack - stunned!"));
+		return;
+	}
+	if (!bIsAttacking)
+	{
+		TArray<FName> LightAttackVariants = {
+			FName("LightAttack"),
+			FName("LightAttack3"),
+			FName("LightAttack2"),
+			FName("LightAttack4"),
+			FName("LightAttack1"),
+			FName("LightAttack5"),
+			FName("LightAttack6")
+		};
+		int32 RandomIndex = FMath::RandRange(0, LightAttackVariants.Num() - 1);
+		FName SelectedVariant = LightAttackVariants[RandomIndex];
 	
-	ExecuteMove(SelectedVariant);
+		ExecuteMove(SelectedVariant);
+		bIsAttacking = true;
+	}
+	
 }
 
 void ASideScrollingCharacter::HeavyAttack(const FInputActionValue& Value)
 {
-	ExecuteMove(FName("HeavyAttack"));
+	if (!bIsAttacking)
+	{
+		ExecuteMove(FName("HeavyAttack"));
+		bIsAttacking = true;
+	}
 }
 
 void ASideScrollingCharacter::Dash(const FInputActionValue& Value)
@@ -575,3 +689,4 @@ void ASideScrollingCharacter::Dash(const FInputActionValue& Value)
 	ExecuteMove(FName("Dash"));
 }
 
+ 

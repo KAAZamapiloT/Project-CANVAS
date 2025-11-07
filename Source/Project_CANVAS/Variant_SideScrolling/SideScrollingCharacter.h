@@ -113,6 +113,36 @@ protected:
 	/** If true, this character is moving along the side scrolling axis */
 	bool bMovingHorizontally = false;
 
+	/**Gating attacks*/
+	bool bIsAttacking = false;
+    
+	// ===== ADD THESE NEW VARIABLES =====
+	/** If true, player is currently in a combo chain */
+	bool bIsInCombo = false;
+    
+	/** If true, player can buffer next input during combo window */
+	bool bCanBufferInput = false;
+    
+	/** Stores buffered input during combo window */
+	FName BufferedInput;
+    
+	/** True if player has buffered an input */
+	bool bHasBufferedInput = false;
+    
+	/** Tracks which move started the current combo (e.g., "LightAttack") */
+	FName CurrentComboStarter;
+    
+	/** Number of hits in current combo chain */
+	int32 ComboCounter = 0;
+    
+	/** Timer handle for combo window duration */
+	FTimerHandle ComboWindowTimer;
+    
+	/** Duration of combo window in seconds */
+	UPROPERTY(EditAnywhere, Category="Combat|Combo")
+	float ComboWindowDuration = 0.3f;
+	/** Timer handle for stun duration */
+	FTimerHandle StunTimer;
 	UPROPERTY(EditAnywhere, Category="Health")
 	class UHealthComponent* HealthComp;
 	// Add these UPROPERTYs in protected section (after HealthComp)
@@ -131,6 +161,15 @@ public:
 
 protected:
 
+	/** Closes the combo window and executes buffered input if any */
+	void CloseComboWindow();
+
+	/** Called when stun duration expires */
+	void OnStunExpired();
+    
+	/** Check if player is currently stunned */
+	UFUNCTION(BlueprintPure, Category="Combat|State")
+	bool IsStunned() const;
 	/** Gameplay cleanup */
 	virtual void EndPlay(EEndPlayReason::Type EndPlayReason) override;
 

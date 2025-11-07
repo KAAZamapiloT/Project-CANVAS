@@ -20,7 +20,12 @@ class PROJECT_CANVAS_API USceneBuilder : public UObject
 public:
 	UFUNCTION(BlueprintCallable, Category = "Scene Builder")
 	void BuildScene(const struct FEnhancedScenePlan& Plan, UWorld* WorldContext);
-	
+	/** HELPER FUNCTION
+	 * in console FindGenAIActors
+	 */
+	UFUNCTION(Exec, Category = "SceneBuilder")
+	void FindGenAIActors();
+
 private:
 	// Main build functions
 	void ApplyEnvironmentSettings(const FEnvironmentPlan& Environment, UWorld* WorldContext);

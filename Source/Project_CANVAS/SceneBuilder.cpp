@@ -217,12 +217,33 @@ void USceneBuilder::SpawnNewActors(
     int32 SuccessCount = 0;
     int32 FailureCount = 0;
 
+    // ========================================
+    // DEBUG: Show what we're about to spawn
+    // ========================================
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║  🔍 DEBUG: Spawn Requests              ║"));
+    UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════╝"));
+
+    for (int32 i = 0; i < SpawnRequests.Num(); i++)
+    {
+        const FSpawnRequest& Req = SpawnRequests[i];
+        UE_LOG(LogTemp, Display, TEXT("[%d] AssetPath: '%s'"), i, *Req.AssetPath);
+        UE_LOG(LogTemp, Display, TEXT("    ObjectName: '%s'"), *Req.ObjectName);
+        UE_LOG(LogTemp, Display, TEXT("    Location: [%.0f, %.0f, %.0f]"), 
+            Req.SpawnLocation.X, Req.SpawnLocation.Y, Req.SpawnLocation.Z);
+    }
+    UE_LOG(LogTemp, Warning, TEXT(""));
+
+    // ========================================
+    // SPAWN LOOP
+    // ========================================
     for (const FSpawnRequest& Request : SpawnRequests)
     {
         // Validate
         if (Request.AssetPath.IsEmpty())
         {
-            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Empty asset path, skipping"));
+            UE_LOG(LogTemp, Warning, TEXT("❌ Empty asset path, skipping"));
             FailureCount++;
             continue;
         }
@@ -230,8 +251,9 @@ void USceneBuilder::SpawnNewActors(
         // ========================================
         // LOAD MESH
         // ========================================
-        FString FullPath = FString::Printf(TEXT("/Game/DATABASE/meshes/%s.%s"), 
-            *Request.AssetPath, *Request.AssetPath);
+        FString FullPath = Request.AssetPath;
+        
+        UE_LOG(LogTemp, Display, TEXT("🔄 Loading: %s"), *FullPath);
         
         UStaticMesh* LoadedMesh = Cast<UStaticMesh>(
             StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *FullPath)
@@ -239,10 +261,12 @@ void USceneBuilder::SpawnNewActors(
 
         if (!LoadedMesh)
         {
-            UE_LOG(LogTemp, Error, TEXT("SceneBuilder: Failed to load mesh: %s"), *FullPath);
+            UE_LOG(LogTemp, Error, TEXT("❌ Failed to load mesh: %s"), *FullPath);
             FailureCount++;
             continue;
         }
+
+        UE_LOG(LogTemp, Display, TEXT("   ✅ Mesh loaded: %s"), *LoadedMesh->GetName());
 
         // ========================================
         // SPAWN ACTOR
@@ -260,44 +284,71 @@ void USceneBuilder::SpawnNewActors(
 
         if (!NewActor)
         {
-            UE_LOG(LogTemp, Error, TEXT("SceneBuilder: Failed to spawn actor"));
+            UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn actor"));
             FailureCount++;
             continue;
         }
 
         // ========================================
-        // CONFIGURE MESH
+        // CONFIGURE MESH COMPONENT - ✅ CORRECT ORDER
         // ========================================
         UStaticMeshComponent* MeshComp = NewActor->GetStaticMeshComponent();
-        if (MeshComp)
+        if (!MeshComp)
         {
-            MeshComp->SetStaticMesh(LoadedMesh);
-            MeshComp->SetMobility(EComponentMobility::Movable);
-            MeshComp->SetVisibility(true, true);
-            MeshComp->SetHiddenInGame(false);
-            MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-            MeshComp->SetCastShadow(true);
-            MeshComp->RegisterComponent();
+            UE_LOG(LogTemp, Error, TEXT("❌ No mesh component found!"));
+            NewActor->Destroy();
+            FailureCount++;
+            continue;
         }
+
+        // ✅ CRITICAL: Unregister BEFORE changing mobility
+        if (MeshComp->IsRegistered())
+        {
+            MeshComp->UnregisterComponent();
+        }
+
+        // ✅ Set mobility FIRST (before setting mesh)
+        MeshComp->SetMobility(EComponentMobility::Movable);
+
+        // ✅ NOW set the mesh
+        MeshComp->SetStaticMesh(LoadedMesh);
+
+        // ✅ Configure visuals
+        MeshComp->SetVisibility(true);
+        MeshComp->SetHiddenInGame(false);
+        MeshComp->SetCastShadow(true);
+        MeshComp->SetReceivesDecals(true);
+
+        // ✅ Configure collision
+        MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        MeshComp->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+
+        // ✅ Apply scale to component
+        MeshComp->SetWorldScale3D(Request.Scale);
+
+        // ✅ Re-register component (ONLY ONCE)
+        MeshComp->RegisterComponent();
+
+        // ✅ Mark render state dirty
+        MeshComp->MarkRenderStateDirty();
 
         // ========================================
         // CONFIGURE ACTOR
         // ========================================
-        NewActor->SetActorLocation(Request.SpawnLocation, false, nullptr, ETeleportType::TeleportPhysics);
+        NewActor->SetActorLocation(Request.SpawnLocation);
         NewActor->SetActorRotation(Request.Rotation);
-        NewActor->SetActorScale3D(Request.Scale);
         NewActor->SetActorHiddenInGame(false);
         NewActor->SetActorEnableCollision(true);
-        NewActor->SetActorTickEnabled(true);
+        NewActor->SetActorTickEnabled(false); // Static spawned objects don't need tick
 
         // ========================================
-        // TAG & LABEL (for tracking)
+        // TAG & LABEL
         // ========================================
-        FString ObjectTag = FString::Printf(TEXT("Object_%s"), *Request.ObjectName);
-        NewActor->SetActorLabel(*ObjectTag);
+        FString ObjectLabel = FString::Printf(TEXT("GenAI_%s"), *Request.ObjectName);
+        NewActor->SetActorLabel(*ObjectLabel);
         
         NewActor->Tags.Add(FName(TEXT("GenAI.Spawned")));
-        NewActor->Tags.Add(FName(*ObjectTag));
+        NewActor->Tags.Add(FName(*ObjectLabel));
         NewActor->Tags.Add(FName(*TimestampTag));
         NewActor->Tags.Add(FName(*ThemeTag));
         
@@ -312,8 +363,8 @@ void USceneBuilder::SpawnNewActors(
         NewActor->RerunConstructionScripts();
         NewActor->MarkComponentsRenderStateDirty();
 
-        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: ✅ Spawned %s at [%.1f, %.1f, %.1f]"),
-            *ObjectTag,
+        UE_LOG(LogTemp, Display, TEXT("✅ Spawned '%s' at [%.0f, %.0f, %.0f]"),
+            *ObjectLabel,
             Request.SpawnLocation.X,
             Request.SpawnLocation.Y,
             Request.SpawnLocation.Z);
@@ -321,14 +372,24 @@ void USceneBuilder::SpawnNewActors(
         SuccessCount++;
     }
 
-    // Summary
+    // ========================================
+    // SUMMARY
+    // ========================================
     UE_LOG(LogTemp, Warning, TEXT(""));
     UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════╗"));
     UE_LOG(LogTemp, Warning, TEXT("║  🎬 Spawn Complete                      ║"));
     UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════╝"));
     UE_LOG(LogTemp, Warning, TEXT("✅ Success: %d  |  ❌ Failed: %d"), SuccessCount, FailureCount);
+    
+    if (SuccessCount > 0)
+    {
+        UE_LOG(LogTemp, Display, TEXT("📍 Find in World Outliner: Filter 'GenAI_'"));
+        UE_LOG(LogTemp, Display, TEXT("🏷️  Filter by tag: 'GenAI.Spawned' or '%s'"), *ThemeTag);
+    }
+    
     UE_LOG(LogTemp, Warning, TEXT(""));
 }
+
 // --- Private: Props Helpers ---
 
 void USceneBuilder::ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext)
@@ -606,4 +667,25 @@ FVector USceneBuilder::ParseCustomCoordinate(const FString& CoordString) const
 {
     // Parse "CUSTOM:[X,Y,Z]" format
     return FVector::ZeroVector;
+}
+
+
+
+
+// In SceneBuilder.cpp
+void USceneBuilder::FindGenAIActors()
+{
+    UWorld* World = GetWorld();
+    if (!World) return;
+    
+    TArray<AActor*> FoundActors;
+    UGameplayStatics::GetAllActorsWithTag(World, FName(TEXT("GenAI.Spawned")), FoundActors);
+    
+    UE_LOG(LogTemp, Warning, TEXT("📍 Found %d GenAI spawned actors:"), FoundActors.Num());
+    for (AActor* Actor : FoundActors)
+    {
+        FVector Loc = Actor->GetActorLocation();
+        UE_LOG(LogTemp, Display, TEXT("  • %s at [%.0f, %.0f, %.0f]"), 
+            *Actor->GetActorLabel(), Loc.X, Loc.Y, Loc.Z);
+    }
 }

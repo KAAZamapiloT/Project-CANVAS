@@ -349,11 +349,79 @@ void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
 {
     AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
     {
-        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning static meshes in %s"), *ScanPath);
-        ScanAssetsOfType(UStaticMesh::StaticClass(), ScanPath, DiscoveredStaticMeshNames);
+        UE_LOG(LogTemp, Display, TEXT("🔍 Scanning static meshes in: %s"), *ScanPath);
+        
+        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+        FARFilter Filter;
+        Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
+        Filter.PackagePaths.Add(FName(*ScanPath));
+        Filter.bRecursivePaths = true;
+        
+        TArray<FAssetData> AssetDataArray;
+        AssetRegistryModule.Get().GetAssets(Filter, AssetDataArray);
+        
+        UE_LOG(LogTemp, Display, TEXT("   Found %d static meshes"), AssetDataArray.Num());
+        
+        for (const FAssetData& AssetData : AssetDataArray)
+        {
+            FString MeshName = AssetData.AssetName.ToString();
+            
+            // ✅ CRITICAL FIX: Use GetSoftObjectPath() which gives CORRECT path
+            FString FullPath = AssetData.GetSoftObjectPath().ToString();
+            
+            // Verify path doesn't have double slashes
+            if (FullPath.Contains(TEXT("//")))
+            {
+                UE_LOG(LogTemp, Error, TEXT("❌ Invalid path detected: %s"), *FullPath);
+                continue; // Skip this asset
+            }
+            
+            FString Directory = FPaths::GetPath(FullPath);
+            
+            FMeshAssetInfo MeshInfo;
+            MeshInfo.MeshName = MeshName;
+            MeshInfo.FullPath = FullPath; // Store clean path
+            MeshInfo.Directory = Directory;
+            MeshInfo.Keywords = ExtractKeywordsFromMesh(MeshName);
+            
+            FString NormalizedName = NormalizeName(MeshName);
+            DiscoveredMeshes.Add(NormalizedName, MeshInfo);
+            DiscoveredStaticMeshNames.AddUnique(MeshName);
+            
+            UE_LOG(LogTemp, Verbose, TEXT("   ✓ %s -> %s"), *MeshName, *FullPath);
+        }
+        
+        // Build variant groups
+        for (const auto& MeshPair : DiscoveredMeshes)
+        {
+            FString BaseName = ExtractBaseName(MeshPair.Value.MeshName);
+            FString NormalizedBase = NormalizeName(BaseName);
+            
+            if (!VariantGroups.Contains(NormalizedBase))
+            {
+                FMeshVariantGroup Group;
+                Group.BaseName = BaseName;
+                VariantGroups.Add(NormalizedBase, Group);
+            }
+            
+            VariantGroups[NormalizedBase].Variants.AddUnique(MeshPair.Value.MeshName);
+            VariantGroups[NormalizedBase].VariantPaths.AddUnique(MeshPair.Value.FullPath);
+        }
+        
+        int32 VariantGroupCount = 0;
+        for (const auto& Group : VariantGroups)
+        {
+            if (Group.Value.Variants.Num() > 1) VariantGroupCount++;
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("✅ Mesh scan: %d meshes, %d variant groups"), 
+            DiscoveredMeshes.Num(), VariantGroupCount);
+        
         CheckAllScansComplete();
     });
 }
+
+
 
 
 FString UAssetIndexer::ResolveMeshToFullPathWithVariants(const FString& SearchName)

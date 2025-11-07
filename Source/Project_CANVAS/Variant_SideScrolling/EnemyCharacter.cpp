@@ -18,7 +18,7 @@
 AEnemyCharacter::AEnemyCharacter()
 {
     PrimaryActorTick.bCanEverTick = false;
-    Tags.Add(FName("Enemy"));
+    Tags.Add(FName("Enemy.Character"));
 
     // =====================================
     // 2.5D PLANE CONSTRAINT
@@ -69,7 +69,7 @@ void AEnemyCharacter::BeginPlay()
     // ADD engine initialization
     if (CombatDecisionComp)
     {
-        CombatDecisionComp->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Varient_SideScrolling/Blueprints/DT_CombatMoves"));
+        CombatDecisionComp->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Variant_SideScrolling/Blueprints/Combat/DT_MoveTable.DT_MoveTable"));
     }
 }
 
