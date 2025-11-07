@@ -12,6 +12,9 @@
 #include "GameFramework/Actor.h"
 #include"ScenePlan.h"
 #include "Engine/StaticMesh.h"
+#include "AssetIndexer.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Async/Async.h"
 void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
 {
     if (bIsScanning)
@@ -30,6 +33,10 @@ void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
     DiscoveredPostProcessNames.Empty();
     DiscoveredActorTags.Empty();
     DiscoveredStaticMeshNames.Empty();
+    DiscoveredMeshes.Empty();        // ← ADD THIS
+    VariantGroups.Empty();           // ← ADD THIS
+   
+    
     UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Starting comprehensive asset scan..."));
 
     // Launch all scans
@@ -152,20 +159,48 @@ void UAssetIndexer::CheckAllScansComplete()
         bIsScanComplete = true;
         
         MaterialDatabase = BuildMaterialDatabase();
-        UE_LOG(LogTemp, Warning, TEXT("AssetIndexer: Built material database with %d unique materials"), 
-            MaterialDatabase.Num());
         
-        UE_LOG(LogTemp, Warning, TEXT("AssetIndexer: ========== SCAN COMPLETE =========="));
-        UE_LOG(LogTemp, Warning, TEXT("  Textures: %d"), DiscoveredTextureNames.Num());
-        UE_LOG(LogTemp, Warning, TEXT("  Particles: %d"), DiscoveredParticleNames.Num());
-        UE_LOG(LogTemp, Warning, TEXT("  PostProcess: %d"), DiscoveredPostProcessNames.Num());
-        UE_LOG(LogTemp, Warning, TEXT("  StaticMeshes: %d"), DiscoveredStaticMeshNames.Num()); 
-        UE_LOG(LogTemp, Warning, TEXT("  Actor Tags: %d"), DiscoveredActorTags.Num());
-        UE_LOG(LogTemp, Warning, TEXT("================================================"));
+        // ========================================
+        // SUMMARY LOG
+        // ========================================
+        UE_LOG(LogTemp, Warning, TEXT(""));
+        UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════╗"));
+        UE_LOG(LogTemp, Warning, TEXT("║  ✅ SCAN COMPLETE                       ║"));
+        UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════╝"));
+        UE_LOG(LogTemp, Warning, TEXT("  📷 Textures: %d"), DiscoveredTextureNames.Num());
+        UE_LOG(LogTemp, Warning, TEXT("  🎆 Particles: %d"), DiscoveredParticleNames.Num());
+        UE_LOG(LogTemp, Warning, TEXT("  🎨 PostProcess: %d"), DiscoveredPostProcessNames.Num());
+        UE_LOG(LogTemp, Warning, TEXT("  📦 StaticMeshes: %d"), DiscoveredStaticMeshNames.Num());
+        UE_LOG(LogTemp, Warning, TEXT("  🏷️  Actor Tags: %d"), DiscoveredActorTags.Num());
+        UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════"));
+        
+        // ========================================
+        // DETAILED ACTOR TAGS
+        // ========================================
+        if (DiscoveredActorTags.Num() > 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT(""));
+            UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════╗"));
+            UE_LOG(LogTemp, Warning, TEXT("║  📍 Discovered Actor Tags              ║"));
+            UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════╝"));
+            
+            for (const FString& Tag : DiscoveredActorTags)
+            {
+                UE_LOG(LogTemp, Display, TEXT("  🏷️  %s"), *Tag);
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  No actor tags found in level"));
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("════════════════════════════════════════"));
+        UE_LOG(LogTemp, Warning, TEXT(""));
         
         OnScanComplete.Broadcast();
     }
 }
+
 
 
 TMap<FString, FTextureSet> UAssetIndexer::BuildMaterialDatabase()
@@ -276,13 +311,6 @@ FString UAssetIndexer::ExtractMaterialBaseName(const FString& TextureName)
 }
 
 
-bool UAssetIndexer::bIsNameMatch(FString Key, FString AssetName)
-{
-    FString CleanKey = Key.ToLower().Replace(TEXT("_"), TEXT(""));
-    FString CleanAsset = AssetName.ToLower().Replace(TEXT("_"), TEXT(""));
-    return CleanAsset.Contains(CleanKey);
-}
-
 FTextureSet UAssetIndexer::ResolveTextureFromName(const FString& SearchName)
 {
     FTextureSet Result;
@@ -301,15 +329,18 @@ FTextureSet UAssetIndexer::ResolveTextureFromName(const FString& SearchName)
     }
 
     // fallback: partial/fuzzy match by token
+    // ✅ NEW - Use substring match instead:
     for (const auto& Pair : MaterialDatabase)
     {
-        if (bIsNameMatch(SearchName, Pair.Key))
+        FString CleanAsset = Pair.Key.ToLower().Replace(TEXT("_"), TEXT(""));
+        if (CleanAsset.Contains(SearchName.ToLower()))
         {
             Result = Pair.Value;
             UE_LOG(LogTemp, Display, TEXT("ResolveTextureFromName (fuzzy) %s -> %s"), *SearchName, *Pair.Key);
             return Result;
         }
     }
+
 
     UE_LOG(LogTemp, Warning, TEXT("No texture match found for %s"), *SearchName);
     return Result; // Empty set
@@ -324,48 +355,427 @@ void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
     });
 }
 
-FString UAssetIndexer::ResolveStaticMeshName(const FString& SearchName)
+
+FString UAssetIndexer::ResolveMeshToFullPathWithVariants(const FString& SearchName)
 {
     if (SearchName.IsEmpty())
     {
-        UE_LOG(LogTemp, Warning, TEXT("ResolveStaticMeshName: Empty search name"));
+        UE_LOG(LogTemp, Warning, TEXT("ResolveMesh: Empty search name"));
         return TEXT("");
     }
-
-    // 1. Try exact match (case-insensitive)
-    for (const FString& MeshName : DiscoveredStaticMeshNames)
+    
+    FString NormalizedSearch = NormalizeName(SearchName);
+    
+    UE_LOG(LogTemp, Display, TEXT("🎲 ResolveMesh (with variants): '%s'"), *SearchName);
+    
+    // ========================================
+    // STRATEGY 1: Check if requesting specific numbered variant
+    // ========================================
+    int32 VariantNum = -1;
+    if (IsNumberedVariant(SearchName, VariantNum))
     {
-        if (MeshName.Equals(SearchName, ESearchCase::IgnoreCase))
+        if (DiscoveredMeshes.Contains(NormalizedSearch))
         {
-            UE_LOG(LogTemp, Display, TEXT("ResolveStaticMeshName: Exact match '%s' -> '%s'"), 
-                *SearchName, *MeshName);
-            return MeshName;
+            FString Result = DiscoveredMeshes[NormalizedSearch].FullPath;
+            UE_LOG(LogTemp, Display, TEXT("   ✅ [SPECIFIC VARIANT #%d] %s"), VariantNum, *Result);
+            return Result;
         }
     }
-
-    // 2. Try contains match (e.g., "Rock" finds "SM_Rock_Large")
-    for (const FString& MeshName : DiscoveredStaticMeshNames)
+    
+    // ========================================
+    // STRATEGY 2: Check variant groups and pick random
+    // ========================================
+    for (const auto& GroupPair : VariantGroups)
     {
-        if (MeshName.Contains(SearchName, ESearchCase::IgnoreCase))
+        if (GroupPair.Key.Equals(NormalizedSearch) || 
+            GroupPair.Value.BaseName.Contains(SearchName, ESearchCase::IgnoreCase) ||
+            SearchName.Contains(GroupPair.Value.BaseName, ESearchCase::IgnoreCase))
         {
-            UE_LOG(LogTemp, Display, TEXT("ResolveStaticMeshName: Contains match '%s' -> '%s'"), 
-                *SearchName, *MeshName);
-            return MeshName;
+            if (GroupPair.Value.VariantPaths.Num() > 0)
+            {
+                int32 SelectedIdx = FMath::RandRange(0, GroupPair.Value.Variants.Num() - 1);
+                FString SelectedVariant = GroupPair.Value.Variants[SelectedIdx];
+                FString Result = GroupPair.Value.VariantPaths[SelectedIdx];
+                
+                UE_LOG(LogTemp, Display, TEXT("   🎲 [VARIANT GROUP] '%s' has %d variants, selected: %s"), 
+                    *GroupPair.Value.BaseName, GroupPair.Value.Variants.Num(), *SelectedVariant);
+                
+                return Result;
+            }
         }
     }
+    
+    // ========================================
+    // STRATEGY 3: Fall back to robust single-mesh resolution
+    // ========================================
+    return ResolveMeshToFullPath(SearchName);
+}
 
-    // 3. Try fuzzy match using bIsNameMatch helper
-    for (const FString& MeshName : DiscoveredStaticMeshNames)
+FString UAssetIndexer::ResolveMeshToFullPath(const FString& SearchName)
+{
+    if (SearchName.IsEmpty())
     {
-        if (bIsNameMatch(SearchName, MeshName))
+        UE_LOG(LogTemp, Warning, TEXT("ResolveMesh: Empty search name"));
+        return TEXT("");
+    }
+    
+    FString NormalizedSearch = NormalizeName(SearchName);
+    
+    UE_LOG(LogTemp, Display, TEXT("🔎 ResolveMesh: Searching for '%s'"), *SearchName);
+    
+    // ========================================
+    // STRATEGY 1: Exact normalized match
+    // ========================================
+    if (DiscoveredMeshes.Contains(NormalizedSearch))
+    {
+        FString Result = DiscoveredMeshes[NormalizedSearch].FullPath;
+        UE_LOG(LogTemp, Display, TEXT("   ✅ [EXACT] Found: %s"), *Result);
+        return Result;
+    }
+    
+    // ========================================
+    // STRATEGY 2: Substring match (case insensitive)
+    // ========================================
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        if (Pair.Value.MeshName.Contains(SearchName, ESearchCase::IgnoreCase) ||
+            NormalizedSearch.Contains(Pair.Key))
         {
-            UE_LOG(LogTemp, Display, TEXT("ResolveStaticMeshName: Fuzzy match '%s' -> '%s'"), 
-                *SearchName, *MeshName);
-            return MeshName;
+            FString Result = Pair.Value.FullPath;
+            UE_LOG(LogTemp, Display, TEXT("   ✅ [SUBSTRING] '%s' in '%s' -> %s"), 
+                *SearchName, *Pair.Value.MeshName, *Result);
+            return Result;
         }
     }
-
-    // 4. No match found
-    UE_LOG(LogTemp, Warning, TEXT("ResolveStaticMeshName: No match found for '%s'"), *SearchName);
+    
+    // ========================================
+    // STRATEGY 3: Keyword matching
+    // ========================================
+    TArray<FString> SearchKeywords = ExtractKeywordsFromMesh(SearchName);
+    
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        for (const FString& SearchKeyword : SearchKeywords)
+        {
+            for (const FString& AssetKeyword : Pair.Value.Keywords)
+            {
+                if (SearchKeyword.Equals(AssetKeyword, ESearchCase::IgnoreCase))
+                {
+                    FString Result = Pair.Value.FullPath;
+                    UE_LOG(LogTemp, Display, TEXT("   ✅ [KEYWORD] '%s' matches '%s' (keyword: %s)"), 
+                        *SearchName, *Pair.Value.MeshName, *AssetKeyword);
+                    return Result;
+                }
+            }
+        }
+    }
+    
+    // ========================================
+    // STRATEGY 4: Similarity-based fuzzy match (60%+)
+    // ========================================
+    FString BestMatch;
+    int32 BestScore = 0;
+    
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        int32 Score = CalculateSimilarity(NormalizedSearch, Pair.Key);
+        if (Score > BestScore && Score > 60)
+        {
+            BestScore = Score;
+            BestMatch = Pair.Value.FullPath;
+        }
+    }
+    
+    if (!BestMatch.IsEmpty())
+    {
+        UE_LOG(LogTemp, Display, TEXT("   ⚠️  [FUZZY %d%%] %s -> %s"), 
+            BestScore, *SearchName, *BestMatch);
+        return BestMatch;
+    }
+    
+    // ========================================
+    // STRATEGY 5: Random from category/prefix
+    // ========================================
+    TArray<FString> CandidatePaths;
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        if (Pair.Value.MeshName.StartsWith(TEXT("SM_")))
+        {
+            CandidatePaths.Add(Pair.Value.FullPath);
+        }
+    }
+    
+    if (CandidatePaths.Num() > 0)
+    {
+        int32 RandomIdx = FMath::RandRange(0, CandidatePaths.Num() - 1);
+        UE_LOG(LogTemp, Warning, TEXT("   ⚠️  [FALLBACK RANDOM] Using random SM_* mesh"));
+        return CandidatePaths[RandomIdx];
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("❌ ResolveMesh: Could not find mesh for '%s'"), *SearchName);
     return TEXT("");
 }
+
+FMeshVariantGroup UAssetIndexer::GetMeshVariants(const FString& SearchName)
+{
+    FString NormalizedSearch = NormalizeName(SearchName);
+    
+    for (const auto& GroupPair : VariantGroups)
+    {
+        if (GroupPair.Key.Equals(NormalizedSearch) ||
+            GroupPair.Value.BaseName.Contains(SearchName, ESearchCase::IgnoreCase))
+        {
+            return GroupPair.Value;
+        }
+    }
+    
+    return FMeshVariantGroup();
+}
+
+int32 UAssetIndexer::GetVariantCount(const FString& SearchName)
+{
+    FMeshVariantGroup Variants = GetMeshVariants(SearchName);
+    return Variants.Variants.Num();
+}
+
+FMeshAssetInfo UAssetIndexer::GetMeshInfo(const FString& SearchName)
+{
+    FString NormalizedSearch = NormalizeName(SearchName);
+    
+    if (DiscoveredMeshes.Contains(NormalizedSearch))
+    {
+        return DiscoveredMeshes[NormalizedSearch];
+    }
+    
+    return FMeshAssetInfo();
+}
+
+FString UAssetIndexer::ExtractBaseName(const FString& VariantName)
+{
+    FString Result = VariantName;
+    
+    while (Result.Len() > 0 && FChar::IsDigit(Result[Result.Len() - 1]))
+    {
+        Result.RemoveAt(Result.Len() - 1);
+    }
+    
+    if (Result.EndsWith(TEXT("_")))
+    {
+        Result.RemoveAt(Result.Len() - 1);
+    }
+    
+    return Result;
+}
+
+bool UAssetIndexer::IsNumberedVariant(const FString& Name, int32& OutVariantNumber)
+{
+    if (Name.Len() < 3) return false;
+    
+    int32 LastUnderscore = Name.Find(TEXT("_"), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+    if (LastUnderscore == INDEX_NONE) return false;
+    
+    FString Suffix = Name.RightChop(LastUnderscore + 1);
+    
+    bool bAllDigits = true;
+    for (TCHAR Ch : Suffix)
+    {
+        if (!FChar::IsDigit(Ch))
+        {
+            bAllDigits = false;
+            break;
+        }
+    }
+    
+    if (bAllDigits && Suffix.Len() >= 2)
+    {
+        OutVariantNumber = FCString::Atoi(*Suffix);
+        return true;
+    }
+    
+    return false;
+}
+
+TArray<FString> UAssetIndexer::ExtractKeywordsFromMesh(const FString& MeshName)
+{
+    TArray<FString> Keywords;
+    
+    FString CleanName = MeshName;
+    CleanName.RemoveFromStart(TEXT("SM_"));
+    CleanName.RemoveFromStart(TEXT("S_"));
+    CleanName.RemoveFromStart(TEXT("T_"));
+    CleanName.RemoveFromStart(TEXT("M_"));
+    
+    // ✅ NEW:
+    CleanName.ReplaceInline(TEXT("-"), TEXT("_"));
+
+    TArray<FString> Parts;
+    CleanName.ParseIntoArray(Parts, TEXT("_"));
+    
+    for (FString& Part : Parts)
+    {
+        if (!Part.IsEmpty() && Part.Len() > 2 && !FChar::IsDigit(Part[0]))
+        {
+            Keywords.AddUnique(Part.ToLower());
+        }
+    }
+    
+    return Keywords;
+}
+
+FString UAssetIndexer::NormalizeName(const FString& Name)
+{
+    FString Normalized = Name.ToLower();
+    
+    Normalized.RemoveFromStart(TEXT("sm_"));
+    Normalized.RemoveFromStart(TEXT("s_"));
+    Normalized.RemoveFromStart(TEXT("t_"));
+    Normalized.RemoveFromStart(TEXT("m_"));
+    
+    Normalized.ReplaceInline(TEXT("-"), TEXT("_"));
+    Normalized.ReplaceInline(TEXT(" "), TEXT("_"));
+    
+    Normalized.RemoveFromEnd(TEXT("_2k"));
+    Normalized.RemoveFromEnd(TEXT("_4k"));
+    Normalized.RemoveFromEnd(TEXT("_8k"));
+    Normalized.RemoveFromEnd(TEXT("_hq"));
+    Normalized.RemoveFromEnd(TEXT("_lq"));
+    
+    return Normalized;
+}
+
+int32 UAssetIndexer::CalculateSimilarity(const FString& A, const FString& B)
+{
+    int32 MaxLen = FMath::Max(A.Len(), B.Len());
+    if (MaxLen == 0) return 100;
+    
+    int32 Matches = 0;
+    int32 MinLen = FMath::Min(A.Len(), B.Len());
+    
+    for (int32 i = 0; i < MinLen; i++)
+    {
+        if (A[i] == B[i])
+        {
+            Matches++;
+        }
+    }
+    
+    return (Matches * 100) / MaxLen;
+}
+
+void UAssetIndexer::PrintAllMeshes() const
+{
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║  📦 Discovered Static Meshes (%d)      ║"), DiscoveredMeshes.Num());
+    UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════╝"));
+    
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        const FMeshAssetInfo& Info = Pair.Value;
+        UE_LOG(LogTemp, Display, TEXT("🔹 %s"), *Info.MeshName);
+        UE_LOG(LogTemp, Display, TEXT("   Path: %s"), *Info.FullPath);
+        UE_LOG(LogTemp, Display, TEXT("   Keywords: %s"), *FString::Join(Info.Keywords, TEXT(", ")));
+    }
+    UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+void UAssetIndexer::PrintMeshVariants() const
+{
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║  🎲 Mesh Variant Groups                ║"));
+    UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════╝"));
+    
+    for (const auto& GroupPair : VariantGroups)
+    {
+        const FMeshVariantGroup& Group = GroupPair.Value;
+        
+        if (Group.Variants.Num() > 1)
+        {
+            UE_LOG(LogTemp, Display, TEXT("📦 %s (%d variants)"), *Group.BaseName, Group.Variants.Num());
+            for (int32 i = 0; i < Group.Variants.Num(); i++)
+            {
+                UE_LOG(LogTemp, Display, TEXT("   [%d] %s"), i + 1, *Group.Variants[i]);
+            }
+        }
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+TArray<FString> UAssetIndexer::GetAllMeshNames() const
+{
+    TArray<FString> Names;
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        Names.Add(Pair.Value.MeshName);
+    }
+    return Names;
+}
+
+TArray<FString> UAssetIndexer::ResolveAllMeshPaths(const FString& SearchName)
+{
+     TArray<FString> AllMatches;
+    
+    if (SearchName.IsEmpty())
+    {
+        return AllMatches;
+    }
+    
+    FString NormalizedSearch = NormalizeName(SearchName);
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 ResolveAllMeshPaths: '%s'"), *SearchName);
+    
+    // === STRATEGY 1: Exact normalized match ===
+    if (DiscoveredMeshes.Contains(NormalizedSearch))
+    {
+        AllMatches.Add(DiscoveredMeshes[NormalizedSearch].FullPath);
+        UE_LOG(LogTemp, Display, TEXT("   ✅ [EXACT] Found"));
+        return AllMatches;
+    }
+    
+    // === STRATEGY 2: Substring match - GET ALL ===
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        if (Pair.Value.MeshName.Contains(SearchName, ESearchCase::IgnoreCase) ||
+            NormalizedSearch.Contains(Pair.Key))
+        {
+            AllMatches.Add(Pair.Value.FullPath);
+            UE_LOG(LogTemp, Display, TEXT("   ✅ [SUBSTRING] Found: %s"), *Pair.Value.MeshName);
+        }
+    }
+    
+    if (AllMatches.Num() > 0)
+    {
+        UE_LOG(LogTemp, Display, TEXT("   📊 Found %d substring matches"), AllMatches.Num());
+        return AllMatches;
+    }
+    
+    // === STRATEGY 3: Keyword matching ===
+    TArray<FString> SearchKeywords = ExtractKeywordsFromMesh(SearchName);
+    
+    for (const auto& Pair : DiscoveredMeshes)
+    {
+        for (const FString& SearchKeyword : SearchKeywords)
+        {
+            for (const FString& AssetKeyword : Pair.Value.Keywords)
+            {
+                if (SearchKeyword.Equals(AssetKeyword, ESearchCase::IgnoreCase))
+                {
+                    AllMatches.AddUnique(Pair.Value.FullPath);
+                    UE_LOG(LogTemp, Display, TEXT("   ✅ [KEYWORD] Found: %s"), *Pair.Value.MeshName);
+                }
+            }
+        }
+    }
+    
+    if (AllMatches.Num() > 0)
+    {
+        UE_LOG(LogTemp, Display, TEXT("   📊 Found %d keyword matches"), AllMatches.Num());
+        return AllMatches;
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("   ❌ No matches found for '%s'"), *SearchName);
+    return AllMatches;
+}
+

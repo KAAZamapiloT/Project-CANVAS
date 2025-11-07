@@ -190,37 +190,52 @@ FString UGenAISystem::ConstructMasterPrompt(
     FString UserPrompt,
     UAssetIndexer* AssetIndexer)
 {
-    if (!AssetIndexer)
-    {
-        UE_LOG(LogTemp, Error, TEXT("GenAISystem: AssetIndexer is null"));
-        return TEXT("");
-    }
+	if (!AssetIndexer)
+	{
+		UE_LOG(LogTemp, Error, TEXT("GenAISystem: AssetIndexer is null"));
+		return TEXT("");
+	}
 
-    // === STEP 1: GET ALL ASSETS FROM INDEXER ===
-    TArray<FString> AvailableTextures = AssetIndexer->GetDiscoveredTextureNames();
-    TArray<FString> AvailableMeshes = AssetIndexer->GetDiscoveredStaticMeshNames();
-    TArray<FString> AvailableTags = AssetIndexer->GetDiscoveredActorTags();
-    TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
+	// === STEP 1: GET ALL ASSETS FROM INDEXER ===
+	TArray<FString> AvailableTextures = AssetIndexer->GetDiscoveredTextureNames();
+	TArray<FString> ActorTags = AssetIndexer->GetDiscoveredActorTags();
+	TArray<FString> AvailableMeshes = AssetIndexer->GetAllMeshNames();
+	TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
 
-    // === STEP 2: GET MATERIAL BASE NAMES ===
-    TArray<FString> MaterialBaseNames = AssetIndexer->GetMaterialBaseNames();
-    UE_LOG(LogTemp, Display, TEXT("GenAI: Using %d materials from %d textures"),
-        MaterialBaseNames.Num(), AvailableTextures.Num());
+	// === STEP 2: GET MATERIAL BASE NAMES ===
+	TArray<FString> MaterialBaseNames = AssetIndexer->GetMaterialBaseNames();
+	UE_LOG(LogTemp, Display, TEXT("GenAI: Using %d materials from %d textures"), MaterialBaseNames.Num(), AvailableTextures.Num());
+	UE_LOG(LogTemp, Display, TEXT("GenAI: Available meshes: %d"), AvailableMeshes.Num());
 
-    // === STEP 3: CONVERT TO CSV STRINGS ===
-    FString MaterialString = FString::Join(MaterialBaseNames, TEXT("\", \""));
-    FString TagString = FString::Join(AvailableTags, TEXT("\", \""));
-    FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
-    FString MeshString = FString::Join(AvailableMeshes, TEXT("\", \""));
+	// === STEP 3: BUILD MESH LIST STRING (first 30 meshes for context) ===
+	FString MeshListString = TEXT("[");
+	for (int32 i = 0; i < FMath::Min(30, AvailableMeshes.Num()); i++)
+	{
+		MeshListString += FString::Printf(TEXT("\"%s\""), *AvailableMeshes[i]);
+		if (i < FMath::Min(30, AvailableMeshes.Num()) - 1) MeshListString += TEXT(", ");
+	}
+	if (AvailableMeshes.Num() > 30)
+	{
+		MeshListString += FString::Printf(TEXT(", ... %d more meshes]"), AvailableMeshes.Num() - 30);
+	}
+	else
+	{
+		MeshListString += TEXT("]");
+	}
 
-    // === STEP 4: BUILD COMPREHENSIVE PROMPT ===
+	// === STEP 4: CONVERT TO CSV STRINGS ===
+	FString MaterialString = FString::Join(MaterialBaseNames, TEXT("\", \""));
+	FString TagString = FString::Join(ActorTags, TEXT("\", \""));
+	FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
+
+   // === STEP 5: BUILD COMPREHENSIVE PROMPT ===
     return FString::Printf(TEXT(
         "You are an expert game environment designer specializing in Unreal Engine scenes.\n"
         "Generate a JSON scene plan based on the user request.\n\n"
         "USER REQUEST: \"%s\"\n\n"
         "=== AVAILABLE STATIC MESHES (for SpawnRequest.AssetPath) ===\n"
-        "Use exact names from this list:\n"
-        "[\"%s\"]\n\n"
+        "Use EXACT names from this list (total: %d meshes):\n"
+        "%s\n\n"
         "=== AVAILABLE ACTOR TAGS (for Props.TagName) ===\n"
         "Modify only actors with these tags:\n"
         "[\"%s\"]\n\n"
@@ -230,13 +245,14 @@ FString UGenAISystem::ConstructMasterPrompt(
         "=== AVAILABLE POST-PROCESS MATERIALS (for Environment.PostProcessingName) ===\n"
         "[\"%s\"]\n\n"
         "=== CRITICAL RULES ===\n"
-        "1. MESHES: Use ONLY names from AVAILABLE STATIC MESHES\n"
-        "2. MATERIALS: Use ONLY base names (NOT full paths)\n"
+        "1. MESHES: Use ONLY names from AVAILABLE STATIC MESHES list\n"
+        "2. If mesh not available, set bSpawnActors to false\n"
+        "3. MATERIALS: Use ONLY base names (NOT full paths)\n"
         "   System handles loading: material_name_diff_2k, material_name_rough_2k, etc.\n"
-        "3. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
-        "4. SPAWNING: Each spawned actor must have unique ObjectName\n"
-        "5. LOCATIONS: Use semantic names (e.g., 'PLAYER_FRONT', 'CENTER', 'LEFT_CORNER')\n"
-        "6. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n\n"
+        "4. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
+        "5. SPAWNING: Each spawned actor must have unique ObjectName\n"
+        "6. LOCATIONS: Use semantic names (e.g., 'PLAYER_FRONT', 'CENTER', 'LEFT_CORNER')\n"
+        "7. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n\n"
         "=== JSON SCHEMA ===\n"
         "{\n"
         "  \"ThemeName\": \"descriptive_name\",\n"
@@ -273,7 +289,7 @@ FString UGenAISystem::ConstructMasterPrompt(
         "  ],\n"
         "  \"SpawnRequest\": [\n"
         "    {\n"
-        "      \"AssetPath\": \"exact_mesh_name\",\n"
+        "      \"AssetPath\": \"exact_mesh_name_from_list\",\n"
         "      \"ObjectName\": \"unique_instance_name\",\n"
         "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
         "      \"LocationOffset\": [0, 0, 0],\n"
@@ -287,7 +303,8 @@ FString UGenAISystem::ConstructMasterPrompt(
         "Generate the JSON now:"
     ),
     *UserPrompt,
-    *MeshString,
+    AvailableMeshes.Num(),
+    *MeshListString,
     *TagString,
     *MaterialString,
     *PPMString);

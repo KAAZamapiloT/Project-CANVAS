@@ -111,7 +111,7 @@ void USceneStateTracker::OnAssetScanFinished()
     bAssetScanComplete = true;
 
     TArray<FString> Textures = AssetIndexer->GetDiscoveredTextureNames();
-    TArray<FString> Meshes = AssetIndexer->GetDiscoveredStaticMeshNames();
+    TArray<FString> Meshes = AssetIndexer->GetAllMeshNames();
     TArray<FString> Particles = AssetIndexer->GetDiscoveredParticleNames();
 
     UE_LOG(LogTemp, Warning, TEXT("✅ AssetScan: %d textures, %d meshes, %d particles"),
@@ -124,13 +124,18 @@ void USceneStateTracker::OnLocationScanFinished()
 {
     bLocationScanComplete = true;
 
+    // Get all discovered spawn locations
     TArray<FSpawnLocation> Locations = LocationEngine->GetAllLocations();
-    LocationEngine->ScanAndCacheActorsByTags(GetWorld());
-    LocationEngine->PrintActorTagCache();
+    
     UE_LOG(LogTemp, Warning, TEXT("✅ LocationScan: %d spawn points"), Locations.Num());
+    
+    // Optional: Print detailed location information for debugging
+    LocationEngine->PrintAllLocationData();
 
+    // Check if all systems are ready
     CheckSystemsReady();
 }
+
 
 void USceneStateTracker::CheckSystemsReady()
 {
@@ -252,7 +257,7 @@ void USceneStateTracker::ResolveMeshesFromNames(FEnhancedScenePlan& Plan)
             continue;
         }
 
-        FString ResolvedMesh = AssetIndexer->ResolveStaticMeshName(Spawn.AssetPath);
+        FString ResolvedMesh = AssetIndexer->ResolveMeshToFullPath(Spawn.AssetPath);
         if (!ResolvedMesh.IsEmpty())
         {
             Spawn.AssetPath = ResolvedMesh;

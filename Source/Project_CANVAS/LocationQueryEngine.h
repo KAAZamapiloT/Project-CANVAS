@@ -6,6 +6,8 @@
 #include "UObject/Object.h"
 #include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
+#include<iostream>
+#include<unordered_map>
 #include "LocationQueryEngine.generated.h"
 
 /**
@@ -1547,11 +1549,11 @@ public:
      * TArray<FVector> EnemyPositions = LocationEngine->GetPositionsByTag("Enemy");
      * ```
      */
-    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
-    void ScanAndCacheActorsByTags(
-        UWorld* InWorldContext,
-        bool bLogResults = true
-    );
+   // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+   // void ScanAndCacheActorsByTags(
+   //     UWorld* InWorldContext,
+   //     bool bLogResults = true
+   // );
     
     /**
      * Refreshes cache for a single tag (incremental update).
@@ -1588,8 +1590,8 @@ public:
      * // Now GetActorsWithTag("Enemy") includes new actor
      * ```
      */
-    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
-    void RefreshTagCache(const FString& Tag);
+ //   UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+   // void RefreshTagCache(const FString& Tag);
     
     /**
      * Clears all cached actor tags.
@@ -1609,8 +1611,8 @@ public:
      * 
      * @return void
      */
-    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
-    void ClearActorTagCache();
+   // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+  //  void ClearActorTagCache();
 
     // ========================================
     // ACTOR QUERY BY TAG - CORE RETRIEVAL FUNCTIONS
@@ -1657,7 +1659,7 @@ public:
      * @see GetRandomActorWithTag() for random selection
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
-    TArray<AActor*> GetActorsWithTag(const FString& Tag);
+    TArray<AActor*> GetActorsWithTag(const FString& Tag) const;
 
     
     /**
@@ -1703,7 +1705,7 @@ public:
      * @see RefreshTagCache() to update positions for mobile actors
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
-    TArray<FVector> GetPositionsByTag(const FString& Tag);
+    TArray<FVector> GetPositionsByTag(const FString& Tag) const;
     
     /**
      * Gets random actor from all actors with tag.
@@ -2097,4 +2099,19 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Stats")
     void PrintActorTagStats(const FString& Tag) const;
+
+  
+private:
+    // ========================================
+    // TAG-BASED ACTOR QUERIES
+    // ========================================
+    
+    /// Find random actor with specific tag
+    /// Queries world in real-time (no caching)
+    AActor* FindRandomActorWithTag(const FString& Tag);
+    
+    /// Find closest actor with specific tag from reference location
+    /// Queries world in real-time (no caching)
+    AActor* FindClosestActorWithTag(const FString& Tag, FVector FromLocation);
+
 };

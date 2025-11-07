@@ -125,6 +125,31 @@ TArray<FString> ULocationQueryEngine::GetDiscoveredLocationTags() const
 {
     return DiscoveredLocationTags;
 }
+// ========================================
+// LLM INTEGRATION & CONTEXT
+// ========================================
+
+TMap<FString, FSpawnLocation> ULocationQueryEngine::BuildLocationDatabase()
+{
+    TMap<FString, FSpawnLocation> Result;
+    
+    if (DiscoveredLocations.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ BuildLocationDatabase: No locations discovered"));
+        return Result;
+    }
+    
+    // Build map from array
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        FString UpperName = Loc.LocationName.ToUpper();
+        Result.Add(UpperName, Loc);
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("✅ BuildLocationDatabase: Built %d locations"), Result.Num());
+    
+    return Result;
+}
 
 void ULocationQueryEngine::AddLocation(const FSpawnLocation& NewLocation)
 {
@@ -737,102 +762,33 @@ FVector ULocationQueryEngine::SnapToGround(FVector Location, float MaxTraceDista
 }
 
 // ========================================
-// DYNAMIC ACTOR TAG CACHING
+// DYNAMIC ACTOR TAG
 // ========================================
 
-void ULocationQueryEngine::ScanAndCacheActorsByTags(UWorld* InWorldContext, bool bLogResults)
+TArray<AActor*> ULocationQueryEngine::GetActorsWithTag(const FString& Tag) const
 {
-    if (!InWorldContext)
+    TArray<AActor*> FoundActors;
+    
+    if (!WorldContext || Tag.IsEmpty())
     {
-        UE_LOG(LogTemp, Error, TEXT("LocationEngine: Cannot scan - no world context"));
-        return;
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ GetActorsWithTag: Invalid params"));
+        return FoundActors;
     }
     
-    WorldContext = InWorldContext;
-    ActorTagCache.Empty();
+    // Query world directly - no cache
+    UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*Tag.ToUpper()), FoundActors);
     
-    TArray<AActor*> AllActors;
-    UGameplayStatics::GetAllActorsOfClass(InWorldContext, AActor::StaticClass(), AllActors);
+    UE_LOG(LogTemp, Display, TEXT("✅ GetActorsWithTag: Found %d actors with tag '%s'"), 
+        FoundActors.Num(), *Tag);
     
-    UE_LOG(LogTemp, Warning, TEXT("🔍 Scanning %d actors for tags..."), AllActors.Num());
-    
-    for (AActor* Actor : AllActors)
-    {
-        if (!IsValid(Actor) || Actor->Tags.Num() == 0) continue;
-        
-        for (const FName& TagName : Actor->Tags)
-        {
-            FString TagStr = TagName.ToString().ToUpper();
-            
-            if (TagStr.StartsWith(TEXT("LOC_"))) continue;
-            
-            if (!ActorTagCache.Contains(TagStr))
-            {
-                ActorTagCache.Add(TagStr, TArray<AActor*>());
-            }
-            
-            ActorTagCache[TagStr].AddUnique(Actor);
-        }
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("✅ Tag scan complete. Found %d unique tags"), ActorTagCache.Num());
-    
-    if (bLogResults)
-    {
-        PrintActorTagCache();
-    }
+    return FoundActors;
 }
 
-void ULocationQueryEngine::RefreshTagCache(const FString& Tag)
-{
-    if (!WorldContext)
-    {
-        UE_LOG(LogTemp, Error, TEXT("⚠️ RefreshTagCache: No world context"));
-        return;
-    }
-    
-    FString TagUpper = Tag.ToUpper();
-    
-    ActorTagCache.Remove(TagUpper);
-    
-    TArray<AActor*> AllActors;
-    UGameplayStatics::GetAllActorsOfClass(WorldContext, AActor::StaticClass(), AllActors);
-    
-    int32 Count = 0;
-    ActorTagCache.Add(TagUpper, TArray<AActor*>());
-    
-    for (AActor* Actor : AllActors)
-    {
-        if (!IsValid(Actor) || !Actor->Tags.Contains(FName(*TagUpper))) continue;
-        
-        ActorTagCache[TagUpper].Add(Actor);
-        Count++;
-    }
-    
-    UE_LOG(LogTemp, Display, TEXT("🔄 Refreshed tag '%s': %d actors found"), *Tag, Count);
-}
 
-void ULocationQueryEngine::ClearActorTagCache()
-{
-    ActorTagCache.Empty();
-    UE_LOG(LogTemp, Display, TEXT("🗑️  Cleared actor tag cache"));
-}
-
-TArray<AActor*> ULocationQueryEngine::GetActorsWithTag(const FString& Tag)
-{
-    FString TagUpper = Tag.ToUpper();
-    if (ActorTagCache.Contains(TagUpper))
-    {
-        return ActorTagCache[TagUpper];
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("⚠️ GetActorsWithTag: Tag '%s' not cached"), *Tag);
-    return TArray<AActor*>();
-}
-
-TArray<FVector> ULocationQueryEngine::GetPositionsByTag(const FString& Tag)
+TArray<FVector> ULocationQueryEngine::GetPositionsByTag(const FString& Tag) const
 {
     TArray<FVector> Positions;
+    
     TArray<AActor*> Actors = GetActorsWithTag(Tag);
     
     for (AActor* Actor : Actors)
@@ -847,14 +803,10 @@ TArray<FVector> ULocationQueryEngine::GetPositionsByTag(const FString& Tag)
     {
         UE_LOG(LogTemp, Warning, TEXT("⚠️ GetPositionsByTag: No valid positions for tag '%s'"), *Tag);
     }
-    else
-    {
-        UE_LOG(LogTemp, Display, TEXT("✅ GetPositionsByTag: Retrieved %d positions for tag '%s'"), 
-            Positions.Num(), *Tag);
-    }
     
     return Positions;
 }
+
 
 AActor* ULocationQueryEngine::GetRandomActorWithTag(const FString& Tag)
 {
@@ -869,7 +821,8 @@ AActor* ULocationQueryEngine::GetRandomActorWithTag(const FString& Tag)
     int32 RandomIndex = FMath::RandRange(0, Actors.Num() - 1);
     AActor* SelectedActor = Actors[RandomIndex];
     
-    UE_LOG(LogTemp, Display, TEXT("🎲 Random actor for tag '%s': %s"), *Tag, *SelectedActor->GetName());
+    UE_LOG(LogTemp, Display, TEXT("🎲 Random actor for tag '%s': %s"), 
+        *Tag, *SelectedActor->GetName());
     
     return SelectedActor;
 }
@@ -952,41 +905,67 @@ AActor* ULocationQueryEngine::GetFarthestActorWithTag(const FString& Tag, FVecto
 TArray<FString> ULocationQueryEngine::GetAllActorTags() const
 {
     TArray<FString> Tags;
-    ActorTagCache.GetKeys(Tags);
+    
+    if (!WorldContext) return Tags;
+    
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(WorldContext, AActor::StaticClass(), AllActors);
+    
+    for (AActor* Actor : AllActors)
+    {
+        if (!IsValid(Actor) || Actor->Tags.Num() == 0) continue;
+        
+        for (const FName& TagName : Actor->Tags)
+        {
+            FString TagStr = TagName.ToString();
+            if (!TagStr.StartsWith(TEXT("Loc_")))
+            {
+                Tags.AddUnique(TagStr);
+            }
+        }
+    }
+    
     return Tags;
 }
 
+
 int32 ULocationQueryEngine::GetActorCountWithTag(const FString& Tag) const
 {
-    FString TagUpper = Tag.ToUpper();
-    if (ActorTagCache.Contains(TagUpper))
-    {
-        return ActorTagCache[TagUpper].Num();
-    }
-    return 0;
+    if (!WorldContext) return 0;
+    
+    TArray<AActor*> FoundActors;
+    UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*Tag.ToUpper()), FoundActors);
+    
+    return FoundActors.Num();
 }
 
 void ULocationQueryEngine::PrintActorTagCache() const
 {
+    if (!WorldContext) return;
+    
     UE_LOG(LogTemp, Warning, TEXT(""));
     UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
-    UE_LOG(LogTemp, Warning, TEXT("║ 🏷️  Actor Tag Cache Report ║"));
+    UE_LOG(LogTemp, Warning, TEXT("║ 🏷️  Actor Tags in Scene ║"));
     UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════╝"));
     
-    if (ActorTagCache.Num() == 0)
+    TArray<FString> AllTags = GetAllActorTags();
+    
+    if (AllTags.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("⚠️ No actor tags cached"));
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ No actor tags found"));
         return;
     }
     
-    for (const auto& Pair : ActorTagCache)
+    for (const FString& Tag : AllTags)
     {
-        UE_LOG(LogTemp, Display, TEXT("🏷️  Tag: '%s'"), *Pair.Key);
-        UE_LOG(LogTemp, Display, TEXT("   Actors: %d"), Pair.Value.Num());
+        TArray<AActor*> TagActors = GetActorsWithTag(Tag);
         
-        for (int32 i = 0; i < Pair.Value.Num(); ++i)
+        UE_LOG(LogTemp, Display, TEXT("🏷️  Tag: '%s'"), *Tag);
+        UE_LOG(LogTemp, Display, TEXT("   Actors: %d"), TagActors.Num());
+        
+        for (int32 i = 0; i < TagActors.Num(); ++i)
         {
-            AActor* Actor = Pair.Value[i];
+            AActor* Actor = TagActors[i];
             if (IsValid(Actor))
             {
                 FVector Pos = Actor->GetActorLocation();
@@ -998,13 +977,10 @@ void ULocationQueryEngine::PrintActorTagCache() const
     }
 }
 
+
 void ULocationQueryEngine::VisualizeActorTagCache(float Duration, bool bCentered, float Radius)
 {
-    if (!WorldContext)
-    {
-        UE_LOG(LogTemp, Error, TEXT("⚠️ VisualizeActorTagCache: No world context"));
-        return;
-    }
+    if (!WorldContext) return;
     
     TMap<FString, FColor> TagColors;
     TagColors.Add(TEXT("ENEMY"), FColor::Red);
@@ -1014,13 +990,17 @@ void ULocationQueryEngine::VisualizeActorTagCache(float Duration, bool bCentered
     TagColors.Add(TEXT("PLAYER"), FColor::Blue);
     TagColors.Add(TEXT("WALL"), FColor::Magenta);
     
-    for (const auto& TagPair : ActorTagCache)
+    TArray<FString> AllTags = GetAllActorTags();
+    
+    for (const FString& Tag : AllTags)
     {
-        FColor TagColor = TagColors.Contains(TagPair.Key) 
-            ? TagColors[TagPair.Key] 
+        FColor TagColor = TagColors.Contains(Tag.ToUpper()) 
+            ? TagColors[Tag.ToUpper()] 
             : FColor::White;
         
-        for (const AActor* Actor : TagPair.Value)
+        TArray<AActor*> TagActors = GetActorsWithTag(Tag);
+        
+        for (AActor* Actor : TagActors)
         {
             if (IsValid(Actor))
             {
@@ -1053,7 +1033,6 @@ float ULocationQueryEngine::GetAverageActorDistance(const FString& Tag) const
     
     return PairCount > 0 ? TotalDistance / PairCount : 0.0f;
 }
-
 FVector ULocationQueryEngine::GetActorCentroid(const FString& Tag) const
 {
     TArray<FVector> Positions = GetPositionsByTag(Tag);
@@ -1165,6 +1144,8 @@ void ULocationQueryEngine::PrintLocationsByStatus() const
     UE_LOG(LogTemp, Display, TEXT(""));
 }
 
+
+
 // ========================================
 // ADVANCED QUERIES
 // ========================================
@@ -1258,6 +1239,180 @@ int32 ULocationQueryEngine::GetFreeLocationCount() const
 int32 ULocationQueryEngine::GetOccupiedLocationCount() const
 {
     return DiscoveredLocations.Num() - GetFreeLocationCount();
+}
+
+// ========================================
+// BATCH LOCATION OPERATIONS
+// ========================================
+
+void ULocationQueryEngine::AddMultipleLocations(const TArray<FSpawnLocation>& NewLocations)
+{
+    if (NewLocations.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ AddMultipleLocations: No locations to add"));
+        return;
+    }
+    
+    int32 AddedCount = 0;
+    
+    for (const FSpawnLocation& Location : NewLocations)
+    {
+        if (Location.LocationName.IsEmpty())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Skipping location with empty name"));
+            continue;
+        }
+        
+        FString UpperName = Location.LocationName.ToUpper();
+        
+        // Add to database
+        LocationDatabase.Add(UpperName, Location);
+        DiscoveredLocations.Add(Location);
+        
+        // Add tags
+        for (const FString& Tag : Location.Tags)
+        {
+            DiscoveredLocationTags.AddUnique(Tag);
+        }
+        
+        AddedCount++;
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("✅ AddMultipleLocations: Added %d locations (attempted %d)"), 
+        AddedCount, NewLocations.Num());
+}
+
+bool ULocationQueryEngine::RemoveMultipleLocations(const TArray<FString>& LocationNames)
+{
+    if (LocationNames.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ RemoveMultipleLocations: No locations to remove"));
+        return false;
+    }
+    
+    int32 RemovedCount = 0;
+    
+    for (const FString& LocationName : LocationNames)
+    {
+        if (RemoveLocation(LocationName))
+        {
+            RemovedCount++;
+        }
+    }
+    
+    bool bAllRemoved = (RemovedCount == LocationNames.Num());
+    
+    UE_LOG(LogTemp, Display, TEXT("✅ RemoveMultipleLocations: Removed %d locations (attempted %d)"), 
+        RemovedCount, LocationNames.Num());
+    
+    return bAllRemoved;
+}
+
+// ========================================
+// SPAWN VALIDATION & CLEARANCE
+// ========================================
+
+bool ULocationQueryEngine::IsLocationValidForSpawn(const FString& LocationName, float MinClearance) const
+{
+    FString UpperName = LocationName.ToUpper();
+    
+    // 1. Check if location exists
+    if (!LocationDatabase.Contains(UpperName))
+    {
+        UE_LOG(LogTemp, Display, TEXT("❌ IsLocationValidForSpawn: Location '%s' not found"), *LocationName);
+        return false;
+    }
+    
+    const FSpawnLocation& Location = LocationDatabase[UpperName];
+    
+    // 2. Check if location is occupied
+    if (Location.bIsOccupied)
+    {
+        UE_LOG(LogTemp, Display, TEXT("❌ IsLocationValidForSpawn: Location '%s' is occupied"), *LocationName);
+        return false;
+    }
+    
+    // 3. Check clearance if provided
+    if (MinClearance > 0.0f && Location.ClearanceRadius < MinClearance)
+    {
+        UE_LOG(LogTemp, Display, TEXT("❌ IsLocationValidForSpawn: Location '%s' clearance %.0f < required %.0f"), 
+            *LocationName, Location.ClearanceRadius, MinClearance);
+        return false;
+    }
+    
+    // 4. Check if area is actually clear (collision test)
+    if (!IsLocationClear(Location.WorldPosition, MinClearance > 0.0f ? MinClearance : Location.ClearanceRadius))
+    {
+        UE_LOG(LogTemp, Display, TEXT("❌ IsLocationValidForSpawn: Location '%s' has blocking collision"), *LocationName);
+        return false;
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("✅ IsLocationValidForSpawn: Location '%s' is valid"), *LocationName);
+    return true;
+}
+
+FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& PreferredLocation, float MinClearance)
+{
+    FString UpperName = PreferredLocation.ToUpper();
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 FindValidSpawnLocation: Preferred='%s', MinClearance=%.0f"), 
+        *PreferredLocation, MinClearance);
+    
+    // 1. Try preferred location first
+    if (LocationDatabase.Contains(UpperName))
+    {
+        if (IsLocationValidForSpawn(PreferredLocation, MinClearance))
+        {
+            UE_LOG(LogTemp, Display, TEXT("✅ Found preferred location: %s"), *PreferredLocation);
+            return LocationDatabase[UpperName];
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("⚠️ Preferred location invalid, searching alternatives..."));
+    
+    // 2. Find ANY free location with sufficient clearance
+    for (const FSpawnLocation& Location : DiscoveredLocations)
+    {
+        if (IsLocationValidForSpawn(Location.LocationName, MinClearance))
+        {
+            UE_LOG(LogTemp, Display, TEXT("✅ Found alternative: %s"), *Location.LocationName);
+            return Location;
+        }
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("⚠️ No valid location found, creating dynamic fallback"));
+    
+    // 3. Fallback: Create dynamic location at random valid spot
+    for (int32 Attempt = 0; Attempt < 10; ++Attempt)
+    {
+        FVector RandomPos = GetRandomBackgroundPosition();
+        
+        if (IsLocationClear(RandomPos, MinClearance))
+        {
+            FSpawnLocation DynamicLocation;
+            DynamicLocation.LocationName = FString::Printf(TEXT("DYNAMIC_SPAWN_%d"), Attempt);
+            DynamicLocation.WorldPosition = RandomPos;
+            DynamicLocation.ClearanceRadius = MinClearance;
+            DynamicLocation.Description = TEXT("Dynamically generated spawn location");
+            DynamicLocation.Tags.Add(TEXT("Dynamic"));
+            
+            UE_LOG(LogTemp, Display, TEXT("✅ Created dynamic fallback: %s at [%.0f, %.0f, %.0f]"), 
+                *DynamicLocation.LocationName, RandomPos.X, RandomPos.Y, RandomPos.Z);
+            
+            return DynamicLocation;
+        }
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("❌ Could not find any valid spawn location!"));
+    
+    // 4. Ultimate fallback (will likely fail but better than crash)
+    FSpawnLocation EmergencyLocation;
+    EmergencyLocation.LocationName = TEXT("EMERGENCY_SPAWN");
+    EmergencyLocation.WorldPosition = FVector::ZeroVector;
+    EmergencyLocation.ClearanceRadius = MinClearance;
+    EmergencyLocation.Description = TEXT("Emergency fallback - may collide with geometry");
+    
+    return EmergencyLocation;
 }
 
 // ========================================
@@ -1506,4 +1661,69 @@ void ULocationQueryEngine::BeginDestroy()
 {
     UE_LOG(LogTemp, Display, TEXT("🗑️  LocationQueryEngine destroyed"));
     Super::BeginDestroy();
+}
+
+// ========================================
+// TAG-BASED ACTOR QUERIES (Functions only)
+// ========================================
+
+AActor* ULocationQueryEngine::FindRandomActorWithTag(const FString& Tag)
+{
+    if (!WorldContext || Tag.IsEmpty())
+    {
+        return nullptr;
+    }
+    
+    TArray<AActor*> FoundActors;
+    UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*Tag.ToUpper()), FoundActors);
+    
+    if (FoundActors.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ FindRandomActorWithTag: No actors with tag '%s'"), *Tag);
+        return nullptr;
+    }
+    
+    int32 RandomIndex = FMath::RandRange(0, FoundActors.Num() - 1);
+    AActor* SelectedActor = FoundActors[RandomIndex];
+    
+    UE_LOG(LogTemp, Display, TEXT("🎲 Found random '%s' actor: %s"), 
+        *Tag, IsValid(SelectedActor) ? *SelectedActor->GetName() : TEXT("invalid"));
+    
+    return SelectedActor;
+}
+
+AActor* ULocationQueryEngine::FindClosestActorWithTag(const FString& Tag, FVector FromLocation)
+{
+    if (!WorldContext || Tag.IsEmpty())
+    {
+        return nullptr;
+    }
+    
+    TArray<AActor*> FoundActors;
+    UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*Tag.ToUpper()), FoundActors);
+    
+    if (FoundActors.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ FindClosestActorWithTag: No actors with tag '%s'"), *Tag);
+        return nullptr;
+    }
+    
+    AActor* ClosestActor = FoundActors[0];
+    float MinDistance = FVector::Dist(FromLocation, ClosestActor->GetActorLocation());
+    
+    for (AActor* Actor : FoundActors)
+    {
+        if (!IsValid(Actor)) continue;
+        
+        float Distance = FVector::Dist(FromLocation, Actor->GetActorLocation());
+        if (Distance < MinDistance)
+        {
+            MinDistance = Distance;
+            ClosestActor = Actor;
+        }
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("🔍 Found closest '%s' actor: %.0f units away"), *Tag, MinDistance);
+    
+    return ClosestActor;
 }

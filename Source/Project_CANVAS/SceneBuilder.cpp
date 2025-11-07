@@ -28,6 +28,9 @@
 #include "Engine/StaticMesh.h"
 #include "Misc/DateTime.h" //
 #include "Misc/Guid.h" // For unique tags
+
+#include "Components/StaticMeshComponent.h"
+#include "Engine/World.h"
 // --- Define your content paths ---
 // You MUST place your assets in these folders, or change these paths.
 // The parser gets "T_Brick_Normal", this path turns it into "/Game/Textures/Generative/T_Brick_Normal.T_Brick_Normal"
@@ -195,26 +198,38 @@ void USceneBuilder::ApplyPostProcessing(const FString& PostProcessingName, UWorl
 // ACTOR SPAWNING
 // ============================================================================
 
+// SceneBuilder.cpp
+
 void USceneBuilder::SpawnNewActors(
     const TArray<FSpawnRequest>& SpawnRequests,
     UWorld* WorldContext,
     const FString& ThemeName)
 {
-    if (!WorldContext || SpawnRequests.Num() == 0) return;
+    if (!WorldContext || SpawnRequests.Num() == 0)
+    {
+        return;
+    }
 
     FString TimestampTag = FDateTime::Now().ToString(TEXT("Timestamp_%Y%m%d_%H%M%S"));
     FString CleanThemeName = ThemeName.Replace(TEXT(" "), TEXT("_"));
     FString ThemeTag = FString::Printf(TEXT("Theme_%s"), *CleanThemeName);
 
+    int32 SuccessCount = 0;
+    int32 FailureCount = 0;
+
     for (const FSpawnRequest& Request : SpawnRequests)
     {
+        // Validate
         if (Request.AssetPath.IsEmpty())
         {
-            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Spawn request has empty AssetPath"));
+            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Empty asset path, skipping"));
+            FailureCount++;
             continue;
         }
 
-        // SYNCHRONOUS LOAD (since mesh names are from AssetIndexer)
+        // ========================================
+        // LOAD MESH
+        // ========================================
         FString FullPath = FString::Printf(TEXT("/Game/DATABASE/meshes/%s.%s"), 
             *Request.AssetPath, *Request.AssetPath);
         
@@ -224,38 +239,96 @@ void USceneBuilder::SpawnNewActors(
 
         if (!LoadedMesh)
         {
-            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Failed to load mesh: %s"), *Request.AssetPath);
-            continue;  // SKIP if not found
+            UE_LOG(LogTemp, Error, TEXT("SceneBuilder: Failed to load mesh: %s"), *FullPath);
+            FailureCount++;
+            continue;
         }
 
-        // SPAWN IMMEDIATELY
+        // ========================================
+        // SPAWN ACTOR
+        // ========================================
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        SpawnParams.bNoFail = true;
+
         AStaticMeshActor* NewActor = WorldContext->SpawnActor<AStaticMeshActor>(
+            AStaticMeshActor::StaticClass(),
             Request.SpawnLocation,
-            Request.Rotation
+            Request.Rotation,
+            SpawnParams
         );
 
-        if (NewActor)
+        if (!NewActor)
         {
-            NewActor->GetStaticMeshComponent()->SetStaticMesh(LoadedMesh);
-            NewActor->SetActorScale3D(Request.Scale);
-            NewActor->SetActorLabel(FString::Printf(TEXT("BP_%s"), *Request.AssetPath));
-
-            FString ObjectTag = FString::Printf(TEXT("Object_%s"), *Request.ObjectName);
-            NewActor->Tags.Add(FName(TEXT("GenAI.Spawned")));
-            NewActor->Tags.Add(FName(*ObjectTag));
-            NewActor->Tags.Add(FName(*TimestampTag));
-
-            UE_LOG(LogTemp, Display, TEXT("SceneBuilder: ✅ Spawned %s at [%.1f, %.1f, %.1f]"),
-                *ObjectTag,
-                Request.SpawnLocation.X,
-                Request.SpawnLocation.Y,
-                Request.SpawnLocation.Z);
+            UE_LOG(LogTemp, Error, TEXT("SceneBuilder: Failed to spawn actor"));
+            FailureCount++;
+            continue;
         }
+
+        // ========================================
+        // CONFIGURE MESH
+        // ========================================
+        UStaticMeshComponent* MeshComp = NewActor->GetStaticMeshComponent();
+        if (MeshComp)
+        {
+            MeshComp->SetStaticMesh(LoadedMesh);
+            MeshComp->SetMobility(EComponentMobility::Movable);
+            MeshComp->SetVisibility(true, true);
+            MeshComp->SetHiddenInGame(false);
+            MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+            MeshComp->SetCastShadow(true);
+            MeshComp->RegisterComponent();
+        }
+
+        // ========================================
+        // CONFIGURE ACTOR
+        // ========================================
+        NewActor->SetActorLocation(Request.SpawnLocation, false, nullptr, ETeleportType::TeleportPhysics);
+        NewActor->SetActorRotation(Request.Rotation);
+        NewActor->SetActorScale3D(Request.Scale);
+        NewActor->SetActorHiddenInGame(false);
+        NewActor->SetActorEnableCollision(true);
+        NewActor->SetActorTickEnabled(true);
+
+        // ========================================
+        // TAG & LABEL (for tracking)
+        // ========================================
+        FString ObjectTag = FString::Printf(TEXT("Object_%s"), *Request.ObjectName);
+        NewActor->SetActorLabel(*ObjectTag);
+        
+        NewActor->Tags.Add(FName(TEXT("GenAI.Spawned")));
+        NewActor->Tags.Add(FName(*ObjectTag));
+        NewActor->Tags.Add(FName(*TimestampTag));
+        NewActor->Tags.Add(FName(*ThemeTag));
+        
+        if (!Request.Tag.IsEmpty())
+        {
+            NewActor->Tags.Add(FName(*Request.Tag));
+        }
+
+        // ========================================
+        // FINALIZE
+        // ========================================
+        NewActor->RerunConstructionScripts();
+        NewActor->MarkComponentsRenderStateDirty();
+
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: ✅ Spawned %s at [%.1f, %.1f, %.1f]"),
+            *ObjectTag,
+            Request.SpawnLocation.X,
+            Request.SpawnLocation.Y,
+            Request.SpawnLocation.Z);
+
+        SuccessCount++;
     }
 
-    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawned %d actors"), SpawnRequests.Num());
+    // Summary
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║  🎬 Spawn Complete                      ║"));
+    UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════╝"));
+    UE_LOG(LogTemp, Warning, TEXT("✅ Success: %d  |  ❌ Failed: %d"), SuccessCount, FailureCount);
+    UE_LOG(LogTemp, Warning, TEXT(""));
 }
-
 // --- Private: Props Helpers ---
 
 void USceneBuilder::ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext)
@@ -528,4 +601,9 @@ UTexture2D* USceneBuilder::LoadTextureFromPath(const FString& TexturePath)
     
     UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Using SLOW Synchronous load for %s. This will cause a hitch!"), *TexturePath);
     return Cast<UTexture2D>(StaticLoadObject(UTexture2D::StaticClass(), nullptr, *TexturePath));
+}
+FVector USceneBuilder::ParseCustomCoordinate(const FString& CoordString) const
+{
+    // Parse "CUSTOM:[X,Y,Z]" format
+    return FVector::ZeroVector;
 }

@@ -11,6 +11,7 @@
  * SceneBuilder - Applies FEnhancedScenePlan to the world
  * Handles environment settings, prop modifications, and texture loading
  */
+
 UCLASS()
 class PROJECT_CANVAS_API USceneBuilder : public UObject
 {
@@ -19,7 +20,7 @@ class PROJECT_CANVAS_API USceneBuilder : public UObject
 public:
 	UFUNCTION(BlueprintCallable, Category = "Scene Builder")
 	void BuildScene(const struct FEnhancedScenePlan& Plan, UWorld* WorldContext);
-
+	
 private:
 	// Main build functions
 	void ApplyEnvironmentSettings(const FEnvironmentPlan& Environment, UWorld* WorldContext);
@@ -44,5 +45,7 @@ private:
 	// Texture loading helpers
 	UTexture2D* LoadTextureFromPath(const FString& TexturePath);
 	UMaterialInstanceDynamic* GetOrCreateDynamicMaterial(UStaticMeshComponent* Mesh, int32 MaterialIndex = 0);
+
+	FVector ParseCustomCoordinate(const FString& CoordString) const;
 	
 };
