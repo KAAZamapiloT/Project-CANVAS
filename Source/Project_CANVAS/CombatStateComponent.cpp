@@ -76,7 +76,14 @@ void UCombatStateComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 FContextVector UCombatStateComponent::BuildContext(FName CurrentInput)
 {
     FContextVector Context;
-
+    // ✅ MINIMAL FIX: Add null check for EnemyCharacter
+    if (!EnemyCharacter || !EnemyCharacter->IsValidLowLevel())
+    {
+        Context.CurrentInput = CurrentInput;
+        Context.DistanceToEnemy = 999999.0f;
+        Context.EnemyDirection = EInputDirection::EID_NEUTRAL;
+        return Context;
+    }
     // ===== CURRENT INPUT =====
     Context.CurrentInput = CurrentInput;
 
@@ -150,7 +157,8 @@ bool UCombatStateComponent::IsOnCooldown(FName MoveName) const
 
 EInputDirection UCombatStateComponent::CalculateEnemyDirection()
 {
-   
+   if (!EnemyCharacter) return EInputDirection::EID_NEUTRAL;
+    
     EInputDirection Dir=EInputDirection::EID_NEUTRAL;
     ACharacter* PlayerCharacter = Cast<ACharacter>(GetOwner());
     if (!PlayerCharacter)

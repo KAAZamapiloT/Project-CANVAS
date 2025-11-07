@@ -1,200 +1,331 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-
-// EnemyCharacter.cpp
-// Enemy executes attacks directly via ExecuteAttack() from behavior tree
-
 #include "EnemyCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "HealthComponent.h"
 #include "CombatAnimationComponent.h"
-#include "CombatData.h"  // For FActionCommand
-#include "CombatDecisionEngine.h"
 #include "CombatStateComponent.h"
+#include "CombatDecisionEngine.h"
+#include "CombatData.h"
 #include "Damagable.h"
 #include "Kismet/GameplayStatics.h"
-#include "DrawDebugHelpers.h"
+#include "Animation/AnimInstance.h"
+#include "TimerManager.h"
 
 AEnemyCharacter::AEnemyCharacter()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.TickInterval = 0.016f;
+
+    GetCharacterMovement()->MaxWalkSpeed = 600.0f;
+    GetCapsuleComponent()->SetCapsuleSize(35.0f, 88.0f);
     Tags.Add(FName("Enemy.Character"));
-
-    // =====================================
-    // 2.5D PLANE CONSTRAINT
-    // =====================================
-    
-    GetCharacterMovement()->SetPlaneConstraintNormal(FVector(0.0f, 1.0f, 0.0f));
-    GetCharacterMovement()->bConstrainToPlane = true;
-    GetCharacterMovement()->bOrientRotationToMovement = true;
-    bUseControllerRotationYaw = false;
-
-    // =====================================
-    // COMBAT COMPONENTS
-    // =====================================
-    
-    HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
-    CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
-    CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
-    Tags.Add("Enemy");
-   
 }
 
 void AEnemyCharacter::BeginPlay()
 {
     Super::BeginPlay();
 
-    // ✅ Create UObject DecisionEngine in BeginPlay
-    CombatDecisionComp = NewObject<UCombatDecisionEngine>(this, UCombatDecisionEngine::StaticClass());
+    // ✅ Get player reference (for enemy, this is the opponent)
+    PlayerCharacter = Cast<ACharacter>(GetWorld()->GetFirstPlayerController()->GetPawn());
     
-    // Wire health delegates
-    if (HealthComp)
+    if (!PlayerCharacter)
     {
-        HealthComp->OnHealthChanged.AddDynamic(this, &AEnemyCharacter::OnHealthChanged);
-        HealthComp->OnHealthDepleted.AddDynamic(this, &AEnemyCharacter::OnDeath);
-    }
-
-    // Wire combat animation delegates
-    if (CombatAnimComp)
-    {
-        CombatAnimComp->OnMontageEnded.AddDynamic(this, &AEnemyCharacter::OnMoveCompleted);
-        CombatAnimComp->OnHitWindowActive.AddDynamic(this, &AEnemyCharacter::OnHitWindowActive);
-    }
-    if (CombatStateComp)
-    {
-        ACharacter* PlayerChar = GetWorld()->GetFirstPlayerController()->GetCharacter();
-        CombatStateComp->SetEnemy(PlayerChar);
-    }
-
-    // ADD engine initialization
-    if (CombatDecisionComp)
-    {
-        CombatDecisionComp->MoveDataTable = LoadObject<UDataTable>(nullptr, TEXT("/Game/Variant_SideScrolling/Blueprints/Combat/DT_MoveTable.DT_MoveTable"));
-    }
-}
-
-// =====================================
-// BEHAVIOR TREE CALLABLE ATTACK
-// Called from BTTask_EnemyAttack
-// =====================================
-
-void AEnemyCharacter::ExecuteAttack()
-{
-  
-
-    // Check if already attacking
-    if (CombatAnimComp->IsExecutingMove())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Enemy already executing attack"));
+        UE_LOG(LogTemp, Error, TEXT("Enemy: Could not find player!"));
         return;
     }
-    FContextVector Context=CombatStateComp->BuildContext(FName("AI_Attack"));
-    // Build Action Command manually (no Decision Engine)
-    FActionCommand Command;
-    Command = CombatDecisionComp->DecideNextMove(Context);
-   
-    // Execute via CombatAnimationComponent
-    CombatAnimComp->ExecuteActionCommand(Command);
 
-    UE_LOG(LogTemp, Log, TEXT("Enemy executing %s (Damage=%.1f, Stun=%.1f)"), 
-    *Command.MoveIdentifier.ToString(), 
-    Command.DamageToApply, 
-    Command.StunDurationToInflict);
+    InitializeCombatComponents();
+    SetupAnimations();
+    BindCombatDelegates();
 
+    if (HealthComponent)
+    {
+        HealthComponent->Health = MaxHealth;
+        UE_LOG(LogTemp, Log, TEXT("🎮 Enemy initialized: %.0f HP"), MaxHealth);
+    }
+
+    StartCombatBehavior();
 }
 
-// =====================================
-// IDAMAGABLE INTERFACE
-// =====================================
+void AEnemyCharacter::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    if (!PlayerCharacter || !PlayerCharacter->IsValidLowLevel())
+    {
+        StopCombatBehavior();
+        return;
+    }
+
+    if (!HealthComponent || !HealthComponent->IsAlive())
+    {
+        StopCombatBehavior();
+        return;
+    }
+}
+
+void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    StopCombatBehavior();
+    Super::EndPlay(EndPlayReason);
+}
+
+void AEnemyCharacter::InitializeCombatComponents()
+{
+    // ✅ Health Component
+    HealthComponent = NewObject<UHealthComponent>(this);
+    if (HealthComponent)
+    {
+        HealthComponent->RegisterComponent();
+    }
+
+    // ✅ Combat Animation Component
+    CombatAnimationComponent = NewObject<UCombatAnimationComponent>(this);
+    if (CombatAnimationComponent)
+    {
+        CombatAnimationComponent->RegisterComponent();
+    }
+
+    // ✅ Combat State Component (builds context)
+    CombatStateComponent = NewObject<UCombatStateComponent>(this);
+    if (CombatStateComponent)
+    {
+        CombatStateComponent->RegisterComponent();
+        
+        // ✅ CORRECT API: SetEnemy() instead of SetEnemyReference()
+        // For EnemyCharacter, the "enemy" is the player (the opponent)
+        if (PlayerCharacter)
+        {
+            CombatStateComponent->SetEnemy(PlayerCharacter);
+            UE_LOG(LogTemp, Log, TEXT("✅ Enemy's opponent set to: %s"), *PlayerCharacter->GetName());
+        }
+    }
+
+    // ✅ Combat Decision Engine (analyzes context → decides move)
+    CombatDecisionEngine = NewObject<UCombatDecisionEngine>(this);
+    if (CombatDecisionEngine)
+    {
+        CombatDecisionEngine->MoveDataTable = EnemyMoveDataTable;
+        UE_LOG(LogTemp, Log, TEXT("✅ Enemy CombatDecisionEngine initialized"));
+    }
+}
+
+void AEnemyCharacter::SetupAnimations()
+{
+    if (GetMesh() && GetMesh()->GetAnimInstance())
+    {
+        UE_LOG(LogTemp, Log, TEXT("✅ Enemy animations ready"));
+    }
+}
+
+void AEnemyCharacter::BindCombatDelegates()
+{
+    if (GetMesh() && GetMesh()->GetAnimInstance())
+    {
+        GetMesh()->GetAnimInstance()->OnMontageEnded.AddDynamic(this, &AEnemyCharacter::OnMontageCompleted);
+    }
+
+    if (HealthComponent)
+    {
+        HealthComponent->OnHealthDepleted.AddDynamic(this, &AEnemyCharacter::StopCombatBehavior);
+    }
+}
+
+void AEnemyCharacter::StartCombatBehavior()
+{
+    if (!GetWorld() || bIsInCombat)
+        return;
+
+    bIsInCombat = true;
+
+    GetWorldTimerManager().SetTimer(
+        DecisionTimerHandle,
+        this,
+        &AEnemyCharacter::MakeCombatDecision,
+        DecisionInterval,
+        true
+    );
+
+    UE_LOG(LogTemp, Log, TEXT("🎮 Enemy started combat behavior"));
+}
+
+void AEnemyCharacter::StopCombatBehavior()
+{
+    if (!GetWorld())
+        return;
+
+    bIsInCombat = false;
+    GetWorldTimerManager().ClearTimer(DecisionTimerHandle);
+
+    UE_LOG(LogTemp, Log, TEXT("⛔ Enemy stopped combat behavior"));
+}
+
+void AEnemyCharacter::MakeCombatDecision()
+{
+    // ✅ SAFETY CHECKS
+    if (!HealthComponent || !HealthComponent->IsAlive())
+    {
+        StopCombatBehavior();
+        return;
+    }
+
+    if (HealthComponent->IsStunned())
+    {
+        return;
+    }
+
+    if (!CanAttackPlayer())
+    {
+        return;
+    }
+
+    if (!CombatStateComponent || !CombatDecisionEngine)
+        return;
+
+    // ✅ BUILD CONTEXT (CombatStateComponent does this internally)
+    FContextVector Context = CombatStateComponent->BuildContext(FName("EnemyAttack"));
+
+    // ✅ LET DECISION ENGINE PICK BEST MOVE (BLACK BOX - it ranks all moves internally)
+    FActionCommand Decision = CombatDecisionEngine->DecideNextMove(Context);
+
+    // ✅ EXECUTE THE CHOSEN MOVE
+    if (!Decision.MoveIdentifier.IsNone())
+    {
+        ExecuteMove(Decision.MoveIdentifier);
+        UE_LOG(LogTemp, Log, TEXT("🗡️ Enemy executing: %s"), *Decision.MoveIdentifier.ToString());
+    }
+}
+
+void AEnemyCharacter::ExecuteMove(FName MoveName)
+{
+    // ✅ VALIDATION
+    if (!HealthComponent || !HealthComponent->IsAlive())
+        return;
+
+    if (HealthComponent->IsStunned())
+        return;
+
+    if (bIsExecutingMove)
+        return;
+
+    if (!CombatAnimationComponent || !CombatAnimationComponent->IsValidForExecution())
+        return;
+
+    // ✅ GET MOVE DATA FROM DATATABLE
+    FActionCommand* MoveData = GetMoveFromDataTable(MoveName);
+    if (!MoveData)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ Move not found: %s"), *MoveName.ToString());
+        return;
+    }
+
+    bIsExecutingMove = true;
+
+    // ✅ EXECUTE ANIMATION
+    CombatAnimationComponent->ExecuteActionCommand(*MoveData);
+
+    UE_LOG(LogTemp, Log, TEXT("▶️ Executing: %s (Damage: %.1f)"),
+        *MoveName.ToString(), MoveData->DamageToApply);
+}
+
+void AEnemyCharacter::OnMontageCompleted(UAnimMontage* Montage, bool bInterrupted)
+{
+    bIsExecutingMove = false;
+    UE_LOG(LogTemp, Log, TEXT("✅ Move completed"));
+}
+
+EEnemyState AEnemyCharacter::GetEnemyState() const
+{
+    if (!HealthComponent)
+        return EEnemyState::Idle;
+
+    if (!HealthComponent->IsAlive())
+        return EEnemyState::Dead;
+
+    if (HealthComponent->IsStunned())
+        return EEnemyState::Stunned;
+
+    if (bIsExecutingMove)
+        return EEnemyState::Attacking;
+
+    return EEnemyState::Idle;
+}
+
+float AEnemyCharacter::GetDistanceToPlayer() const
+{
+    if (!PlayerCharacter)
+        return 999999.0f;
+
+    return FVector::Dist(GetActorLocation(), PlayerCharacter->GetActorLocation());
+}
+
+float AEnemyCharacter::GetPlayerDirection() const
+{
+    if (!PlayerCharacter)
+        return 0.0f;
+
+    float PlayerX = PlayerCharacter->GetActorLocation().X;
+    float EnemyX = GetActorLocation().X;
+
+    return (PlayerX > EnemyX) ? 1.0f : -1.0f;
+}
+
+bool AEnemyCharacter::CanAttackPlayer() const
+{
+    if (GetDistanceToPlayer() > 500.0f)
+        return false;
+
+    if (bIsExecutingMove)
+        return false;
+
+    if (!HealthComponent || !HealthComponent->IsAlive() || HealthComponent->IsStunned())
+        return false;
+
+    return true;
+}
+
+FActionCommand* AEnemyCharacter::GetMoveFromDataTable(FName MoveName)
+{
+    if (!EnemyMoveDataTable)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ EnemyMoveDataTable is not set!"));
+        return nullptr;
+    }
+
+    FActionCommand* MoveData = EnemyMoveDataTable->FindRow<FActionCommand>(MoveName, TEXT("GetMoveFromDataTable"));
+
+    if (!MoveData)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ Move '%s' not found in EnemyMoveDataTable"), *MoveName.ToString());
+        return nullptr;
+    }
+
+    return MoveData;
+}
+
+// ========== IDAMAGABLE INTERFACE IMPLEMENTATION ==========
 
 void AEnemyCharacter::ReceiveDamage_Implementation(const FDamageSpec& Spec)
 {
-    if (HealthComp && HealthComp->IsAlive())
+    if (!HealthComponent || !HealthComponent->IsAlive())
     {
-        HealthComp->ApplyDamage(Spec.Amount);
-        
-        UE_LOG(LogTemp, Warning, TEXT("Enemy took %.1f damage from %s"), 
-               Spec.Amount, 
-               Spec.DamageCauser ? *Spec.DamageCauser->GetName() : TEXT("Unknown"));
+        return;
     }
+
+    HealthComponent->ApplyDamage(Spec.Amount, EDamageType::Physical, Spec.HitLocation);
+
+    UE_LOG(LogTemp, Warning, TEXT("💥 Enemy took %.1f damage"), Spec.Amount);
+
+    float StunDuration = 0.3f;
+    HealthComponent->ApplyStun(StunDuration);
 }
 
 bool AEnemyCharacter::IsAlive_Implementation() const
 {
-    return HealthComp && HealthComp->IsAlive();
-}
+    if (!HealthComponent)
+        return false;
 
-// =====================================
-// COMBAT ANIMATION DELEGATES
-// =====================================
-
-void AEnemyCharacter::OnMoveCompleted(FName CompletedMove)
-{
-    UE_LOG(LogTemp, Log, TEXT("Enemy attack completed: %s"), *CompletedMove.ToString());
-    // Behavior tree will handle next action (return to patrol, chase, etc.)
-}
-
-void AEnemyCharacter::OnHitWindowActive(float Damage, float Stun)
-{
-    // AnimNotify fired - perform hit detection
-    PerformHitDetection(Damage, Stun);
-}
-
-void AEnemyCharacter::PerformHitDetection(float Damage, float Stun)
-{
-    // Sphere trace for hit detection
-    FVector Start = GetActorLocation();
-    FVector Forward = GetActorForwardVector();
-    FVector End = Start + (Forward * 150.f);
-
-    FHitResult HitResult;
-    FCollisionQueryParams QueryParams;
-    QueryParams.AddIgnoredActor(this);
-
-    bool bHit = GetWorld()->SweepSingleByChannel(
-        HitResult,
-        Start,
-        End,
-        FQuat::Identity,
-        ECC_Pawn,
-        FCollisionShape::MakeSphere(50.f),
-        QueryParams
-    );
-
-    DrawDebugSphere(GetWorld(), End, 50.f, 12, bHit ? FColor::Green : FColor::Red, false, 0.5f);
-
-    if (bHit && HitResult.GetActor())
-    {
-        AActor* Target = HitResult.GetActor();
-
-        if (Target->GetClass()->ImplementsInterface(UDamagable::StaticClass()))
-        {
-            FDamageSpec Spec;
-            Spec.Amount = Damage;
-            Spec.HitLocation = HitResult.ImpactPoint;
-            Spec.HitNormal = HitResult.ImpactNormal;
-            Spec.HitBone = HitResult.BoneName;
-            Spec.InstigatorController = GetController();
-            Spec.DamageCauser = this;
-
-            IDamagable::Execute_ReceiveDamage(Target, Spec);
-            
-            UE_LOG(LogTemp, Log, TEXT("Enemy hit %s for %.1f damage"), *Target->GetName(), Damage);
-        }
-    }
-}
-
-// =====================================
-// HEALTH DELEGATES
-// =====================================
-
-void AEnemyCharacter::OnHealthChanged(float Current, float Max)
-{
-    UE_LOG(LogTemp, Log, TEXT("Enemy Health: %.1f / %.1f"), Current, Max);
-}
-
-void AEnemyCharacter::OnDeath()
-{
-    UE_LOG(LogTemp, Warning, TEXT("Enemy died!"));
-    SetLifeSpan(3.0f);
+    return HealthComponent->IsAlive();
 }

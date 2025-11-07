@@ -1,27 +1,35 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-
-// BTTask_EnemyAttack.cpp
-
-#include "BTTask_EnemyAttack.h"
-#include "AIController.h"
+﻿#include "BTTask_EnemyAttack.h"
 #include "EnemyCharacter.h"
-#include "BehaviorTree/BlackboardComponent.h"
-#include"CombatDecisionEngine.h"
-#include"CombatStateComponent.h"
+#include "AIController.h"
+
 UBTTask_EnemyAttack::UBTTask_EnemyAttack()
 {
-    NodeName = "Execute Combat Decision";
-    bNotifyTick = false; // We'll use montage delegates instead
+    NodeName = "Enemy Attack";
+    bCreateNodeInstance = false;
 }
 
 EBTNodeResult::Type UBTTask_EnemyAttack::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
-    AEnemyCharacter* Enemy = Cast<AEnemyCharacter>(OwnerComp.GetAIOwner()->GetPawn());
-    if (!Enemy) return EBTNodeResult::Failed;
-    
-    // Just call the character's method
-    Enemy->ExecuteAttack();
-    
+    // ✅ Get AI controller
+    AAIController* AIController = Cast<AAIController>(OwnerComp.GetAIOwner());
+    if (!AIController)
+    {
+        UE_LOG(LogTemp, Error, TEXT("BTTask_EnemyAttack: No AI Controller"));
+        return EBTNodeResult::Failed;
+    }
+
+    // ✅ Get enemy character
+    AEnemyCharacter* Enemy = Cast<AEnemyCharacter>(AIController->GetPawn());
+    if (!Enemy)
+    {
+        UE_LOG(LogTemp, Error, TEXT("BTTask_EnemyAttack: No Enemy Character"));
+        return EBTNodeResult::Failed;
+    }
+
+    // ✅ Call enemy's attack logic (uses CombatDecisionEngine internally)
+    Enemy->MakeCombatDecision();
+
+    UE_LOG(LogTemp, Log, TEXT("✅ BTTask_EnemyAttack: Executed"));
+
     return EBTNodeResult::Succeeded;
 }

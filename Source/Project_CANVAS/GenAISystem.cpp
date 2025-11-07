@@ -344,5 +344,5 @@ FString UGenAISystem::ExtractMaterialBaseName(const FString& TextureName)
 	// If no suffix matched, return original name
 	return BaseName;
 }
-//A LOCAL OLLAMA FUNCTION CAN BE USED IF WE HAVE MORE RAM AVALIBLE BUT WE DONT
+
 

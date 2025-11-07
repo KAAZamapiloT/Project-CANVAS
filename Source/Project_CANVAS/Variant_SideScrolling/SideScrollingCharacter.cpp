@@ -21,7 +21,7 @@
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
-     Tags.Add("Player.Character");
+	
 	// create the camera component
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(RootComponent);
@@ -65,7 +65,7 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
 	CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
 	CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
-
+	Tags.Add("Player.Character");
 }
 
 void ASideScrollingCharacter::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -288,6 +288,19 @@ void ASideScrollingCharacter::BeginPlay()
         {
             UE_LOG(LogTemp, Error, TEXT("Failed to load DT_CombatMoves!"));
         }
+	bIsAttacking = false;
+	bIsInCombo = false;
+	bCanBufferInput = false;
+	bHasBufferedInput = false;
+	ComboCounter = 0;
+	CurrentComboStarter = FName();
+	BufferedInput = FName();
+    
+	// Clear any pending timers
+	GetWorldTimerManager().ClearTimer(ComboWindowTimer);
+	GetWorldTimerManager().ClearTimer(StunTimer);
+    
+	UE_LOG(LogTemp, Log, TEXT("✅ Combat state reset on BeginPlay"));
 }
 
 void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
@@ -655,6 +668,7 @@ void ASideScrollingCharacter::LightAttack(const FInputActionValue& Value)
 		UE_LOG(LogTemp, Warning, TEXT("⚡ Cannot attack - stunned!"));
 		return;
 	}
+	
 	if (!bIsAttacking)
 	{
 		TArray<FName> LightAttackVariants = {
@@ -663,8 +677,7 @@ void ASideScrollingCharacter::LightAttack(const FInputActionValue& Value)
 			FName("LightAttack2"),
 			FName("LightAttack4"),
 			FName("LightAttack1"),
-			FName("LightAttack5"),
-			FName("LightAttack6")
+			FName("LightAttack5")
 		};
 		int32 RandomIndex = FMath::RandRange(0, LightAttackVariants.Num() - 1);
 		FName SelectedVariant = LightAttackVariants[RandomIndex];

@@ -6,152 +6,72 @@
 #include "UObject/Object.h"
 #include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
-#include<iostream>
-#include<unordered_map>
 #include "LocationQueryEngine.generated.h"
 
 /**
- * FSpawnLocation
- * 
  * Represents a semantic spawn location in the world with full metadata.
- * Mirrors the structure of FTextureSet (AssetIndexer) but for spatial locations.
- * 
- * Architecture:
- *   - Stores named spawn points with semantic context
- *   - Tracks occupancy for runtime spawn management
- *   - Supports LLM descriptions for AI context
- *   - Enables complex spatial queries via tags
- * 
- * Example:
- *   FSpawnLocation EnemySpawn;
- *   EnemySpawn.LocationName = "EnemyRight";
- *   EnemySpawn.WorldPosition = FVector(500, 0, 100);
- *   EnemySpawn.ClearanceRadius = 150.0f;
- *   EnemySpawn.Tags.Add("Arena");
- *   EnemySpawn.Description = "Right side of fighting arena";
- * 
+ * Stores named spawn points with context, occupancy, and queryable tags.
  * @see ULocationQueryEngine
  */
 USTRUCT(BlueprintType)
 struct FSpawnLocation
 {
     GENERATED_BODY()
-    
-    /// Unique semantic identifier for this location
-    /// Examples: "PlayerFront", "ArenaCenter", "Background_Decor_01"
-    /// Used for symbolic references in GenAI plans
+
+    /**
+     * Unique semantic identifier for this location, used for GenAI plans.
+     * Examples: "PlayerFront", "ArenaCenter".
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|Identity")
     FString LocationName;
-    
-    /// World space coordinates where actors will spawn
-    /// Updated during runtime based on level changes
+
+    /** World space coordinates where actors will spawn. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|Transform")
     FVector WorldPosition = FVector::ZeroVector;
-    
-    /// Orientation/rotation for spawned actors to face
-    /// Applied to all actors spawned at this location
+
+    /** Orientation/rotation for spawned actors to face. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|Transform")
     FRotator WorldRotation = FRotator::ZeroRotator;
-    
-    /// Sphere radius required to be clear for safe spawning (in cm)
-    /// Used by IsLocationClear() for collision validation
-    /// Typical values: 100-300 depending on actor size
+
+    /** Sphere radius required to be clear for safe spawning (in cm). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|Safety")
     float ClearanceRadius = 200.0f;
-    
-    /// Runtime occupancy flag - prevents multiple actors at same spot
-    /// Set by SetLocationOccupied() during actor lifecycle
-    /// Checked before spawning via IsLocationOccupied()
+
+    /**
+     * Runtime flag to prevent multiple actors spawning here.
+     * Managed by SetLocationOccupied().
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|State")
     bool bIsOccupied = false;
-    
-    /// Semantic tags for filtering and categorization
-    /// Examples: "Arena", "Background", "Overhead", "Safe", "Elevated"
-    /// Similar to AActor::Tags but for locations
-    /// Used by GetLocationsByTag() and FindLocationsByTag()
+
+    /**
+     * Semantic tags for filtering and categorization.
+     * Examples: "Arena", "Background", "Elevated".
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|Metadata")
     TArray<FString> Tags;
-    
-    /// Natural language description for LLM context and documentation
-    /// Example: "Right side of arena, suitable for ranged combat enemies"
-    /// Used in GetLocationContextForLLM() for prompt generation
-    /// Should be descriptive but concise (1-2 sentences)
+
+    /**
+     * Natural language description for LLM context and documentation.
+     * Example: "Right side of arena, suitable for ranged combat."
+     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|Metadata")
     FString Description;
-    
-    /// Actor currently occupying this location (for tracking purposes)
-    /// Used to verify occupancy and debug spawn conflicts
-    /// TWeakObjectPtr prevents memory leaks if actor is destroyed
+
+    /** Actor currently occupying this location (for tracking purposes). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Location|State")
     TWeakObjectPtr<AActor> OccupyingActor;
 };
 
 /**
- * ULocationQueryEngine
- * 
  * Sophisticated spatial location manager for GenAI-driven scene generation.
- * Operates as the location counterpart to UAssetIndexer (handles assets/meshes).
- * 
- * Core Responsibilities:
- *   1. Database Management: Store/retrieve locations with metadata
- *   2. World Scanning: Discover "Loc_*" tagged actors during init
- *   3. Semantic Resolution: Map names ("PlayerFront") → coordinates
- *   4. Validation: Check clearance, occupancy, collision before spawn approval
- *   5. LLM Integration: Provide formatted location context for AI prompts
- *   6. Runtime Tracking: Monitor occupancy and dynamic level changes
- * 
- * Architecture Layers:
- *   - Storage Layer: DiscoveredLocations array + LocationDatabase map
- *   - Query Layer: ResolveLocation(), FindLocationsInRadius(), etc.
- *   - Validation Layer: IsLocationClear(), IsLocationValidForSpawn()
- *   - Resolution Layer: Semantic names → World positions
- *   - Integration Layer: OnLocationScanComplete delegate
- * 
- * Integration Points:
- *   - SceneStateTracker: Calls ScanWorldLocationsAsync() during Init()
- *     Subscribes to OnLocationScanComplete
- *   - GenAISystem: Calls GetLocationContextForLLM() for prompt building
- *     Receives ResolveLocation() calls during plan generation
- *   - SceneBuilder: Uses ResolveLocation() output to spawn actors
- *     Calls SetLocationOccupied() after spawning
- *   - Runtime Systems: Monitor location occupancy, request free spawns
- * 
- * Query Patterns:
- *   
- *   // Simple resolution
- *   FVector SpawnPos = LocationEngine->ResolveLocationName("PlayerFront");
- *   
- *   // Full struct with metadata
- *   FSpawnLocation Loc = LocationEngine->ResolveLocation("PlayerFront");
- *   if (!Loc.bIsOccupied && LocationEngine->IsLocationClear(Loc.WorldPosition, Loc.ClearanceRadius))
- *   {
- *       SpawnActor(Loc);
- *       LocationEngine->SetLocationOccupied(Loc.LocationName, true, NewActor);
- *   }
- *   
- *   // Tag-based queries
- *   TArray<FSpawnLocation> ArenaLocs = LocationEngine->GetLocationsByTag("Arena");
- *   
- *   // Player-relative spawning
- *   FVector FrontPos = LocationEngine->GetPlayerFrontPosition(400.0f);
- *   
- *   // LLM context generation
- *   FString LocContext = LocationEngine->GetLocationContextForLLM();
- * 
- * Level Design Requirements:
- *   - Place actors with "Loc_" prefix in tag name (e.g., "Loc_PlayerLeft")
- *   - Set meaningful actor names (becomes location name after "Loc_" strip)
- *   - Optional: Add semantic tags ("Arena", "Background", etc.) to actors
- * 
- * Performance Considerations:
- *   - IsLocationClear() uses sphere overlap tests (moderate cost)
- *   - Cache results for frequently checked locations
- *   - Limit FindLocationsInRadius() searches to necessary scope
- *   - Use direct map lookup instead of array iteration when possible
- * 
+ *
+ * Responsible for discovering, storing, and querying FSpawnLocation points
+ * (marked by "Loc_*" tags in the world). It validates locations for
+ * occupancy and clearance, resolves semantic names (e.g., "PlayerFront")
+ * to coordinates, and provides context for the GenAI system.
+ *
  * @see UAssetIndexer (parallel pattern for asset management)
- * @see USceneStateTracker (calling subsystem)
- * @see UGenAISystem (LLM context consumer)
  */
 UCLASS()
 class PROJECT_CANVAS_API ULocationQueryEngine : public UObject
@@ -162,49 +82,20 @@ public:
     // ========================================
     // INITIALIZATION & SCANNING
     // ========================================
-    
+
     /**
-     * Scans world for actors tagged with "Loc_*" and builds location database.
-     * Should be called ONCE during game initialization (from SceneStateTracker::Init).
-     * 
-     * Process:
-     *   1. Iterates all actors in world
-     *   2. Finds those with "Loc_" prefixed tags
-     *   3. Extracts position, rotation from actor transform
-     *   4. Parses semantic tags and descriptions from actor properties
-     *   5. Stores in DiscoveredLocations array + LocationDatabase map
-     *   6. Broadcasts OnLocationScanComplete when finished
-     * 
-     * Timing:
-     *   - Async in name only (synchronous execution)
-     *   - Completes within frame at init time
-     *   - Sets bIsScanComplete = true when done
-     * 
-     * Logging:
-     *   - ✅ Progress: "Starting location scan..."
-     *   - ✅ Per-location: "Registered 'LocationName' at position"
-     *   - ✅ Summary: "Scan complete. Found X locations."
-     * 
-     * @param WorldContext World to scan for location actors
-     * @return void - Triggers OnLocationScanComplete delegate when done
-     * 
-     * @see OnLocationScanComplete
-     * @see IsScanComplete()
+     * Scans the world for actors tagged with "Loc_*" to build the location database.
+     * This is the primary initialization function and should be called once at startup.
+     * Broadcasts OnLocationScanComplete when finished.
+     *
+     * @param WorldContext The world to scan for location actors.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Init")
     void ScanWorldLocationsAsync(UWorld* WorldContext);
-    
+
     /**
-     * Checks if initial world scan is complete.
-     * Used by SceneStateTracker to gate GenAI requests.
-     * 
-     * Returns:
-     *   true  = ScanWorldLocationsAsync finished, database is ready
-     *   false = Scan not started or still in progress
-     * 
-     * @return Scan completion status
-     * 
-     * @see ScanWorldLocationsAsync()
+     * Checks if the initial world scan has completed.
+     * @return true if the database is ready, false otherwise.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Init")
     bool IsScanComplete() const { return bIsScanComplete; }
@@ -212,76 +103,32 @@ public:
     // ========================================
     // LOCATION DATABASE QUERIES
     // ========================================
-    
+
     /**
-     * Gets all discovered location names.
-     * Similar to AssetIndexer::GetDiscoveredTextureNames().
-     * 
-     * Use cases:
-     *   - Debug: List all available locations
-     *   - GenAI: Build location options for prompt
-     *   - UI: Populate location selection dropdowns
-     * 
-     * @return Array of location identifier strings
-     * 
-     * Example Output:
-     *   ["PlayerLeft", "PlayerCenter", "PlayerRight", "ArenaCenter", 
-     *    "BackgroundLeft", "BackgroundRight", "OverheadCenter"]
-     * 
-     * Performance: O(1) - returns TMap keys
+     * Gets the names of all discovered locations.
+     * @return Array of location identifier strings.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     TArray<FString> GetDiscoveredLocationNames() const;
-    
+
     /**
-     * Gets all FSpawnLocation structs with full metadata.
-     * Use for bulk iteration or complete database access.
-     * 
-     * @return Complete DiscoveredLocations array
-     * 
-     * Performance: O(1) - returns reference to array
-     * Memory: Large array - avoid copying
+     * Gets all discovered FSpawnLocation structs with full metadata.
+     * @return The complete array of all stored locations.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     TArray<FSpawnLocation> GetAllLocations() const { return DiscoveredLocations; }
-    
+
     /**
-     * Filters locations by semantic tag.
-     * Used for gameplay queries like "spawn in Arena" or "use Elevated locations"
-     * 
-     * Tag Examples:
-     *   - "Arena": Main fighting area
-     *   - "Background": Far away decorative area
-     *   - "Overhead": Above player head (for projectiles)
-     *   - "Safe": Far from player
-     *   - "Elevated": On platforms/high ground
-     * 
-     * @param Tag Tag to filter by
-     * @return Array of locations matching the tag (may be empty)
-     * 
-     * Performance: O(n) where n = number of locations
-     * 
-     * @see FindLocationsByTag() for runtime version with logging
-     * @see GetDiscoveredLocationTags() to see available tags
+     * Filters and returns all locations that contain the specified tag.
+     * @param Tag The tag to filter by (e.g., "Arena", "Background").
+     * @return Array of locations matching the tag.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     TArray<FSpawnLocation> GetLocationsByTag(const FString& Tag) const;
-    
+
     /**
-     * Gets all unique tags discovered across locations.
-     * Similar to AssetIndexer::GetDiscoveredActorTags().
-     * 
-     * Use cases:
-     *   - Debug: See what tag categories exist
-     *   - UI: Populate tag filters
-     *   - GenAI: Understand available constraints
-     * 
-     * @return Array of all discovered tags (no duplicates)
-     * 
-     * Example Output:
-     *   ["Arena", "Background", "Overhead", "Safe", "Elevated", "Combat"]
-     * 
-     * Performance: O(1) - returns reference to cached array
+     * Gets all unique tags discovered across all locations.
+     * @return Array of all unique discovered tags.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     TArray<FString> GetDiscoveredLocationTags() const;
@@ -289,78 +136,34 @@ public:
     // ========================================
     // LOCATION RESOLUTION (Core Function)
     // ========================================
-    
+
     /**
-     * Resolves semantic location name to world position.
-     * Primary function used during GenAI plan enrichment phase.
-     * 
-     * Resolution Strategy (priority order):
-     *   1. Named database lookup: "PlayerLeft" → stored coordinates
-     *   2. Player-relative: "PLAYER_FRONT" → relative to player pawn
-     *   3. Custom coordinates: "CUSTOM:[X,Y,Z]" → parse vector
-     *   4. Actor-relative: "NEAR:ActorTagName" → find by tag
-     *   5. Fallback: Return FVector::ZeroVector if not found
-     * 
-     * Occupancy Handling:
-     *   - Checks if location is occupied
-     *   - Does NOT automatically find alternative (use FindNearestFreeLocation)
-     *   - Logs warning if occupied
-     * 
-     * @param LocationName Semantic identifier to resolve
-     *   Examples: "PlayerFront", "ArenaCenter", "CUSTOM:[100,200,300]"
-     * 
-     * @return World position for spawning, or FVector::ZeroVector if failed
-     * 
-     * Logging:
-     *   - ✅ if resolved from database
-     *   - ⚠️  if resolved from player-relative
-     *   - ⚠️  if occupied (alternative available)
-     *   - ❌ if not found (returns zero)
-     * 
-     * @see ResolveLocation() for full struct
-     * @see FindNearestFreeLocation() for fallback alternatives
+     * Resolves a semantic location name to its world position (FVector).
+     * Handles named locations ("PlayerLeft"), player-relative ("PLAYER_FRONT"),
+     * and custom coordinates ("CUSTOM:[X,Y,Z]").
+     *
+     * @param LocationName Semantic identifier to resolve.
+     * @return World position for spawning, or FVector::ZeroVector if failed.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Resolve")
     FVector ResolveLocationName(const FString& LocationName);
-    
+
     /**
-     * Resolves semantic location name to full FSpawnLocation struct.
-     * Used when full metadata is needed (rotation, clearance, description).
-     * 
-     * Returns complete struct including:
-     *   - WorldPosition (from ResolveLocationName)
-     *   - WorldRotation (actor orientation)
-     *   - ClearanceRadius (required sphere clearance)
-     *   - Tags (semantic categories)
-     *   - Description (LLM context)
-     *   - OccupyingActor (current occupant)
-     * 
-     * @param LocationName Semantic identifier to resolve
-     * @return Complete FSpawnLocation struct with all metadata
-     * 
-     * Fallback:
-     *   - Returns dynamic FSpawnLocation if not in database
-     *   - Dynamic location has zero position if unresolvable
-     * 
-     * Logging:
-     *   - ✅ "Found in database"
-     *   - ⚠️  "Location occupied (alternative available)"
-     *   - ❌ "Could not resolve"
-     * 
-     * @see ResolveLocationName() for position-only queries
-     * @see FindValidSpawnLocation() for occupancy-aware resolution
+     * Resolves a semantic location name to the full FSpawnLocation struct.
+     * Use this when metadata (rotation, clearance, tags) is needed.
+     *
+     * @param LocationName Semantic identifier to resolve.
+     * @return Complete FSpawnLocation struct. Returns a dynamic or zeroed
+     * struct if the name is not in the database but is resolvable
+     * (e.g., "PLAYER_FRONT").
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Resolve")
     FSpawnLocation ResolveLocation(const FString& LocationName);
-    
+
     /**
-     * Checks if location name exists in database.
-     * Lightweight validation function.
-     * 
-     * @param LocationName Name to check
-     * @return true if location exists in database, false otherwise
-     * 
-     * Performance: O(1) - map lookup
+     * Checks if a location name exists in the database.
+     * @param LocationName Name to check.
+     * @return true if the location exists, false otherwise.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Resolve")
     bool DoesLocationExist(const FString& LocationName) const;
@@ -368,133 +171,69 @@ public:
     // ========================================
     // ADD/REMOVE/MODIFY LOCATIONS (Runtime)
     // ========================================
-    
+
     /**
-     * Adds new location to database at runtime.
-     * Useful for procedural generation or dynamic level modifications.
-     * 
-     * Side Effects:
-     *   - Adds to DiscoveredLocations array
-     *   - Updates LocationDatabase map
-     *   - Updates DiscoveredLocationTags array
-     * 
-     * @param NewLocation FSpawnLocation struct with all metadata
-     * 
-     * Logging:
-     *   - ✅ if successfully added
-     *   - ⚠️  if duplicate name detected
+     * Adds a new location to the database at runtime.
+     * @param NewLocation The FSpawnLocation struct to add.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
     void AddLocation(const FSpawnLocation& NewLocation);
-    
+
     /**
-     * Quick add: Creates location from position and name only.
-     * Shorthand for AddLocation with basic parameters.
-     * Generated struct has defaults for rotation, tags, description.
-     * 
-     * @param LocationName Identifier for this location
-     * @param Position World coordinates
-     * @param Clearance Sphere radius required to be clear (default 200cm)
-     * 
-     * Example:
-     *   AddLocationByPosition("SpawnPoint01", FVector(500, 0, 100), 150.0f);
+     * Shorthand to add a new location using only its name, position, and clearance.
+     *
+     * @param LocationName  Identifier for this location.
+     * @param Position      World coordinates.
+     * @param Clearance     Sphere radius required to be clear (default 200cm).
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
     void AddLocationByPosition(const FString& LocationName, FVector Position, float Clearance = 200.0f);
-    
+
     /**
-     * Removes location from database.
-     * Also clears any occupancy markers for that location.
-     * 
-     * Side Effects:
-     *   - Removes from LocationDatabase map
-     *   - Removes from DiscoveredLocations array
-     *   - Clears occupancy tracking
-     * 
-     * @param LocationName Location to remove
-     * @return true if found and removed, false if not found
-     * 
-     * Logging:
-     *   - ✅ "Removed location X"
-     *   - ⚠️  if location not found
+     * Removes a location from the database.
+     * @param LocationName The identifier of the location to remove.
+     * @return true if found and removed, false if not found.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
     bool RemoveLocation(const FString& LocationName);
-    
+
     /**
-     * Modifies existing location metadata.
-     * Updates position, rotation, clearance, tags, description.
-     * Preserves occupancy status unless explicitly updated.
-     * 
-     * @param LocationName Location to modify
-     * @param UpdatedLocation New values to apply
-     * @return true if found and updated, false if not found
-     * 
-     * Example:
-     *   FSpawnLocation Updated = OldLocation;
-     *   Updated.WorldPosition = NewPos;
-     *   LocationEngine->ModifyLocation("PlayerLeft", Updated);
+     * Modifies an existing location's metadata.
+     * @param LocationName      The name of the location to modify.
+     * @param UpdatedLocation   The FSpawnLocation struct with the new data.
+     * @return true if found and updated, false if not found.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
     bool ModifyLocation(const FString& LocationName, const FSpawnLocation& UpdatedLocation);
-    
-    /**
-     * Clears all locations from database.
-     * WARNING: Destructive operation - use with caution.
-     * Also clears occupancy tracking and tag list.
-     * 
-     * Use Cases:
-     *   - Level transitions
-     *   - Dynamic location rebuild
-     *   - Debug/testing
-     * 
-     * Logging:
-     *   - Warns with count of cleared locations
-     */
+
+    /** Clears all locations from the database. Use with caution. */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
     void ClearAllLocations();
 
     // ========================================
     // TAG-BASED QUERIES
     // ========================================
-    
+
     /**
-     * Finds all locations with a specific tag.
-     * Runtime version of GetLocationsByTag with detailed logging.
-     * 
-     * @param Tag Tag to search for
-     * @return Array of matching locations (empty if none found)
-     * 
-     * Logging:
-     *   - Shows count of matches
-     *   - ⚠️  warns if no matches
-     * 
-     * Example:
-     *   TArray<FSpawnLocation> ArenaLocs = FindLocationsByTag("Arena");
-     *   // Might return 3 locations tagged as "Arena"
+     * Finds all locations with a specific tag (runtime version of GetLocationsByTag).
+     * @param Tag Tag to search for.
+     * @return Array of matching locations.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Tags")
     TArray<FSpawnLocation> FindLocationsByTag(const FString& Tag);
-    
+
     /**
-     * Adds tag to existing location.
-     * No-op if location doesn't exist (logs warning).
-     * 
-     * @param LocationName Location to tag
-     * @param Tag Tag to add
-     * 
-     * Example:
-     *   AddTagToLocation("PlayerLeft", "Safe");
+     * Adds a new tag to an existing location.
+     * @param LocationName  Location to tag.
+     * @param Tag           Tag to add.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Tags")
     void AddTagToLocation(const FString& LocationName, const FString& Tag);
-    
+
     /**
-     * Removes tag from location.
-     * No-op if tag doesn't exist on location.
-     * 
-     * @param LocationName Location to untag
-     * @param Tag Tag to remove
+     * Removes a tag from an existing location.
+     * @param LocationName  Location to untag.
+     * @param Tag           Tag to remove.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Tags")
     void RemoveTagFromLocation(const FString& LocationName, const FString& Tag);
@@ -502,78 +241,51 @@ public:
     // ========================================
     // PLAYER-RELATIVE QUERIES (2.5D Fighting Game Support)
     // ========================================
-    
+
     /**
-     * Gets position in front of player (along forward axis).
-     * Useful for spawning enemies or projectiles ahead of player.
-     * 
-     * Calculation:
-     *   PlayerPos + (PlayerForwardVector * Distance)
-     * 
-     * @param Distance How far ahead of player in cm (default 300)
-     * @return World position ahead of player, or zero if no player
-     * 
-     * Requirements: Player pawn must exist in world
+     * Gets a position in front of the player pawn.
+     * @param Distance How far ahead of player in cm (default 300).
+     * @return World position ahead of player, or zero if no player.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Player")
     FVector GetPlayerFrontPosition(float Distance = 300.0f);
-    
+
     /**
-     * Gets position behind player (along backward axis).
-     * 
-     * Calculation:
-     *   PlayerPos - (PlayerForwardVector * Distance)
-     * 
-     * @param Distance Distance behind player in cm (default 300)
-     * @return World position behind player
+     * Gets a position behind the player pawn.
+     * @param Distance Distance behind player in cm (default 300).
+     * @return World position behind player.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Player")
     FVector GetPlayerBackPosition(float Distance = 300.0f);
-    
+
     /**
-     * Gets position to left of player (along left axis).
-     * 
-     * Calculation:
-     *   PlayerPos - (PlayerRightVector * Distance)
-     * 
-     * @param Distance Distance to left in cm (default 200)
-     * @return World position left of player
+     * Gets a position to the left of the player pawn.
+     * @param Distance Distance to left in cm (default 200).
+     * @return World position left of player.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Player")
     FVector GetPlayerLeftPosition(float Distance = 200.0f);
-    
+
     /**
-     * Gets position to right of player (along right axis).
-     * 
-     * Calculation:
-     *   PlayerPos + (PlayerRightVector * Distance)
-     * 
-     * @param Distance Distance to right in cm (default 200)
-     * @return World position right of player
+     * Gets a position to the right of the player pawn.
+     * @param Distance Distance to right in cm (default 200).
+     * @return World position right of player.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Player")
     FVector GetPlayerRightPosition(float Distance = 200.0f);
-    
+
     /**
-     * Gets current player world position.
-     * Used as base for other player-relative queries.
-     * 
-     * @return Player's current location, or FVector::ZeroVector if no player pawn
+     * Gets the current player pawn's world position.
+     * @return Player's location, or FVector::ZeroVector if no player pawn.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Player")
     FVector GetPlayerPosition();
-    
+
     /**
-     * Gets random position within distance range from player.
-     * Useful for randomized spawn patterns and variety.
-     * 
-     * Generates point in annulus (ring) around player:
-     *   - MinDistance = inner radius
-     *   - MaxDistance = outer radius
-     * 
-     * @param MinDistance Minimum distance from player (default 200cm)
-     * @param MaxDistance Maximum distance from player (default 500cm)
-     * @return Random position in the annulus
+     * Gets a random position within an annulus (ring) around the player.
+     * @param MinDistance Minimum distance from player (default 200cm).
+     * @param MaxDistance Maximum distance from player (default 500cm).
+     * @return Random position in the annulus.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Player")
     FVector GetRandomPositionNearPlayer(float MinDistance = 200.0f, float MaxDistance = 500.0f);
@@ -581,54 +293,35 @@ public:
     // ========================================
     // OCCUPANCY MANAGEMENT
     // ========================================
-    
+
     /**
-     * Marks location as occupied/free.
-     * Prevents multiple actors from spawning at same location.
-     * Call this after successful spawn, before freeing call it before destroy.
-     * 
-     * @param LocationName Location to mark
-     * @param bOccupied true = occupied, false = free
-     * @param OccupyingActor Actor occupying location (optional, for tracking)
-     * 
-     * Logging:
-     *   - ✅ when occupation status changes
-     *   - ⚠️  if location not found
-     * 
-     * Example:
-     *   // After spawn:
-     *   LocationEngine->SetLocationOccupied("PlayerFront", true, NewEnemy);
-     *   
-     *   // Before destroy:
-     *   LocationEngine->SetLocationOccupied("PlayerFront", false);
+     * Marks a location as occupied or free.
+     * Call this after spawning an actor or before destroying it.
+     *
+     * @param LocationName      Location to mark.
+     * @param bOccupied         true = occupied, false = free.
+     * @param OccupyingActor    Actor occupying location (optional, for tracking).
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Occupancy")
     void SetLocationOccupied(const FString& LocationName, bool bOccupied, AActor* OccupyingActor = nullptr);
-    
+
     /**
-     * Checks if location is currently occupied.
-     * 
-     * @param LocationName Location to check
-     * @return true if marked as occupied, false if free or not found
+     * Checks if a location is currently marked as occupied.
+     * @param LocationName Location to check.
+     * @return true if occupied, false if free or not found.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Occupancy")
     bool IsLocationOccupied(const FString& LocationName) const;
-    
+
     /**
-     * Gets all unoccupied locations.
-     * Useful for GenAI when selecting from available spawn spots.
-     * 
-     * @return Array of free FSpawnLocation structs
-     * 
-     * Performance: O(n) where n = total locations
+     * Gets all locations currently marked as unoccupied.
+     * @return Array of free FSpawnLocation structs.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Occupancy")
     TArray<FSpawnLocation> GetFreeLocations() const;
-    
+
     /**
-     * Clears all occupancy markers.
-     * Resets system to believe all locations are free.
-     * Use after level reset or when doing bulk spawn clear.
+     * Clears all occupancy markers, setting all locations to free.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Occupancy")
     void ClearAllOccupancy();
@@ -636,69 +329,32 @@ public:
     // ========================================
     // COLLISION & VALIDATION
     // ========================================
-    
+
     /**
-     * Finds nearest free (unoccupied) location from preferred position.
-     * Used as fallback when preferred location is blocked.
-     * 
-     * Algorithm:
-     *   1. Check if preferred location is free
-     *   2. If taken, search in expanding concentric rings
-     *   3. Return first free location with sufficient clearance
-     *   4. Fallback to preferred if nothing found (may be blocked)
-     * 
-     * Search Pattern:
-     *   - Searches in rings at 250cm intervals
-     *   - 12 samples per ring (30° apart)
-     *   - Up to 5 rings (max 1250cm away)
-     * 
-     * @param PreferredLocation Desired spawn point
-     * @param MinClearance Minimum required sphere clearance (default 150cm)
-     * @return Nearest available location (fallback if all blocked)
-     * 
-     * Logging:
-     *   - ✅ shows distance to found location
-     *   - ⚠️  if had to search for alternative
-     * 
-     * Performance: Expensive - avoid calling every frame
-     * 
-     * @see ResolveLocation() uses this for alternatives
+     * Finds the nearest free (unoccupied and clear) location from a preferred position.
+     * Used as a fallback when the desired spot is blocked.
+     *
+     * @param PreferredLocation Desired spawn point.
+     * @param MinClearance      Minimum required sphere clearance (default 150cm).
+     * @return Nearest available location.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
     FSpawnLocation FindNearestFreeLocation(FVector PreferredLocation, float MinClearance = 150.0f);
-    
+
     /**
-     * Checks if spherical area has sufficient clearance.
-     * Performs sphere overlap test to detect obstruction.
-     * 
-     * @param Location Center of clearance sphere
-     * @param Radius Sphere radius to check in cm
-     * @return true if area is clear (no blocking geometry)
-     * 
-     * Performance: Expensive - uses physics queries
-     * Optimization: Cache results for frequently checked locations
-     * 
-     * Channel: Uses ECC_WorldStatic (world geometry)
+     * Checks if a spherical area is clear of blocking geometry (ECC_WorldStatic).
+     * @param Location  Center of the clearance sphere.
+     * @param Radius    Sphere radius to check in cm.
+     * @return true if area is clear.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
     bool IsLocationClear(FVector Location, float Radius) const;
-    
+
     /**
-     * Snaps position to ground by tracing downward.
-     * Adjusts Z coordinate (vertical) to ground level.
-     * 
-     * Process:
-     *   1. Starts trace at Location + 100cm up
-     *   2. Traces down to Location - MaxTraceDistance
-     *   3. Returns hit location, or original if no hit
-     * 
-     * @param Location Position to snap
-     * @param MaxTraceDistance How far to trace down (default 1000cm)
-     * @return Snapped position with Z adjusted to ground
-     * 
-     * Use Case:
-     *   After random spawn generation to ensure actors stand on ground
-     *   FVector SnappedPos = LocationEngine->SnapToGround(RandomPos);
+     * Snaps a position to the ground by tracing downward.
+     * @param Location          Position to snap.
+     * @param MaxTraceDistance  How far to trace down (default 1000cm).
+     * @return Snapped position with Z adjusted to ground, or original if no hit.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
     FVector SnapToGround(FVector Location, float MaxTraceDistance = 1000.0f);
@@ -706,49 +362,19 @@ public:
     // ========================================
     // LLM INTEGRATION & CONTEXT
     // ========================================
-    
+
     /**
-     * Generates formatted location context string for LLM prompts.
-     * Used by GenAISystem to build system message/initial context.
-     * 
-     * Output Format Example:
-     *   "=== AVAILABLE SPAWN LOCATIONS ===
-     *    
-     *    [Named Locations]
-     *    - \"PlayerLeft\": Left side of arena position [OCCUPIED]
-     *    - \"PlayerCenter\": Center arena position
-     *    - \"ArenaCenter\": Dead center arena
-     *    
-     *    [Player-Relative]
-     *    - \"PLAYER_FRONT\", \"PLAYER_BACK\", ...
-     *    
-     *    [Custom Coordinates]
-     *    - Format: \"CUSTOM:[X,Y,Z]\""
-     * 
-     * Features:
-     *   - Lists all named locations with descriptions
-     *   - Shows occupancy status
-     *   - Documents player-relative options
-     *   - Explains custom coordinate format
-     * 
-     * @return Formatted string suitable for LLM prompts
-     * 
-     * @see BuildLocationDatabase() for structured data version
-     * @see GetLocationContextForLLM() for prompt inclusion
+     * Generates a formatted location context string for LLM prompts.
+     * Lists named locations, occupancy, and dynamic options.
+     *
+     * @return Formatted string suitable for LLM prompts.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|LLM")
     FString GetLocationContextForLLM() const;
-    
+
     /**
-     * Builds structured location database for advanced LLM processing.
-     * Returns TMap for programmatic iteration in GenAI logic.
-     * 
-     * @return Map of LocationName → FSpawnLocation for all locations
-     * 
-     * Use Cases:
-     *   - GenAI needs to iterate locations programmatically
-     *   - Building JSON export for external systems
-     *   - Complex filtering logic
+     * Builds a structured location database map (Name -> Struct).
+     * @return TMap of LocationName -> FSpawnLocation for all locations.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|LLM")
     TMap<FString, FSpawnLocation> BuildLocationDatabase();
@@ -756,1105 +382,318 @@ public:
     // ========================================
     // EVENTS & DELEGATES
     // ========================================
-    
-    /// Broadcast when ScanWorldLocationsAsync completes
-    /// Subscribed to by: SceneStateTracker::OnLocationScanFinished()
-    /// Used to gate: GenAI system initialization until locations ready
+
+    /** Broadcast when ScanWorldLocationsAsync completes. */
     FSimpleDelegate OnLocationScanComplete;
-// ========================================
-// DEBUG & VISUALIZATION FUNCTIONS
-// ========================================
 
-/**
- * Prints complete database report to log.
- * 
- * Output includes:
- *   - Total location count
- *   - Discovered tags count
- *   - Per-location details:
- *     * Index and name
- *     * Occupancy status (🔴 occupied or 🟢 free)
- *     * Clearance radius
- *     * World position coordinates
- *     * All tags assigned
- *     * Description text
- * 
- * Use Cases:
- *   - Debug: Verify locations loaded correctly
- *   - Testing: Check occupancy state at breakpoint
- *   - Validation: Ensure position coordinates are sensible
- * 
- * Logging Level: Display (verbose)
- * Performance: O(n) where n = number of locations
- * 
- * Example Output:
- *   ╔═══════════════════════════════════════════╗
- *   ║   📊 Location Database Report             ║
- *   ╚═══════════════════════════════════════════╝
- *   Total Locations: 5
- *   Discovered Tags: 3
- *   [1] PlayerLeft | 🟢 FREE | Clearance: 200.0
- *        Position: [100, 0, 100]
- *        Tags: 1 | Arena
- * 
- * @see PrintLocationsByStatus() for occupancy-focused report
- * @see VisualizeAllLocations() for visual representation
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
-void PrintAllLocationData() const;
+    // ========================================
+    // DEBUG & VISUALIZATION FUNCTIONS
+    // ========================================
 
-/**
- * Visualizes all locations in world with debug geometry.
- * Draws spheres at each location with color-coded occupancy status.
- * 
- * Visual Elements:
- *   - Green sphere: Free location (radius = ClearanceRadius)
- *   - Red sphere: Occupied location
- *   - White text label: Location name above sphere
- *   - Number of segments: 16 (sphere resolution)
- * 
- * @param Duration How long to display visualization in seconds (default 5.0)
- * 
- * Use Cases:
- *   - Level design: Verify spawn points are well-placed
- *   - Debugging: Check collision/clearance visually
- *   - Performance analysis: See spatial distribution
- * 
- * Performance: Temporary draw calls - no persistent cost
- * Channel: Visibility (ECC_Visibility)
- * 
- * Example:
- *   LocationEngine->VisualizeAllLocations(10.0f);
- *   // Shows all locations for 10 seconds in editor viewport
- * 
- * @see PrintAllLocationData() for text report version
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
-void VisualizeAllLocations(float Duration = 5.0f);
+    /**
+     * Prints a comprehensive report of the entire location database to the log.
+     * Includes counts, tags, and details for each location.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
+    void PrintAllLocationData() const;
 
-/**
- * Prints occupancy status summary to log.
- * Lightweight report focused on free vs occupied counts.
- * 
- * Output Format:
- *   📊 Location Status Report:
- *   🔴 EnemyLeft - OCCUPIED
- *   🔴 ArenaCenter - OCCUPIED
- *   🟢 5 free locations
- *   🔴 2 occupied locations
- * 
- * Use Cases:
- *   - Quick status check during gameplay
- *   - Monitoring spawn availability
- *   - Detecting occupancy bugs
- * 
- * Performance: O(n) lightweight scan
- * Logging Level: Display
- * 
- * @see PrintAllLocationData() for detailed report
- * @see GetFreeLocationCount() for programmatic access
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
-void PrintLocationsByStatus() const;
+    /**
+     * Visualizes all locations in the world with debug spheres.
+     * Green = Free, Red = Occupied. Also displays location name.
+     *
+     * @param Duration How long to display visualization in seconds (default 5.0).
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
+    void VisualizeAllLocations(float Duration = 5.0f);
 
-// ========================================
-// BATCH OPERATIONS
-// ========================================
+    /**
+     * Prints a lightweight occupancy status summary to the log.
+     * Shows free vs. occupied counts and lists occupied locations.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
+    void PrintLocationsByStatus() const;
 
-/**
- * Adds multiple locations at once from array.
- * Wrapper around AddLocation() for bulk operations.
- * 
- * Behavior:
- *   - Iterates array and calls AddLocation() for each
- *   - Updates database, array, and tags for all
- *   - Logs progress and completion
- * 
- * @param NewLocations Array of FSpawnLocation structs to add
- * 
- * Use Cases:
- *   - Loading level-specific locations from data
- *   - Procedural generation batches
- *   - Initializing from external format
- * 
- * Logging:
- *   - 🔄 "Adding X locations..."
- *   - ✅ "Batch add complete: Y total"
- * 
- * Performance: O(n) where n = NewLocations.Num()
- * 
- * Example:
- *   TArray<FSpawnLocation> Batch;
- *   // ... populate Batch
- *   LocationEngine->AddMultipleLocations(Batch);
- * 
- * @see AddLocation() for single additions
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
-void AddMultipleLocations(const TArray<FSpawnLocation>& NewLocations);
+    // ========================================
+    // BATCH OPERATIONS
+    // ========================================
 
-/**
- * Removes multiple locations at once from array of names.
- * Wrapper around RemoveLocation() for bulk deletion.
- * 
- * Behavior:
- *   - Iterates names and calls RemoveLocation() for each
- *   - Clears from database, array, and occupancy tracking
- *   - Counts successes and reports
- * 
- * @param LocationNames Array of names to remove
- * @return true if all locations removed successfully, false if any not found
- * 
- * Use Cases:
- *   - Batch cleanup of temporary spawn points
- *   - Level transition clearing
- *   - Procedural generation teardown
- * 
- * Logging:
- *   - 🗑️  "Removing X locations..."
- *   - ✅ "Removed: Y/Z" (Y successful, Z total)
- * 
- * Performance: O(n*m) where n = count, m = database size
- * 
- * @see RemoveLocation() for single removal
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
-bool RemoveMultipleLocations(const TArray<FString>& LocationNames);
+    /**
+     * Adds multiple locations at once from an array.
+     * @param NewLocations Array of FSpawnLocation structs to add.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
+    void AddMultipleLocations(const TArray<FSpawnLocation>& NewLocations);
 
-/**
- * Renames existing location.
- * Updates name in database, array, and occupancy tracking.
- * 
- * Process:
- *   1. Find location by OldName (case-insensitive)
- *   2. Copy to new struct with NewName
- *   3. Remove old entry
- *   4. Add as new entry
- * 
- * @param OldName Current location identifier
- * @param NewName New identifier for this location
- * 
- * Side Effects:
- *   - Updates LocationDatabase key
- *   - Updates DiscoveredLocations array
- *   - Updates occupancy tracking key
- * 
- * Use Cases:
- *   - Fix naming mistakes
- *   - Reorganize location scheme
- *   - Dynamic naming based on conditions
- * 
- * Logging:
- *   - ✅ "Renamed 'Old' → 'New'"
- *   - ⚠️  if OldName not found
- * 
- * Warning: Will break any references to OldName!
- * 
- * @see RemoveLocation() then AddLocation() as alternative
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
-void RenameLocation(const FString& OldName, const FString& NewName);
+    /**
+     * Removes multiple locations at once from an array of names.
+     * @param LocationNames Array of names to remove.
+     * @return true if all locations were found and removed.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
+    bool RemoveMultipleLocations(const TArray<FString>& LocationNames);
 
-// ========================================
-// ADVANCED QUERIES
-// ========================================
+    /**
+     * Renames an existing location.
+     * @param OldName Current location identifier.
+     * @param NewName New identifier for this location.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Manage")
+    void RenameLocation(const FString& OldName, const FString& NewName);
 
-/**
- * Finds location farthest from given position.
- * Useful for spreading out spawns or escaping patterns.
- * 
- * Algorithm:
- *   - Iterate all locations
- *   - Calculate distance to each from position
- *   - Return location with maximum distance
- * 
- * @param FromPosition Reference point (typically player position)
- * @return FSpawnLocation of farthest point, or empty if no locations
- * 
- * Use Cases:
- *   - Spawn away from player ("safe" spawn)
- *   - Evade patterns
- *   - Spread enemy spawn points
- * 
- * Performance: O(n) where n = total locations
- * 
- * Logging:
- *   - 🔍 "Farthest from [X,Y,Z]: LocationName (Distance units)"
- *   - ⚠️  if no locations available
- * 
- * Example:
- *   FSpawnLocation SafeSpot = LocationEngine->FindFarthestLocation(PlayerPos);
- * 
- * @see FindClosestLocation() for opposite
- * @see FindLocationsInRadius() for area-based search
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
-FSpawnLocation FindFarthestLocation(FVector FromPosition) const;
+    // ========================================
+    // ADVANCED QUERIES
+    // ========================================
 
-/**
- * Finds location closest to given position.
- * Inverse of FindFarthestLocation().
- * 
- * Algorithm:
- *   - Iterate all locations
- *   - Calculate distance to each from position
- *   - Return location with minimum distance
- * 
- * @param FromPosition Reference point
- * @return FSpawnLocation of closest point
- * 
- * Use Cases:
- *   - Quick spawn near player
- *   - Follow/intercept patterns
- *   - Nearest neighbor queries
- * 
- * Performance: O(n) where n = total locations
- * 
- * Logging:
- *   - 🔍 "Closest to [X,Y,Z]: LocationName (Distance units)"
- * 
- * @see FindFarthestLocation() for opposite
- * @see FindNearestFreeLocation() for occupancy-aware version
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
-FSpawnLocation FindClosestLocation(FVector FromPosition) const;
+    /**
+     * Finds the location farthest from a given position.
+     * @param FromPosition Reference point (e.g., player position).
+     * @return FSpawnLocation of the farthest point.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
+    FSpawnLocation FindFarthestLocation(FVector FromPosition) const;
 
-/**
- * Finds all locations within distance radius from center point.
- * Returns array of candidates for area-based operations.
- * 
- * Algorithm:
- *   - Iterate all locations
- *   - Calculate distance from Center to each
- *   - Add to result if Distance <= Radius
- * 
- * @param Center Point to search around
- * @param Radius Search radius in cm
- * @return Array of locations within radius (empty if none)
- * 
- * Use Cases:
- *   - Area effect spawning ("spawn 3 enemies around boss")
- *   - Regional queries ("all Arena locations")
- *   - Proximity checks
- * 
- * Performance: O(n) where n = total locations
- * Performance Tips:
- *   - Pre-compute regions/sectors if called frequently
- *   - Consider spatial hashing for large location counts
- * 
- * Logging:
- *   - 🔍 "Found X locations within Y radius"
- * 
- * Example:
- *   TArray<FSpawnLocation> NearbySpots = 
- *       LocationEngine->FindLocationsInRadius(BossPos, 1000.0f);
- * 
- * @see FindClosestLocation() for single search
- * @see GetLocationsByTag() for category-based filtering
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
-TArray<FSpawnLocation> FindLocationsInRadius(FVector Center, float Radius) const;
+    /**
+     * Finds the location closest to a given position.
+     * @param FromPosition Reference point.
+     * @return FSpawnLocation of the closest point.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
+    FSpawnLocation FindClosestLocation(FVector FromPosition) const;
 
-/**
- * Gets count of unoccupied locations.
- * Lightweight query for availability checks.
- * 
- * @return Number of locations with bIsOccupied == false
- * 
- * Use Cases:
- *   - Check if spawning possible
- *   - Gate GenAI requests if no free spots
- *   - Debug occupancy status
- * 
- * Performance: O(n) single pass
- * 
- * @see GetOccupiedLocationCount() for inverse
- * @see GetFreeLocations() for actual array
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
-int32 GetFreeLocationCount() const;
+    /**
+     * Finds all locations within a distance radius from a center point.
+     * @param Center Point to search around.
+     * @param Radius Search radius in cm.
+     * @return Array of locations within the radius.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
+    TArray<FSpawnLocation> FindLocationsInRadius(FVector Center, float Radius) const;
 
-/**
- * Gets count of occupied locations.
- * Inverse of GetFreeLocationCount().
- * 
- * Equivalent to: DiscoveredLocations.Num() - GetFreeLocationCount()
- * 
- * @return Number of locations with bIsOccupied == true
- * 
- * Performance: O(n) calculated from free count
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
-int32 GetOccupiedLocationCount() const;
+    /**
+     * Gets the count of unoccupied locations.
+     * @return Number of locations with bIsOccupied == false.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
+    int32 GetFreeLocationCount() const;
 
-// ========================================
-// VALIDATION ENHANCEMENTS
-// ========================================
+    /**
+     * Gets the count of occupied locations.
+     * @return Number of locations with bIsOccupied == true.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Advanced")
+    int32 GetOccupiedLocationCount() const;
 
-/**
- * Checks if location is valid for spawning.
- * Comprehensive validation covering all conditions.
- * 
- * Validation Checks (in order):
- *   1. Location exists in database
- *   2. Location is not occupied
- *   3. Clearance radius meets minimum
- *   4. No collision at location
- * 
- * @param LocationName Location to validate
- * @param MinClearance Minimum required clearance radius (default 150cm)
- * @return true if all checks pass
- * 
- * Use Cases:
- *   - Pre-spawn validation
- *   - GenAI decision making
- *   - Debug spawn failures
- * 
- * Logging:
- *   - ❌ if location doesn't exist
- *   - ⚠️  if occupied
- *   - ⚠️  if insufficient clearance
- *   - ⚠️  if obstructed by geometry
- * 
- * Performance: Expensive (includes collision test)
- * Optimization: Cache results for frequently checked locations
- * 
- * Example:
- *   if (LocationEngine->IsLocationValidForSpawn("EnemyFront", 200.0f))
- *   {
- *       SpawnEnemy("EnemyFront");
- *   }
- * 
- * @see FindValidSpawnLocation() for fallback version
- * @see IsLocationClear() for collision-only check
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
-bool IsLocationValidForSpawn(const FString& LocationName, float MinClearance = 150.0f) const;
+    // ========================================
+    // VALIDATION ENHANCEMENTS
+    // ========================================
 
-/**
- * Finds valid spawn location, falling back if preferred is invalid.
- * Combines preference with validation logic.
- * 
- * Algorithm:
- *   1. Try preferred location with IsLocationValidForSpawn()
- *   2. If valid, return it
- *   3. If invalid, search all locations for first valid one
- *   4. If none valid, return empty FSpawnLocation
- * 
- * @param PreferredLocation Location to try first
- * @param MinClearance Minimum clearance requirement (default 150cm)
- * @return Valid FSpawnLocation or empty if none found
- * 
- * Use Cases:
- *   - Preferred spawn with fallback
- *   - GenAI planning with automatic alternatives
- *   - Robust spawn system
- * 
- * Logging:
- *   - ⚠️  if preferred invalid, searching...
- *   - ✅ "Found alternative: LocationName"
- *   - ❌ if no valid location found
- * 
- * Performance: O(n) worst case
- * 
- * @see IsLocationValidForSpawn() for validation-only check
- * @see FindNearestFreeLocation() for spatial alternative search
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
-FSpawnLocation FindValidSpawnLocation(const FString& PreferredLocation, float MinClearance = 150.0f);
+    /**
+     * Checks if a location is valid for spawning (exists, not occupied, clear).
+     * @param LocationName    Location to validate.
+     * @param MinClearance    Minimum required clearance radius (default 150cm).
+     * @return true if all checks pass.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
+    bool IsLocationValidForSpawn(const FString& LocationName, float MinClearance = 150.0f) const;
 
-// ========================================
-// STATISTICS & UTILITY FUNCTIONS
-// ========================================
+    /**
+     * Finds a valid spawn location, falling back if the preferred one is invalid.
+     * @param PreferredLocation Location to try first.
+     * @param MinClearance      Minimum clearance requirement (default 150cm).
+     * @return A valid FSpawnLocation, or an empty/zeroed struct if none found.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
+    FSpawnLocation FindValidSpawnLocation(const FString& PreferredLocation, float MinClearance = 150.0f);
 
-/**
- * Calculates average distance between all location pairs.
- * Metric for spatial distribution.
- * 
- * Calculation:
- *   - Compute distance between every pair (i,j where i<j)
- *   - Average all distances
- * 
- * @return Average distance in cm, or 0.0 if fewer than 2 locations
- * 
- * Use Cases:
- *   - Level design: Check spawn spread
- *   - Performance: Estimate spatial queries cost
- *   - Debugging: Verify reasonable distribution
- * 
- * Performance: O(n²) where n = number of locations
- * Warning: Expensive for large location counts!
- * 
- * Example:
- *   float AvgDist = LocationEngine->GetAverageLocationDistance();
- *   if (AvgDist < 500.0f) UE_LOG(..., "Locations clustered!");
- * 
- * @see GetLocationCentroid() for center of mass
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Utility")
-float GetAverageLocationDistance() const;
+    // ========================================
+    // STATISTICS & UTILITY FUNCTIONS
+    // ========================================
 
-/**
- * Calculates centroid (center of mass) of all locations.
- * Useful for finding layout center point.
- * 
- * Calculation:
- *   Sum all positions / number of locations
- * 
- * @return FVector representing average position of all locations
- * 
- * Use Cases:
- *   - Find arena center for camera placement
- *   - Spatial queries reference point
- *   - Level balance analysis
- * 
- * Performance: O(n) single pass
- * Returns: FVector::ZeroVector if no locations
- * 
- * @see FindClosestLocation() for nearest to centroid
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Utility")
-FVector GetLocationCentroid() const;
+    /**
+     * Calculates the average distance between all location pairs.
+     * Expensive O(n^2) operation.
+     * @return Average distance in cm.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Utility")
+    float GetAverageLocationDistance() const;
 
-/**
- * Prints comprehensive location statistics to log.
- * Summary of counts, distances, and spatial info.
- * 
- * Output Includes:
- *   - Total location count
- *   - Free vs occupied breakdown
- *   - Average distance between locations
- *   - Centroid position
- * 
- * Use Cases:
- *   - Level analysis
- *   - Debug at level start
- *   - Performance profiling
- * 
- * Logging Level: Display
- * Performance: O(n²) due to average distance calculation
- * 
- * Example Output:
- *   📈 Location Statistics:
- *   Total: 10
- *   Free: 7
- *   Occupied: 3
- *   Avg Distance: 523.45 units
- *   Centroid: [250, 0, 100]
- * 
- * @see PrintAllLocationData() for detailed database dump
- * @see PrintLocationsByStatus() for occupancy focus
- */
-UFUNCTION(BlueprintCallable, Category = "LocationEngine|Utility")
-void PrintLocationStats() const;
+    /**
+     * Calculates the centroid (center of mass) of all locations.
+     * @return FVector representing the average position of all locations.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Utility")
+    FVector GetLocationCentroid() const;
 
+    /**
+     * Prints comprehensive location statistics to the log
+     * (counts, average distance, centroid).
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Utility")
+    void PrintLocationStats() const;
 
     void BeginDestroy() override;
 private:
     // ========================================
     // INTERNAL HELPERS
     // ========================================
-    
+
     /// Scans world for "Loc_*" tagged actors and extracts location data
     void ScanForNamedLocations(UWorld* InWorldContext);
-    
+
     /// Parses custom coordinate format: "CUSTOM:[X,Y,Z]" → FVector
-    /// Example: "CUSTOM:[100,200,300]" → FVector(100, 200, 300)
     FVector ParseCustomCoordinate(const FString& CoordString) const;
-    
+
     /// Gets player pawn with null check and logging
-    /// Returns nullptr if no player controller or no pawn possessed
     APawn* GetPlayerPawn() const;
-    
+
     /// Finds actor by tag name in the world
-    /// Returns first valid actor matching tag
     AActor* FindActorWithTag(const FString& Tag) const;
 
     // ========================================
     // DATA STORAGE
     // ========================================
-    
+
     /// Master array of all discovered locations
-    /// Parallel to: AssetIndexer::DiscoveredTextures
-    /// Accessed by: Iteration, bulk operations, GetAllLocations()
     UPROPERTY()
     TArray<FSpawnLocation> DiscoveredLocations;
-    
+
     /// Fast lookup map: LocationName → FSpawnLocation
-    /// Parallel to: AssetIndexer::TextureDatabase
-    /// Used by: ResolveLocation() for O(1) lookups
-    /// Key format: UPPERCASE (case-insensitive matching)
     UPROPERTY()
     TMap<FString, FSpawnLocation> LocationDatabase;
-    
+
     /// All unique tags found across locations
-    /// Parallel to: AssetIndexer::DiscoveredActorTags
-    /// Updated when: Tags added via AddTagToLocation() or AddLocation()
-    /// Used by: GetDiscoveredLocationTags()
     UPROPERTY()
     TArray<FString> DiscoveredLocationTags;
-    
+
     /// Occupancy tracking: LocationName → Occupying Actor
-    /// Updated by: SetLocationOccupied()
-    /// Queried by: IsLocationOccupied(), GetFreeLocations()
     UPROPERTY()
     TMap<FString, AActor*> LocationOccupancy;
-    
+
     /// World context for line traces and actor queries
-    /// Set by: ScanWorldLocationsAsync()
-    /// Used by: IsLocationClear(), SnapToGround(), GetPlayerPawn()
     UPROPERTY()
     UWorld* WorldContext = nullptr;
-    
+
     /// Flag: Initial scan complete?
-    /// Parallel to: AssetIndexer::bScanComplete
-    /// Set by: ScanWorldLocationsAsync() when finished
-    /// Read by: IsScanComplete()
     UPROPERTY()
     bool bIsScanComplete = false;
-    
+
     /// Flag: Scan in progress?
-    /// Used for safety checks and preventing concurrent scans
     UPROPERTY()
     bool bIsScanning = false;
 
-    private:
+private:
     // ========================================
     // 2.5D FIGHTING GAME FALLBACK SYSTEM
     // ========================================
-    
-    /**
-     * Generates random corner position for 2.5D fighting game.
-     * 
-     * Positions actors in far background at left/right extremes.
-     * Used when GenAI requests "LEFT_CORNER", "RIGHT_CORNER", etc.
-     * 
-     * Position Range:
-     *   - X: ±800 ± 100 (extreme left/right)
-     *   - Y: 1500 ± 50 (deep background for fighting arena)
-     *   - Z: 100 (ground level)
-     * 
-     * @param CornerType String indicating which corner ("LEFT_CORNER", "RIGHT_CORNER")
-     * @return Random position in corner zone
-     * 
-     * Example:
-     *   FVector CornerPos = GetRandomCornerPosition("LEFT_CORNER");
-     *   // Possible result: [-856.2, 1523.8, 100.0]
-     */
-    FVector GetRandomCornerPosition(const FString& CornerType);
-    
-    /**
-     * Generates random background position (far from camera).
-     * 
-     * Useful for spawning props, decorations, or enemies in deep background.
-     * Position Range:
-     *   - X: -700 to 700 (wide horizontal spread)
-     *   - Y: 1200 to 1800 (very far background)
-     *   - Z: 80 to 150 (slight height variation for terrain)
-     * 
-     * 2.5D Context:
-     *   - Large Y depth creates perspective illusion
-     *   - Wide X spread fills arena width
-     *   - Low Z keeps ground level
-     * 
-     * @return Random position in background zone
-     */
-    FVector GetRandomBackgroundPosition();
-    
-    /**
-     * Generates random foreground position (close to camera).
-     * 
-     * Useful for close-range spawns, props near player.
-     * Position Range:
-     *   - X: -500 to 500 (medium horizontal spread)
-     *   - Y: 200 to 400 (close to camera)
-     *   - Z: 80 to 120 (ground level with slight variation)
-     * 
-     * @return Random position in foreground zone
-     */
-    FVector GetRandomForegroundPosition();
-    
-    /**
-     * Generates random overhead position (high Z, for projectiles/hazards).
-     * 
-     * Useful for:
-     *   - Projectile spawn (arrows, spells)
-     *   - Ceiling hazards
-     *   - Sky effects or enemies
-     * 
-     * Position Range:
-     *   - X: -600 to 600 (wide spread)
-     *   - Y: 500 to 1200 (varied depth)
-     *   - Z: 400 to 600 (elevated above ground)
-     * 
-     * @return Random position in overhead zone
-     */
-    FVector GetRandomOverheadPosition();
-    
-    /**
-     * Generates random left side position for 2.5D arena.
-     * 
-     * Useful for:
-     *   - Left-side combat spawns
-     *   - Environmental objects on left
-     *   - Asymmetric arena design
-     * 
-     * Position Range:
-     *   - X: -800 to -400 (left side only)
-     *   - Y: 400 to 1200 (varied depth)
-     *   - Z: 80 to 150 (ground level)
-     * 
-     * @return Random position on left side
-     */
-    FVector GetRandomLeftSidePosition();
-    
-    /**
-     * Generates random right side position for 2.5D arena.
-     * 
-     * Counterpart to GetRandomLeftSidePosition().
-     * Position Range:
-     *   - X: 400 to 800 (right side only)
-     *   - Y: 400 to 1200 (varied depth)
-     *   - Z: 80 to 150 (ground level)
-     * 
-     * @return Random position on right side
-     */
-    FVector GetRandomRightSidePosition();
-    
-    /**
-     * Generates random center arena position.
-     * 
-     * Used for central encounters, boss spawns, center-focus battles.
-     * Position Range:
-     *   - X: -200 to 200 (near center X)
-     *   - Y: 600 to 900 (moderate depth, fighting distance)
-     *   - Z: 100 (ground level)
-     * 
-     * @return Random position near arena center
-     */
-    FVector GetRandomCenterPosition();
-// ========================================
-// DYNAMIC ACTOR TAG CACHING - RUNTIME ACTOR DISCOVERY
-// ========================================
 
-/**
- * ============================================================================
- * ACTOR TAG CACHING SUBSYSTEM
- * ============================================================================
- * 
- * Scans the world for actors with arbitrary tags (not just "Loc_*") and
- * maintains a runtime cache for fast positional queries.
- * 
- * Architecture:
- * - Storage: TMap<FString TagName, TArray<AActor*> ActorsWithTag>
- * - Synchronized: ActorLocationCache parallels actor positions
- * - Queryable: Multiple access patterns (by tag, closest, random, etc)
- * 
- * Use Cases:
- * - Find all "Enemy" tagged actors and get their positions
- * - Spawn something near random "Ally" actor
- * - Get closest "PickUp" item from player location
- * - Implement "NEAR:Enemy" style spawn directives from LLM
- * 
- * Integration:
- * - Called during init: ScanAndCacheActorsByTags()
- * - Used by GenAI: For dynamic actor-relative location queries
- * - Updated at runtime: RefreshTagCache() for dynamic spawned actors
- * 
- * Performance Considerations:
- * - ScanAndCacheActorsByTags(): O(n*m) initial scan (n=actors, m=tags per actor)
- * - GetActorsWithTag(): O(1) map lookup
- * - RefreshTagCache(): O(n) single-tag rescan
- * - Memory: Linear with actor count and unique tags
- * 
- * @see ScanAndCacheActorsByTags() to populate on init
- * @see GetActorsWithTag() for actor lists
- * @see GetPositionsByTag() for spatial queries
- * @see GetRandomPositionFromTag() for random spawn selection
- */
-    /**
-        * Gets array of world positions for all actors with tag.
-        * 
-        * WHEN TO USE:
-        * - Need spatial data without actor references
-        * - Spawn multiple objects near tagged positions
-        * - Analyze spatial distribution
-        * 
-        * @param Tag Tag name (case-insensitive)
-        * @return Array of FVector world positions
-        *         Empty array if tag not cached
-        * 
-        * Performance: O(n) where n = actors with tag (computes positions)
-        * 
-        * @see GetActorsWithTag() for actor references
-        */
-   
+    /** Generates random corner position for 2.5D fighting game. */
+    FVector GetRandomCornerPosition(const FString& CornerType);
+
+    /** Generates random background position (far from camera). */
+    FVector GetRandomBackgroundPosition();
+
+    /** Generates random foreground position (close to camera). */
+    FVector GetRandomForegroundPosition();
+
+    /** Generates random overhead position (high Z). */
+    FVector GetRandomOverheadPosition();
+
+    /** Generates random left side position for 2.5D arena. */
+    FVector GetRandomLeftSidePosition();
+
+    /** Generates random right side position for 2.5D arena. */
+    FVector GetRandomRightSidePosition();
+
+    /** Generates random center arena position. */
+    FVector GetRandomCenterPosition();
+
+    // ========================================
+    // DYNAMIC ACTOR TAG CACHING - RUNTIME ACTOR DISCOVERY
+    // ========================================
 
 public:
     // ========================================
     // CACHE INITIALIZATION & MANAGEMENT
     // ========================================
-    
+
     /**
-     * Scans entire world and builds actor tag cache.
-     * 
-     * WHEN TO CALL:
-     * - During game initialization (from SceneStateTracker::Init())
-     * - After major level changes
-     * - When dynamic spawned actors need inclusion
-     * 
-     * PROCESS:
-     * 1. Iterate all actors in world (UGameplayStatics::GetAllActorsOfClass)
-     * 2. For each actor with tags:
-     *    - Skip "Loc_" prefixed tags (handled by ScanForNamedLocations)
-     *    - Add actor to ActorTagCache[TagName]
-     *    - Store position in ActorLocationCache[TagName]
-     * 3. Log summary of discovered tags
-     * 4. Print cache report if bLogResults = true
-     * 
-     * TAG FILTERING:
-     * - Includes: "Player", "Enemy", "Ally", "Item", custom tags
-     * - Excludes: "Loc_*" (location markers), internal engine tags
-     * - Case: Tags converted to UPPERCASE for case-insensitive matching
-     * 
-     * MEMORY ALLOCATION:
-     * - Clears existing caches before rebuild
-     * - Pre-allocates TArray space if available (optimization)
-     * - Empty caches if world has no actors
-     * 
-     * LOGGING OUTPUT:
-     * 🔍 "Scanning X actors for tags..."
-     * ✅ "Tag scan complete. Found Y unique tags"
-     * 📍 "'EnemyTag': 3 actors"
-     * 📍 "'ItemTag': 5 actors"
-     * 
-     * @param InWorldContext World to scan (usually GetWorld())
-     * @param bLogResults If true, prints full cache report (default: true)
-     * 
-     * @return void - Populates ActorTagCache and ActorLocationCache
-     * 
-     * Performance: O(n*m) where n=actors, m=avg tags per actor
-     * Typical: 100 actors with 2 tags each = ~200 operations
-     * 
-     * @see RefreshTagCache() for updating single tags
-     * @see PrintActorTagCache() to see results after scan
-     * 
-     * Example Usage:
-     * ```
-     * // In SceneStateTracker::Init()
-     * LocationEngine->ScanAndCacheActorsByTags(GetWorld(), true);
-     * 
-     * // Now can query:
-     * TArray<AActor*> AllEnemies = LocationEngine->GetActorsWithTag("Enemy");
-     * TArray<FVector> EnemyPositions = LocationEngine->GetPositionsByTag("Enemy");
-     * ```
+     * Scans entire world and builds actor tag cache for non-"Loc_*" tags.
+     * Call during init.
+     *
+     * @param InWorldContext World to scan.
+     * @param bLogResults If true, prints full cache report.
      */
-   // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
-   // void ScanAndCacheActorsByTags(
-   //     UWorld* InWorldContext,
-   //     bool bLogResults = true
-   // );
-    
+    // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+    // void ScanAndCacheActorsByTags(
+    //     UWorld* InWorldContext,
+    //     bool bLogResults = true
+    // );
+
     /**
-     * Refreshes cache for a single tag (incremental update).
-     * 
-     * WHEN TO USE:
-     * - After spawning new actors with specific tag
-     * - When actors with tag have moved significantly
-     * - Periodic refresh for dynamic scenes (every 5-10 seconds)
-     * - More efficient than full ScanAndCacheActorsByTags()
-     * 
-     * PROCESS:
-     * 1. Clear old data for specified tag
-     * 2. Rescan world for actors with that tag
-     * 3. Rebuild position cache for tag
-     * 4. Log update count
-     * 
-     * PERFORMANCE:
-     * - O(n) where n = total actors in world (linear scan)
-     * - Much cheaper than full rebuild
-     * - Use this in gameplay loops, not full ScanAndCacheActorsByTags()
-     * 
-     * @param Tag Tag name to refresh (e.g., "Enemy", "Item")
-     * 
-     * @return void - Updates ActorTagCache[Tag] and ActorLocationCache[Tag]
-     * 
-     * Logging:
-     * 🔄 "Refreshing tag 'TagName': N actors found"
-     * 
-     * Example Usage:
-     * ```
-     * // After spawning new enemy
-     * LocationEngine->RefreshTagCache("Enemy");
-     * 
-     * // Now GetActorsWithTag("Enemy") includes new actor
-     * ```
+     * Refreshes the cache for a single tag (incremental update).
+     * More efficient than a full rescan.
+     *
+     * @param Tag Tag name to refresh (e.g., "Enemy", "Item").
      */
- //   UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
-   // void RefreshTagCache(const FString& Tag);
-    
-    /**
-     * Clears all cached actor tags.
-     * 
-     * Side Effects:
-     * - Empties ActorTagCache
-     * - Empties ActorLocationCache
-     * - All GetActorsWithTag() calls return empty after this
-     * 
-     * Use Cases:
-     * - Level unload
-     * - Memory cleanup
-     * - Reset for testing
-     * 
-     * Logging:
-     * 🗑️  "Cleared actor tag cache"
-     * 
-     * @return void
-     */
-   // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
-  //  void ClearActorTagCache();
+    // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+    // void RefreshTagCache(const FString& Tag);
+
+    /** Clears all cached actor tags. */
+    // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Cache")
+    // void ClearActorTagCache();
 
     // ========================================
     // ACTOR QUERY BY TAG - CORE RETRIEVAL FUNCTIONS
     // ========================================
-    
+
     /**
-     * Gets all actors with specific tag.
-     * 
-     * WHEN TO USE:
-     * - Need array of all actors matching tag
-     * - Iterate and process multiple actors
-     * - Build complex queries from multiple tags
-     * 
-     * @param Tag Tag to search for (case-insensitive, auto-uppercased)
-     * @return Array of AActor* pointers with matching tag
-     *         Returns empty array if tag not found in cache
-     * 
-     * Performance: O(1) map lookup (extremely fast)
-     * Memory: Returned as reference (no copy)
-     * 
-     * Return Safety:
-     * - Actors may be destroyed outside of LocationEngine
-     * - Check IsValid() on returned actors before use
-     * - Stale references possible after actor destruction
-     * 
-     * Logging:
-     * ⚠️  "GetActorsWithTag: Tag 'X' not cached" (if not found)
-     * 
-     * Example Usage:
-     * ```
-     * // Get all enemies
-     * TArray<AActor*> Enemies = LocationEngine->GetActorsWithTag("Enemy");
-     * for (AActor* Enemy : Enemies)
-     * {
-     *     if (IsValid(Enemy))
-     *     {
-     *         // Do something with enemy
-     *     }
-     * }
-     * ```
-     * 
-     * @see GetPositionsByTag() for positions of tagged actors
-     * @see GetClosestActorWithTag() for single nearest actor
-     * @see GetRandomActorWithTag() for random selection
+     * Gets all actors from the cache with a specific tag. O(1) lookup.
+     * @param Tag Tag to search for (case-insensitive).
+     * @return Array of AActor* pointers. Check IsValid() before use.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     TArray<AActor*> GetActorsWithTag(const FString& Tag) const;
 
-    
     /**
-     * Gets array of world positions for all actors with tag.
-     * 
-     * WHEN TO USE:
-     * - Need spatial data without actor references
-     * - Spawn multiple objects near tagged positions
-     * - Analyze spatial distribution
-     * - Generate LLM context about actor positions
-     * 
-     * Returns: Parallel array to GetActorsWithTag()
-     * Positions[i] = GetActorsWithTag()[i]->GetActorLocation()
-     * 
-     * @param Tag Tag name (case-insensitive)
-     * @return Array of FVector world positions
-     *         Empty array if tag not cached
-     * 
-     * Performance: O(1) map lookup
-     * Memory: Returns reference to internal cache
-     * 
-     * Cache Validity:
-     * - Positions valid when actors are stationary
-     * - Positions stale if tagged actors have moved
-     * - Call RefreshTagCache() if actors are mobile
-     * 
-     * Logging:
-     * ⚠️  "GetPositionsByTag: Tag 'X' not in cache"
-     * 
-     * Example Usage:
-     * ```
-     * // Get all pickup locations
-     * TArray<FVector> PickupPositions = LocationEngine->GetPositionsByTag("Item");
-     * 
-     * // Spawn collectible particle at each
-     * for (const FVector& Pos : PickupPositions)
-     * {
-     *     SpawnParticleEffect(Pos);
-     * }
-     * ```
-     * 
-     * @see GetActorsWithTag() for actor references
-     * @see RefreshTagCache() to update positions for mobile actors
+     * Gets cached world positions for all actors with a specific tag. O(1) lookup.
+     * @param Tag Tag name (case-insensitive).
+     * @return Array of FVector world positions.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     TArray<FVector> GetPositionsByTag(const FString& Tag) const;
-    
+
     /**
-     * Gets random actor from all actors with tag.
-     * 
-     * WHEN TO USE:
-     * - Spawn near random tagged actor
-     * - Random NPC dialogue assignment
-     * - Spawn patterns with variety
-     * - GenAI "RANDOM_NEARBY_ENEMY" type directives
-     * 
-     * Algorithm:
-     * 1. Get all actors with tag
-     * 2. Pick random index
-     * 3. Return that actor
-     * 
-     * @param Tag Tag to search
-     * @return Random actor with tag, or nullptr if tag not found/empty
-     * 
-     * Distribution: Uniform random (all actors equally likely)
-     * 
-     * Logging:
-     * 🎲 "GetRandomActorWithTag: Picked random actor" (Display level)
-     * ⚠️  "GetRandomActorWithTag: No actors with tag 'X'" (Warning)
-     * 
-     * Null Safety:
-     * - Returns nullptr if tag empty
-     * - Caller should check null
-     * - Returned actor may be destroyed later
-     * 
-     * Example Usage:
-     * ```
-     * // Spawn powerup near random enemy
-     * AActor* RandomEnemy = LocationEngine->GetRandomActorWithTag("Enemy");
-     * if (RandomEnemy)
-     * {
-     *     FVector NearbyPos = RandomEnemy->GetActorLocation() + FVector(200, 0, 0);
-     *     SpawnPowerUp(NearbyPos);
-     * }
-     * ```
-     * 
-     * @see GetActorsWithTag() for all actors with tag
-     * @see GetRandomPositionFromTag() for position without actor
+     * Gets a random actor from the cache for a given tag.
+     * @param Tag Tag to search.
+     * @return Random actor with tag, or nullptr if tag not found/empty.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     AActor* GetRandomActorWithTag(const FString& Tag);
-    
+
     /**
-     * Gets random position from all actors with tag.
-     * 
-     * Like GetRandomActorWithTag() but returns position only.
-     * Doesn't return actor reference (safer if actor destroyed).
-     * 
-     * @param Tag Tag to search
-     * @return Random position from tagged actors, FVector::ZeroVector if not found
-     * 
-     * Use Cases:
-     * - Spawn at random enemy location
-     * - Projectile targets
-     * - Area effect spawning
-     * 
-     * Logging:
-     * 🎲 "Random position for tag 'X': [pos coordinates]"
-     * ⚠️  "GetRandomPositionFromTag: No positions for tag 'X'"
-     * 
-     * Example Usage:
-     * ```
-     * // Spawn explosion at random pickup location
-     * FVector ExplosionPos = LocationEngine->GetRandomPositionFromTag("Item");
-     * if (!ExplosionPos.IsZero())
-     * {
-     *     SpawnExplosion(ExplosionPos);
-     * }
-     * ```
-     * 
-     * @see GetRandomActorWithTag() for actor reference version
-     * @see GetPositionsByTag() for all positions with tag
+     * Gets the cached position of a random actor with the given tag.
+     * @param Tag Tag to search.
+     * @return Random position, or FVector::ZeroVector if not found.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     FVector GetRandomPositionFromTag(const FString& Tag);
-    
+
     /**
-     * Gets closest actor with tag from reference position.
-     * 
-     * WHEN TO USE:
-     * - Find nearest enemy to player
-     * - Closest ally for support
-     * - Nearest item/objective
-     * - Target selection logic
-     * 
-     * Algorithm:
-     * 1. Get all actors with tag
-     * 2. Iterate, tracking minimum distance
-     * 3. Return closest actor
-     * 
-     * @param Tag Tag to search
-     * @param FromLocation Reference point (typically player position)
-     * @return Closest actor with tag, or nullptr if none found
-     * 
-     * Distance Metric: Euclidean distance (standard 3D)
-     * Calculation: FVector::Dist(FromLocation, ActorPosition)
-     * 
-     * Performance: O(n) where n = actors with tag
-     * 
-     * Logging:
-     * 🔍 "Closest 'Tag' actor: XX units away"
-     * ⚠️  "GetClosestActorWithTag: No actors with tag 'X'"
-     * 
-     * Example Usage:
-     * ```
-     * // Find closest enemy to player
-     * AActor* NearestEnemy = LocationEngine->GetClosestActorWithTag(
-     *     "Enemy",
-     *     PlayerPos
-     * );
-     * if (NearestEnemy)
-     * {
-     *     LookAtEnemy(NearestEnemy);
-     * }
-     * ```
-     * 
-     * @see GetFarthestActorWithTag() for farthest distance
-     * @see FindLocationsInRadius() for area-based search
+     * Gets the closest actor from the cache with the given tag,
+     * relative to a reference position.
+     * @param Tag           Tag to search.
+     * @param FromLocation  Reference point (typically player position).
+     * @return Closest actor with tag, or nullptr if none found.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     AActor* GetClosestActorWithTag(const FString& Tag, FVector FromLocation);
-    
+
     /**
-     * Gets farthest actor with tag from reference position.
-     * 
-     * Inverse of GetClosestActorWithTag().
-     * Used for "escape" patterns, "spawn far from player", etc.
-     * 
-     * @param Tag Tag to search
-     * @param FromLocation Reference point
-     * @return Farthest actor with tag, or nullptr if none found
-     * 
-     * Use Cases:
-     * - Spawn away from player
-     * - Find safe zone
-     * - Avoid proximity spawning
-     * 
-     * Example Usage:
-     * ```
-     * // Spawn far from player for ambush setup
-     * AActor* SafeSpot = LocationEngine->GetFarthestActorWithTag("SpawnZone", PlayerPos);
-     * ```
-     * 
-     * @see GetClosestActorWithTag() for nearest
-     * @see FindFarthestLocation() for named location version
+     * Gets the farthest actor from the cache with the given tag,
+     * relative to a reference position.
+     * @param Tag           Tag to search.
+     * @param FromLocation  Reference point.
+     * @return Farthest actor with tag, or nullptr if none found.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     AActor* GetFarthestActorWithTag(const FString& Tag, FVector FromLocation);
@@ -1862,60 +701,18 @@ public:
     // ========================================
     // BATCH TAG OPERATIONS
     // ========================================
-    
+
     /**
-     * Gets all unique tags in cache.
-     * 
-     * Returns list of tag names that have actors.
-     * Useful for debugging and UI generation.
-     * 
-     * @return Array of discovered tag names
-     * 
-     * Example Output:
-     * ["Enemy", "Ally", "Item", "NPC", "SpawnZone", "Hazard"]
-     * 
-     * Use Cases:
-     * - Debug: See what tags are available
-     * - UI: Populate tag filter dropdowns
-     * - GenAI: Understand available entity types
-     * 
-     * Performance: O(1) - returns map keys
-     * 
-     * Example Usage:
-     * ```
-     * TArray<FString> AllTags = LocationEngine->GetAllActorTags();
-     * for (const FString& Tag : AllTags)
-     * {
-     *     UE_LOG(LogTemp, Display, TEXT("Tag: %s"), *Tag);
-     * }
-     * ```
-     * 
-     * @see PrintActorTagCache() for detailed tag info
+     * Gets all unique actor tags currently in the cache.
+     * @return Array of discovered tag names (e.g., "Enemy", "Item").
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     TArray<FString> GetAllActorTags() const;
-    
+
     /**
-     * Gets count of actors with specific tag.
-     * 
-     * Lightweight query without retrieving full actor array.
-     * 
-     * @param Tag Tag to count
-     * @return Number of actors with tag, 0 if tag not found
-     * 
-     * Use Cases:
-     * - Check if any enemies remain
-     * - Gate gameplay on actor count
-     * - Performance/debug monitoring
-     * 
-     * Example Usage:
-     * ```
-     * int32 EnemyCount = LocationEngine->GetActorCountWithTag("Enemy");
-     * if (EnemyCount == 0)
-     * {
-     *     OnAllEnemiesDead();
-     * }
-     * ```
+     * Gets the count of actors from the cache with a specific tag.
+     * @param Tag Tag to count.
+     * @return Number of actors with tag, 0 if tag not found.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     int32 GetActorCountWithTag(const FString& Tag) const;
@@ -1923,96 +720,19 @@ public:
     // ========================================
     // DEBUG & VISUALIZATION
     // ========================================
-    
+
     /**
-     * Prints complete actor tag cache to log.
-     * 
-     * DETAILED REPORT including:
-     * - Total unique tags in cache
-     * - Per-tag breakdown:
-     *   * Tag name
-     *   * Actor count
-     *   * List of actor names
-     *   * World positions of each actor
-     * 
-     * Output Format:
-     * ```
-     * ╔═══════════════════════════════════════════╗
-     * ║ 🏷️  Actor Tag Cache Report ║
-     * ╚═══════════════════════════════════════════╝
-     * 🏷️  Tag: 'Enemy'
-     *    Actors: 3
-     *     Enemy_01 at [123.0, 456.0, 789.0][2]
-     *     Enemy_02 at [234.0, 567.0, 890.0][3]
-     *     Enemy_03 at [345.0, 678.0, 901.0][4]
-     * 
-     * 🏷️  Tag: 'Item'
-     *    Actors: 5
-     *     Sword_01 at [500.0, 100.0, 85.0][2]
-     *    ...
-     * ```
-     * 
-     * Use Cases:
-     * - Debug: Verify cache contents
-     * - Testing: Check actor discovery
-     * - Development: Confirm tags are working
-     * 
-     * Logging Level: Warning/Display (verbose)
-     * Performance: O(n) where n = cached actors
-     * 
-     * Timing: Call in BeginPlay() or from console
-     * 
-     * Example Usage:
-     * ```
-     * // In editor console:
-     * // LocationEngine.PrintActorTagCache
-     * 
-     * // Or in code:
-     * LocationEngine->PrintActorTagCache();
-     * ```
-     * 
-     * @return void - Prints to log only
-     * 
-     * @see GetAllActorTags() for programmatic tag list
+     * Prints a complete report of the actor tag cache to the log.
+     * Includes tag names, counts, and actor details.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
     void PrintActorTagCache() const;
-    
+
     /**
-     * Visualizes all cached actors in world with debug geometry.
-     * 
-     * VISUAL REPRESENTATION:
-     * - Colored sphere at each actor location
-     * - Color indicates tag (can be customized)
-     * - Text label above showing actor name
-     * - Temporarily rendered (1-frame to N-frames)
-     * 
-     * Visual Elements:
-     * - Sphere radius: 50 units (configurable)
-     * - Colors: Different per tag type (red=enemy, green=ally, etc)
-     * - Text: Actor name + distance from center
-     * 
-     * Use Cases:
-     * - Level design: Verify actor placement
-     * - Debugging: Visualize cache contents in viewport
-     * - Development: Check spatial distribution
-     * 
-     * @param Duration How long to display (seconds, default 5.0)
-     * @param bCentered If true, also show line to world center
-     * @param Radius Sphere radius for visualization (default 50.0)
-     * 
-     * Performance:
-     * - Draw calls per actor: 1 (sphere) + 1 (text)
-     * - Duration measured in frames (Duration * TickRate)
-     * - Temporary (cleared after Duration)
-     * 
-     * Example Usage:
-     * ```
-     * // Show actors for 10 seconds
-     * LocationEngine->VisualizeActorTagCache(10.0f, true, 50.0f);
-     * ```
-     * 
-     * @return void - Registers debug draw commands
+     * Visualizes all cached actors in the world with debug geometry.
+     * @param Duration How long to display (seconds, default 5.0).
+     * @param bCentered If true, also show line to world center.
+     * @param Radius Sphere radius for visualization (default 50.0).
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
     void VisualizeActorTagCache(
@@ -2024,94 +744,41 @@ public:
     // ========================================
     // STATISTICS & ANALYSIS
     // ========================================
-    
+
     /**
-     * Gets average distance between all actors with tag.
-     * 
-     * Metric for spatial distribution density.
-     * 
-     * Calculation:
-     * - Compute distance between every pair
-     * - Average all pairwise distances
-     * 
-     * @param Tag Tag to analyze
-     * @return Average distance between actors with tag
-     *         Returns 0 if tag has 0 or 1 actors
-     * 
-     * Use Cases:
-     * - Check if enemies are clustered (low avg dist)
-     * - Verify spawn spread (high avg dist)
-     * - Level analysis
-     * 
-     * Performance: O(n²) where n = actors with tag
-     * Cache: Results not cached - recalculated each call
-     * 
-     * Example Usage:
-     * ```
-     * float EnemySpacing = LocationEngine->GetAverageActorDistance("Enemy");
-     * if (EnemySpacing < 300.0f)
-     * {
-     *     UE_LOG(LogTemp, Warning, TEXT("Enemies clustered!"));
-     * }
-     * ```
+     * Gets the average distance between all actors with a specific tag.
+     * Expensive O(n^2) operation.
+     * @param Tag Tag to analyze.
+     * @return Average distance between actors.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Stats")
     float GetAverageActorDistance(const FString& Tag) const;
-    
+
     /**
-     * Gets center of mass position for all actors with tag.
-     * 
-     * Centroid = Average of all actor positions
-     * Useful for area-of-effect calculations and analysis.
-     * 
-     * @param Tag Tag to analyze
-     * @return Average position of all actors with tag
-     *         Returns FVector::ZeroVector if no actors with tag
-     * 
-     * Use Cases:
-     * - Find center of enemy group
-     * - Area effect targeting
-     * - Spatial analysis
-     * 
-     * Example Usage:
-     * ```
-     * FVector EnemyGroupCenter = LocationEngine->GetActorCentroid("Enemy");
-     * // Explode at center of all enemies
-     * CastAreaEffect(EnemyGroupCenter, 500.0f);
-     * ```
+     * Gets the center of mass (centroid) for all actors with a specific tag.
+     * @param Tag Tag to analyze.
+     * @return Average position of all actors with tag.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Stats")
     FVector GetActorCentroid(const FString& Tag) const;
-    
+
     /**
-     * Prints statistics about actors with tag.
-     * 
-     * Includes:
-     * - Actor count
-     * - Average spacing
-     * - Centroid position
-     * - Distance bounds (min/max separation)
-     * 
-     * @param Tag Tag to analyze
-     * 
-     * Logging:
-     * 📊 Summary of tag statistics
+     * Prints statistics about actors with a specific tag to the log.
+     * Includes count, average spacing, and centroid.
+     * @param Tag Tag to analyze.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Stats")
     void PrintActorTagStats(const FString& Tag) const;
 
-  
+
 private:
     // ========================================
     // TAG-BASED ACTOR QUERIES
     // ========================================
-    
-    /// Find random actor with specific tag
-    /// Queries world in real-time (no caching)
-    AActor* FindRandomActorWithTag(const FString& Tag);
-    
-    /// Find closest actor with specific tag from reference location
-    /// Queries world in real-time (no caching)
-    AActor* FindClosestActorWithTag(const FString& Tag, FVector FromLocation);
 
+    /// Find random actor with specific tag (real-time, no cache)
+    AActor* FindRandomActorWithTag(const FString& Tag);
+
+    /// Find closest actor with specific tag (real-time, no cache)
+    AActor* FindClosestActorWithTag(const FString& Tag, FVector FromLocation);
 };

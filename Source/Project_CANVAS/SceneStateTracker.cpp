@@ -156,13 +156,18 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
         UE_LOG(LogTemp, Error, TEXT("❌ OnPlanReceived FAILED: Invalid world"));
         return;
     }
-
+    if (!LocationEngine || !SceneBuilder)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Critical subsystems not ready - skipping plan"));
+        return;
+    }
     UE_LOG(LogTemp, Warning, TEXT(""));
     UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
     UE_LOG(LogTemp, Warning, TEXT("║  📥 Plan Received - %d props, %d spawn    ║"), 
         Plan.Props.Num(), Plan.SpawnRequest.Num());
     UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════╝"));
-
+  ClearAllSpawnedActors();
+  UE_LOG(LogTemp, Warning, TEXT("<Clearing ALL ACTORS>"));
     FEnhancedScenePlan EnrichedPlan = Plan;
 
     UE_LOG(LogTemp, Display, TEXT("🔄 [1/3] ResolveTexturesFromNames..."));
@@ -484,13 +489,24 @@ void USceneStateTracker::RemoveMultipleActors(const TArray<FString>& ObjectNames
 void USceneStateTracker::ClearAllSpawnedActors()
 {
     int32 Destroyed = 0;
+    int32 AlreadyDestroying = 0;  // ✅ CHANGE 1: Track actors already queued for destruction
 
     for (AActor* Actor : SpawnedActors)
     {
-        if (Actor && !Actor->IsActorBeingDestroyed())
+        if (!IsValid(Actor))  // ✅ CHANGE 2: Use IsValid() instead of raw null check
+        {
+            AlreadyDestroying++;
+            continue;
+        }
+        
+        if (!Actor->IsActorBeingDestroyed())
         {
             Actor->Destroy();
             Destroyed++;
+        }
+        else
+        {
+            AlreadyDestroying++;  // ✅ CHANGE 3: Track actors in destruction queue
         }
     }
 
@@ -498,7 +514,15 @@ void USceneStateTracker::ClearAllSpawnedActors()
     SpawnedActorsByName.Reset();
     ActorToNameMap.Reset();
 
-    UE_LOG(LogTemp, Warning, TEXT("🗑️  ClearAllSpawnedActors: Destroyed %d actors"), Destroyed);
+    // ✅ CHANGE 4: CRITICAL - Reset location occupancy in LocationQueryEngine
+    if (LocationEngine)
+    {
+        LocationEngine->ClearAllOccupancy();
+    }
+
+    // ✅ CHANGE 5: Enhanced logging with destruction status
+    UE_LOG(LogTemp, Warning, TEXT("🗑️  ClearAllSpawnedActors: Destroyed %d, Already destroying %d"), 
+        Destroyed, AlreadyDestroying);
 }
 
 void USceneStateTracker::LogSceneStateVerbose()
