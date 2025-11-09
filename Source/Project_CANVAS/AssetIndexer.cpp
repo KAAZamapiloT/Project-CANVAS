@@ -87,12 +87,18 @@ void UAssetIndexer::ScanActorTagsInLevel(UWorld* WorldContext)
         CheckAllScansComplete();
         return;
     }
-
-    AsyncTask(ENamedThreads::GameThread, [this, WorldContext]()
+TWeakObjectPtr<UWorld> WeakWorld(WorldContext);
+    
+    AsyncTask(ENamedThreads::GameThread, [this, WeakWorld]()
     {
         UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning actor tags in current level..."));
         
         TArray<AActor*> AllActors;
+        UWorld* WorldContext = WeakWorld.Get();
+        if (!WorldContext||IsValid(WorldContext))
+        {
+            return;
+        }
         UGameplayStatics::GetAllActorsOfClass(WorldContext, AActor::StaticClass(), AllActors);
         
         TSet<FString> UniqueTagsSet; // Use set to avoid duplicates
@@ -105,7 +111,7 @@ void UAssetIndexer::ScanActorTagsInLevel(UWorld* WorldContext)
                 {
                     // Only add tags that follow your naming convention
                     FString TagString = Tag.ToString();
-                    if (TagString.Contains(".")) // e.g., "Background.Wall"
+                    if (!TagString.IsEmpty()) 
                     {
                         UniqueTagsSet.Add(TagString);
                     }

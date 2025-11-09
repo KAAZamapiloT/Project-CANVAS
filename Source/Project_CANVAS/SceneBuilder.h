@@ -26,6 +26,8 @@ public:
 	UFUNCTION(Exec, Category = "SceneBuilder")
 	void FindGenAIActors();
 
+	UPROPERTY()
+	class USceneStateTracker* StateTracker;
 private:
 	// Main build functions
 	void ApplyEnvironmentSettings(const FEnvironmentPlan& Environment, UWorld* WorldContext);

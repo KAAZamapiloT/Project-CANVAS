@@ -48,6 +48,7 @@ void USceneStateTracker::Init()
         UE_LOG(LogTemp, Error, TEXT("❌ INIT FAILED: SceneBuilder creation failed"));
         return;
     }
+    SceneBuilder->StateTracker = this;
     UE_LOG(LogTemp, Warning, TEXT("✅ [4/5] SceneBuilder"));
 
     // ✅ FIX: Separate assignment from condition

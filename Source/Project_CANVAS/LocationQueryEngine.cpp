@@ -245,7 +245,7 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
             Pos.X, Pos.Y, Pos.Z);
         return Pos;
     }
-    
+   
     // 2. Handle player-relative locations
     if (UpperName.Contains(TEXT("PLAYER")))
     {
@@ -296,7 +296,7 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
     // 2b. Handle enemy-relative locations
     if (UpperName.Contains(TEXT("ENEMY")))
     {
-        AActor* EnemyActor = FindActorWithTag(TEXT("Player"));
+        AActor* EnemyActor = FindActorWithTag(TEXT("Enemy.Character"));
 
         if (!EnemyActor)
         {
@@ -488,6 +488,9 @@ FSpawnLocation ULocationQueryEngine::ResolveLocation(const FString& LocationName
     DynamicLocation.LocationName = LocationName;
     DynamicLocation.WorldPosition = ResolveLocationName(LocationName);
     DynamicLocation.Description = TEXT("Dynamic location");
+
+    // TODO: AI-Assisted Fallback - If WorldPosition is zero, query GenAI for semantic interpretation
+    
     return DynamicLocation;
 }
 

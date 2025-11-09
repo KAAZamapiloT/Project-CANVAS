@@ -199,7 +199,17 @@ public:
 	// ========================================================================
 	// INTERNAL FUNCTIONS - Private Implementation
 	// ========================================================================
-
+	/**
+	 * Callback when SceneBuilder spawns a new actor
+	 *
+	 * Called during execution phase for each spawned actor
+	 * Automatically stores actor in SpawnedActors storage
+	 *
+	 * @param NewActor - Newly spawned actor
+	 * @param ObjectName - Unique name to assign to actor
+	 */
+	UFUNCTION()
+	void OnActorSpawned(AActor* NewActor, const FString& ObjectName);
 private:
 	/**
 	 * Initialization state tracking
@@ -237,17 +247,7 @@ private:
 	 */
 	void CheckSystemsReady();
 
-	/**
-	 * Callback when SceneBuilder spawns a new actor
-	 *
-	 * Called during execution phase for each spawned actor
-	 * Automatically stores actor in SpawnedActors storage
-	 *
-	 * @param NewActor - Newly spawned actor
-	 * @param ObjectName - Unique name to assign to actor
-	 */
-	UFUNCTION()
-	void OnActorSpawned(AActor* NewActor, const FString& ObjectName);
+
 
 	/**
 	 * Log current scene state to output log

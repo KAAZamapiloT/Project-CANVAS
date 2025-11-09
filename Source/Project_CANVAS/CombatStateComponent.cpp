@@ -84,6 +84,7 @@ FContextVector UCombatStateComponent::BuildContext(FName CurrentInput)
         Context.EnemyDirection = EInputDirection::EID_NEUTRAL;
         return Context;
     }
+   
     // ===== CURRENT INPUT =====
     Context.CurrentInput = CurrentInput;
 
@@ -97,8 +98,10 @@ FContextVector UCombatStateComponent::BuildContext(FName CurrentInput)
     Context.DistanceToEnemy = GetDistanceToEnemy();
 
     // ===== PLAYER STATE TAGS =====
-    Context.PlayerStateTags = GetCharacterTags(OwnerCharacter);
-
+    if (OwnerCharacter&&OwnerCharacter->IsValidLowLevel())
+    {
+        Context.PlayerStateTags = GetCharacterTags(OwnerCharacter);
+    }
     // ===== ENEMY STATE TAGS =====
     if (EnemyCharacter)
     {
@@ -212,7 +215,7 @@ FGameplayTagContainer UCombatStateComponent::GetCharacterTags(ACharacter* Charac
 {
     FGameplayTagContainer Tags;
 
-    if (!Character)
+    if (!Character||!Character->IsValidLowLevel())
     {
         return Tags;
     }

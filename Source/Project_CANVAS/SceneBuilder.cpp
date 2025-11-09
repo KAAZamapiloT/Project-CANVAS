@@ -28,7 +28,7 @@
 #include "Engine/StaticMesh.h"
 #include "Misc/DateTime.h" //
 #include "Misc/Guid.h" // For unique tags
-
+#include"SceneStateTracker.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 // --- Define your content paths ---
@@ -356,7 +356,10 @@ void USceneBuilder::SpawnNewActors(
         {
             NewActor->Tags.Add(FName(*Request.Tag));
         }
-
+        if (StateTracker)
+        {
+            StateTracker->OnActorSpawned(NewActor, Request.ObjectName);
+        }
         // ========================================
         // FINALIZE
         // ========================================
