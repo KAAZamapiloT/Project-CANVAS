@@ -65,7 +65,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
             "{\"role\":\"user\",\"content\":\"%s\"}"
         "],"
         "\"temperature\":0.2,"
-        "\"max_tokens\":2000"
+        "\"max_tokens\":4096"
         "}"
     ), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
 

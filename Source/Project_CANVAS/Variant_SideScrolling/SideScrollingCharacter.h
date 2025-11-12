@@ -158,7 +158,8 @@ public:
 	
 	/** Constructor */
 	ASideScrollingCharacter();
-
+	UFUNCTION(BlueprintCallable)
+	void OnDamageTakenHandler(float Damage, FVector HitLocation);
 protected:
 
 	/** Closes the combo window and executes buffered input if any */

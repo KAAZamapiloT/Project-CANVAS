@@ -22,7 +22,7 @@ void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
         UE_LOG(LogTemp, Warning, TEXT("AssetIndexer: Scan already in progress."));
         return;
     }
-
+    ScanStartTime=FPlatformTime::Seconds();
     bIsScanning = true;
     bIsScanComplete = false;
     PendingScans = 0;
@@ -47,6 +47,33 @@ void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
     ScanForPostProcessMaterialsAsync(TEXT("/Game/DATABASE/postprocess"));
     ScanForStaticMeshesAsync(TEXT("/Game/DATABASE/meshes"));
     ScanActorTagsInLevel(WorldContext);
+
+    if (WorldContext)
+    {
+        FTimerHandle TimeoutHandle;
+        FTimerDelegate TimeoutDelegate;
+        
+        TimeoutDelegate.BindLambda([this]()
+        {
+            double Elapsed = FPlatformTime::Seconds() - ScanStartTime;
+            if (bIsScanning && Elapsed > 20.0)
+            {
+                UE_LOG(LogTemp, Error, TEXT("⚠️ Scan timeout (%.2fs), forcing completion"), Elapsed);
+                bIsScanning = false;
+                bIsScanComplete = true;
+                PendingScans = 0;
+                MaterialDatabase = BuildMaterialDatabase();
+                OnScanComplete.Broadcast();
+            }
+        });
+        
+        WorldContext->GetTimerManager().SetTimer(TimeoutHandle, TimeoutDelegate, 20.0f, false);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ WorldContext is null, no timeout protection!"));
+    }
+
 }
 
 void UAssetIndexer::ScanForTexturesAsync(FString ScanPath)
@@ -95,14 +122,14 @@ TWeakObjectPtr<UWorld> WeakWorld(WorldContext);
         
         TArray<AActor*> AllActors;
         UWorld* WorldContext = WeakWorld.Get();
-        if (!WorldContext||IsValid(WorldContext))
+        if (!WorldContext||!IsValid(WorldContext))
         {
             return;
         }
         UGameplayStatics::GetAllActorsOfClass(WorldContext, AActor::StaticClass(), AllActors);
         
         TSet<FString> UniqueTagsSet; // Use set to avoid duplicates
-        
+        UniqueTagsSet.Add(TEXT("Player.Character"));
         for (AActor* Actor : AllActors)
         {
             if (Actor)
@@ -157,7 +184,8 @@ void UAssetIndexer::ScanAssetsOfType(const UClass* AssetClass, FString ScanPath,
 
 void UAssetIndexer::CheckAllScansComplete()
 {
-    PendingScans--;
+    FPlatformAtomics::InterlockedDecrement(&PendingScans);
+;
     
     if (PendingScans <= 0)
     {

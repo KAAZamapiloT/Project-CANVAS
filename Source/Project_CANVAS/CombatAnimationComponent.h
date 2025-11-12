@@ -87,4 +87,9 @@ public:
     /** Called by AnimNotify_CombatHit during montage playback */
     UFUNCTION()
     void HandleHitNotify();
+
+private:
+    /** Helper function to determine if this is Player or Enemy (for logging for now) */
+    FString GetOwnerType() const;
+
 };

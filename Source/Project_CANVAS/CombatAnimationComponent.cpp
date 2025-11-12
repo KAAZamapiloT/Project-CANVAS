@@ -1,7 +1,7 @@
 ﻿#include "CombatAnimationComponent.h"
 #include "GameFramework/Character.h"
 #include "Animation/AnimInstance.h"
-
+#include"AIController.h"
 UCombatAnimationComponent::UCombatAnimationComponent()
 {
     PrimaryComponentTick.bCanEverTick = false; // Event-driven
@@ -16,11 +16,20 @@ UCombatAnimationComponent::UCombatAnimationComponent()
 void UCombatAnimationComponent::BeginPlay()
 {
     Super::BeginPlay();
+    
     OwnerCharacter = Cast<ACharacter>(GetOwner());
     AnimInstance = OwnerCharacter ? OwnerCharacter->GetMesh()->GetAnimInstance() : nullptr;
+    
+    // ✅ DETECT IF THIS IS ENEMY OR PLAYER
+    FString OwnerType = GetOwnerType();
+    
     if (!AnimInstance)
     {
-        UE_LOG(LogTemp, Error, TEXT("CombatAnimationComponent: Failed to get AnimInstance!"));
+        UE_LOG(LogTemp, Error, TEXT("❌ [%s] CombatAnimationComponent: Failed to get AnimInstance!"), *OwnerType);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Display, TEXT("✅ [%s] CombatAnimationComponent initialized"), *OwnerType);
     }
 }
 
@@ -36,11 +45,16 @@ bool UCombatAnimationComponent::IsValidForExecution() const
 
 void UCombatAnimationComponent::ExecuteActionCommand(const FActionCommand& Command)
 {
+    // ✅ GET OWNER TYPE FOR LOGGING
+    FString OwnerType = GetOwnerType();
+    
     if (!AnimInstance || !Command.AnimationToPlay)
     {
-        UE_LOG(LogTemp, Warning, TEXT("ExecuteActionCommand: Invalid AnimInstance or Montage"));
+        UE_LOG(LogTemp, Warning, TEXT("❌ [%s] ExecuteActionCommand: Invalid AnimInstance or Montage"), *OwnerType);
         return;
     }
+    
+    // Cache action data
     CurrentMoveIdentifier = Command.MoveIdentifier;
     CachedDamage = Command.DamageToApply;
     CachedStunDuration = Command.StunDurationToInflict;
@@ -49,30 +63,57 @@ void UCombatAnimationComponent::ExecuteActionCommand(const FActionCommand& Comma
     // Bind montage completion
     FOnMontageEnded EndDelegate;
     EndDelegate.BindUObject(this, &UCombatAnimationComponent::OnMontageCompleted);
-    AnimInstance->Montage_Play(Command.AnimationToPlay, 1.0f);
+    
+    // ✅ PLAY MONTAGE & LOG RESULT
+    float Duration = AnimInstance->Montage_Play(Command.AnimationToPlay, 1.0f);
     AnimInstance->Montage_SetEndDelegate(EndDelegate, Command.AnimationToPlay);
 
-    UE_LOG(LogTemp, Log, TEXT("Playing move: %s (Damage: %.1f, Stun: %.1f)"), *CurrentMoveIdentifier.ToString(), CachedDamage, CachedStunDuration);
+    if (Duration > 0.f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("🎬 [%s] Playing: %s | Damage: %.1f | Stun: %.1f | Duration: %.2fs"), 
+            *OwnerType,
+            *CurrentMoveIdentifier.ToString(), 
+            CachedDamage, 
+            CachedStunDuration,
+            Duration);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [%s] Failed to play montage: %s"), 
+            *OwnerType,
+            *Command.AnimationToPlay->GetName());
+    }
 }
 
 void UCombatAnimationComponent::StopCurrentAction()
 {
+    FString OwnerType = GetOwnerType();
+    
     if (AnimInstance && AnimInstance->GetCurrentActiveMontage())
     {
         AnimInstance->Montage_Stop(0.2f); // Blend out
     }
+    
     CurrentMoveIdentifier = NAME_None;
     MoveStartTime = 0.f;
-    UE_LOG(LogTemp, Log, TEXT("Combat action stopped"));
+    
+    UE_LOG(LogTemp, Log, TEXT("🛑 [%s] Combat action stopped"), *OwnerType);
 }
 
 void UCombatAnimationComponent::OnMontageCompleted(UAnimMontage* Montage, bool bInterrupted)
 {
+    FString OwnerType = GetOwnerType();
     FName CompletedMove = CurrentMoveIdentifier;
+    
     CurrentMoveIdentifier = NAME_None;
     MoveStartTime = 0.f;
+    
     OnMontageEnded.Broadcast(CompletedMove);
-    UE_LOG(LogTemp, Log, TEXT("Move ended: %s (interrupted: %d)"), *CompletedMove.ToString(), bInterrupted);
+    
+    UE_LOG(LogTemp, Log, TEXT("✅ [%s] Move ended: %s %s"), 
+        *OwnerType,
+        *CompletedMove.ToString(), 
+        bInterrupted ? TEXT("(INTERRUPTED)") : TEXT("(completed)"));
 }
 
 float UCombatAnimationComponent::GetMoveElapsedTime() const
@@ -82,6 +123,37 @@ float UCombatAnimationComponent::GetMoveElapsedTime() const
 
 void UCombatAnimationComponent::HandleHitNotify()
 {
+    FString OwnerType = GetOwnerType();
+    
     OnHitWindowActive.Broadcast(CachedDamage, CachedStunDuration);
-    UE_LOG(LogTemp, Log, TEXT("Hit window active: Damage=%.1f Stun=%.1f"), CachedDamage, CachedStunDuration);
+    
+    UE_LOG(LogTemp, Warning, TEXT("🎯 [%s] Hit window active! Damage: %.1f | Stun: %.1f"), 
+        *OwnerType,
+        CachedDamage, 
+        CachedStunDuration);
+}
+
+// ========================================
+// ✅ HELPER FUNCTION TO DETECT ENEMY/PLAYER
+// ========================================
+FString UCombatAnimationComponent::GetOwnerType() const
+{
+    if (!OwnerCharacter)
+    {
+        return TEXT("UNKNOWN");
+    }
+    
+    // Check if owner is player-controlled
+    if (OwnerCharacter->IsPlayerControlled())
+    {
+        return TEXT("PLAYER");
+    }
+    
+    // Check if owner has AI controller (Enemy)
+    if (OwnerCharacter->GetController() && OwnerCharacter->GetController()->IsA(AAIController::StaticClass()))
+    {
+        return FString::Printf(TEXT("ENEMY [%s]"), *OwnerCharacter->GetName());
+    }
+    
+    return TEXT("AI");
 }

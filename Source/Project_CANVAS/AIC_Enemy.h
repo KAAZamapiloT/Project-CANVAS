@@ -54,7 +54,7 @@ private:
 	TObjectPtr<UBlackboardComponent> BlackboardComponent;
 	UPROPERTY(EditInstanceOnly,BlueprintReadOnly,Category="AI",meta=(AllowPrivateAccess=true))
 	TObjectPtr<UBehaviorTreeComponent> BehaviorTreeComponent;
-	UPROPERTY(EditInstanceOnly,BlueprintReadOnly,Category="AI",meta=(AllowPrivateAccess=true))
+	UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="AI",meta=(AllowPrivateAccess=true))
 	TObjectPtr<UBehaviorTree> BehaviorTree;
 
 public:

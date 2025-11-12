@@ -66,6 +66,8 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
 	CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
 	Tags.Add("Player.Character");
+	Tags.Add(FName("Player")); // ✅ Matches HealthComponent Dojo check
+
 }
 
 void ASideScrollingCharacter::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -244,6 +246,8 @@ void ASideScrollingCharacter::BeginPlay()
 	{
 		HealthComp->OnHealthChanged.AddDynamic(this, &ASideScrollingCharacter::OnHealthChanged);
 		HealthComp->OnHealthDepleted.AddDynamic(this, &ASideScrollingCharacter::OnDeath);
+		// ✅ ADD THIS: Respond to damage events
+		HealthComp->OnDamageTaken.AddDynamic(this, &ASideScrollingCharacter::OnDamageTakenHandler);
 	}
 
 	// ═════════════════════════════════════════════════════════
@@ -302,7 +306,21 @@ void ASideScrollingCharacter::BeginPlay()
     
 	UE_LOG(LogTemp, Log, TEXT("✅ Combat state reset on BeginPlay"));
 }
-
+void ASideScrollingCharacter::OnDamageTakenHandler(float Damage, FVector HitLocation)
+{
+	UE_LOG(LogTemp, Warning, TEXT("💥 Player took %.1f damage"), Damage);
+    
+	// Reset combat state (character-level logic)
+	bIsInCombo = false;
+	bIsAttacking = false;
+	bCanBufferInput = false;
+	bHasBufferedInput = false;
+    
+	if (CombatAnimComp)
+	{
+		CombatAnimComp->StopCurrentAction();
+	}
+}
 void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
 {
 	// ═════════════════════════════════════════════════════════
@@ -539,62 +557,21 @@ void ASideScrollingCharacter::OnDeath()
 
 void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Spec)
 {
-	// ===== VALIDATION =====
 	if (!HealthComp || !HealthComp->IsAlive())
-	{
-		return; // Already dead or missing component
-	}
+		return;
+
+	// ✅ SIMPLE: Just forward to HealthComponent
+	// It handles Dojo Mode, damage, stun, invincibility internally
+	HealthComp->ApplyDamage(Spec.Amount, EDamageType::Physical, Spec.HitLocation);
     
-	// ===== APPLY DAMAGE (HealthComponent handles this) =====
-	HealthComp->ApplyDamage(Spec.Amount);
-    
-	UE_LOG(LogTemp, Warning, TEXT("💥 Player took %.1f damage from %s"), 
-		Spec.Amount, 
-		Spec.DamageCauser ? *Spec.DamageCauser->GetName() : TEXT("Unknown"));
-    
-	// ===== CALCULATE STUN (Character-level logic) =====
-	// Since FDamageSpec doesn't have StunDuration yet, calculate it here
-	// You can use damage amount to determine stun (e.g., 10 damage = 0.3s stun)
-	float StunDuration = FMath::Clamp(Spec.Amount * 0.015f, 0.2f, 1.0f); // 0.2s to 1.0s stun
-    
-	if (StunDuration > 0.0f)
-	{
-		// ===== SET STUN ON HEALTH COMPONENT (Direct access to public variable) =====
-		HealthComp->StunDuration = StunDuration;
-        
-		UE_LOG(LogTemp, Warning, TEXT("⚡ Player stunned for %.2f seconds"), StunDuration);
-        
-		// ===== RESET COMBO STATE =====
-		bIsInCombo = false;
-		bIsAttacking = false;
-		bCanBufferInput = false;
-		bHasBufferedInput = false;
-		ComboCounter = 0;
-		CurrentComboStarter = FName();
-        
-		// Clear timers
-		GetWorldTimerManager().ClearTimer(ComboWindowTimer);
-        
-		// ===== INTERRUPT ANIMATION =====
-		if (CombatAnimComp)
-		{
-			CombatAnimComp->StopCurrentAction();
-		}
-        
-		// ===== AUTO-CLEAR STUN TIMER =====
-		GetWorldTimerManager().SetTimer(
-			StunTimer, 
-			this, 
-			&ASideScrollingCharacter::OnStunExpired, 
-			StunDuration, 
-			false
-		);
-	}
-    
-	// ===== VISUAL FEEDBACK (Future work) =====
-	// TODO: Play hit-react animation
-	// TODO: Spawn hit particles at Spec.HitLocation
+	UE_LOG(LogTemp, Warning, TEXT("💥 Player took %.1f damage from %s"),
+		   Spec.Amount,
+		   Spec.DamageCauser ? *Spec.DamageCauser->GetName() : TEXT("Unknown"));
+           
+	// ✅ Character-level response happens via delegate (OnDamageTakenHandler)
+	// No need to manually manage stun here
 }
+
 void ASideScrollingCharacter::OnStunExpired()
 {
 	if (HealthComp)

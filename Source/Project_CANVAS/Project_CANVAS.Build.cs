@@ -26,7 +26,8 @@ public class Project_CANVAS : ModuleRules
 			"GameplayTasks",
 			"GameplayTags",
 			"GameplayAbilities",
-			"AssetRegistry"
+			"AssetRegistry",
+			"NavigationSystem"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

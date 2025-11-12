@@ -4,9 +4,11 @@
 #include "SideScrollingCharacter.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Hearing.h"
 #include "Perception/AISense_Hearing.h"  // ADD THIS
+#include "Perception/AISenseConfig_Sight.h"
 
 AAIC_Enemy::AAIC_Enemy()
 {
@@ -19,22 +21,41 @@ AAIC_Enemy::AAIC_Enemy()
 void AAIC_Enemy::BeginPlay()
 {
     Super::BeginPlay();
-    if (IsValid(BehaviorTree.Get()))
+    if (GetPerceptionComponent())
     {
-        RunBehaviorTree(BehaviorTree.Get());
-        BehaviorTreeComponent->StartTree(*BehaviorTree.Get());
-        UE_LOG(LogTemp, Warning, TEXT("Behavior tree was valid"));
+        GetPerceptionComponent()->OnTargetPerceptionUpdated.AddDynamic(this, &AAIC_Enemy::OnTargetDetected);
+        UE_LOG(LogTemp, Log, TEXT("✅ Perception delegates bound"));
+    }
+    // ✅ Don't run BT here - wait for OnPossess
+    if (BehaviorTree)
+    {
+        UE_LOG(LogTemp, Log, TEXT("✅ BehaviorTree assigned: %s"), *BehaviorTree->GetName());
     }
 }
 
 void AAIC_Enemy::OnPossess(APawn* InPawn)
 {
     Super::OnPossess(InPawn);
-    if (IsValid(BlackboardComponent.Get()) && IsValid(BehaviorTree.Get()))
+    
+    UE_LOG(LogTemp, Warning, TEXT("🎮 AI Controller possessing: %s"), 
+            InPawn ? *InPawn->GetName() : TEXT("NULL"));
+    
+    if (BlackboardComponent && BehaviorTree && BehaviorTree->BlackboardAsset)
     {
-        BlackboardComponent->InitializeBlackboard(*BehaviorTree.Get()->BlackboardAsset.Get());
+        BlackboardComponent->InitializeBlackboard(*BehaviorTree->BlackboardAsset);
+        UE_LOG(LogTemp, Warning, TEXT("✅ Blackboard initialized"));
+        
+        // ✅ UNCOMMENT THIS LINE:
+        RunBehaviorTree(BehaviorTree);
+        UE_LOG(LogTemp, Warning, TEXT("✅ BehaviorTree started: %s"), *BehaviorTree->GetName());
     }
-    RunBehaviorTree(BehaviorTree);
+    else
+    {
+        if (!BehaviorTree)
+            UE_LOG(LogTemp, Error, TEXT("❌ No BehaviorTree asset assigned!"));
+        if (!BlackboardComponent)
+            UE_LOG(LogTemp, Error, TEXT("❌ BlackboardComponent is NULL!"));
+    }
 }
 
 void AAIC_Enemy::Tick(float DeltaTime)
@@ -72,7 +93,7 @@ void AAIC_Enemy::SetupPerceptionSystem()
         GetPerceptionComponent()->SetDominantSense(*SightConfig->GetSenseImplementation());
         
         // FIX: Remove duplicate AAIC_Enemy::
-        GetPerceptionComponent()->OnTargetPerceptionUpdated.AddDynamic(this, &AAIC_Enemy::OnTargetDetected);
+       // GetPerceptionComponent()->OnTargetPerceptionUpdated.AddDynamic(this, &AAIC_Enemy::OnTargetDetected);
         
         GetPerceptionComponent()->ConfigureSense(*SightConfig);
     }

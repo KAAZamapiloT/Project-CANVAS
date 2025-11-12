@@ -478,4 +478,10 @@ private:
      * @return The extracted base name.
      */
     FString ExtractMaterialBaseName(const FString& TextureName);
+
+private:
+    /**
+     * scan time for starting scsaniing assets used in setting timers
+     */
+    double ScanStartTime = 0.0; 
 };

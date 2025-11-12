@@ -30,11 +30,13 @@ enum class EInputDirection: uint8
  * Used by Decision Engine to select range-appropriate moves
  */
 UENUM(BlueprintType)
-enum class ECombatRange: uint8
+enum class EAICombatRange: uint8
 {
+    ECR_Melle UMETA(DisplayName = "Melle"),
     ECR_FAR UMETA(DisplayName = "Far"),    // > 400 units
     ECR_MID UMETA(DisplayName = "Mid"),    // 150-400 units
-    ECR_NEAR UMETA(DisplayName = "Near")   // < 150 units
+    ECR_NEAR UMETA(DisplayName = "Near") ,  // < 150 units
+    ECR_VFAR UMETA(DisplayName = "VeryFar")
 };
 
 /**
@@ -69,7 +71,7 @@ struct FMoveData : public FTableRowBase
 
     /** Optimal range for this move - Decision Engine prefers moves matching current distance */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Context Rules")
-    ECombatRange OptimalRange = ECombatRange::ECR_MID;
+    EAICombatRange OptimalRange = EAICombatRange::ECR_MID;
 
     /** 
      * Map of follow-up moves for combo chaining

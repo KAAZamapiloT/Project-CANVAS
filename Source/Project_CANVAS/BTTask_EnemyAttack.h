@@ -16,6 +16,6 @@ class PROJECT_CANVAS_API UBTTask_EnemyAttack : public UBTTaskNode
 
 public:
 	UBTTask_EnemyAttack();
-
+	void TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds);
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
 };
