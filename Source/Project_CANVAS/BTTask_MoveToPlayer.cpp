@@ -32,7 +32,7 @@ EBTNodeResult::Type UBTTask_MoveToPlayer::ExecuteTask(UBehaviorTreeComponent& Ow
         MovementComp->MaxWalkSpeed = MoveSpeed;
     }
 
-    UE_LOG(LogTemp, Log, TEXT("🚶 Enemy moving to player (2D mode)"));
+ //   UE_LOG(LogTemp, Log, TEXT("🚶 Enemy moving to player (2D mode)"));
     
     return EBTNodeResult::InProgress;
 }
@@ -94,7 +94,7 @@ void UBTTask_MoveToPlayer::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* No
             {
                 // Ground jump
                 Enemy->Jump();
-                UE_LOG(LogTemp, Warning, TEXT("🦘 [BT] Enemy ground jump (Player %.1f units above)"), HeightDiff);
+               // UE_LOG(LogTemp, Warning, TEXT("🦘 [BT] Enemy ground jump (Player %.1f units above)"), HeightDiff);
             }
             else if (Movement->IsFalling())
             {
@@ -102,7 +102,7 @@ void UBTTask_MoveToPlayer::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* No
                 if (Enemy->JumpCurrentCount < Enemy->JumpMaxCount)
                 {
                     Enemy->Jump();
-                    UE_LOG(LogTemp, Warning, TEXT("🌟 [BT] Enemy double jump (Player %.1f units above)"), HeightDiff);
+                    //UE_LOG(LogTemp, Warning, TEXT("🌟 [BT] Enemy double jump (Player %.1f units above)"), HeightDiff);
                 }
             }
         }
@@ -111,7 +111,7 @@ void UBTTask_MoveToPlayer::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* No
     else
     {
         // Just walk - no jumping needed
-        UE_LOG(LogTemp, Verbose, TEXT("🚶 [BT] Walking (Player at same level or below, HeightDiff=%.1f)"), HeightDiff);
+      //  UE_LOG(LogTemp, Verbose, TEXT("🚶 [BT] Walking (Player at same level or below, HeightDiff=%.1f)"), HeightDiff);
     }
 }
 

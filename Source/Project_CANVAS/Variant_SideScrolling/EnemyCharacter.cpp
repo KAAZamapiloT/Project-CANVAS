@@ -14,7 +14,8 @@
 #include "TimerManager.h"
 #include "AIController.h"
 #include "AIC_Enemy.h"
-
+#include"GameFramework/GameModeBase.h"
+#include "DrawDebugHelpers.h" 
 //==============================================================================================
 // CONSTRUCTOR
 //==============================================================================================
@@ -92,7 +93,6 @@ void AEnemyCharacter::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	if (!PlayerCharacter || !PlayerCharacter->IsValidLowLevel())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ [ENEMY %s] Player invalid - stopping combat"), *GetName());
 		StopCombatBehavior();
 		return;
 	}
@@ -282,14 +282,6 @@ void AEnemyCharacter::MakeCombatDecision()
 			HealthComponent ? HealthComponent->IsStunned() : false);
 		return;
 	}
-	
-	if (!CanAttackPlayer())
-	{
-		float Distance = CombatStateComponent->GetDistanceToEnemy();
-		UE_LOG(LogTemp, Display, TEXT("⏸️ [ENEMY %s] Cannot attack - Distance: %.1f (Min: %.1f)"), 
-			*GetName(), Distance, MinAttackDistance);
-		return;
-	}
 	if (CanAttackPlayer())
 	{
 		// ✅ FACE PLAYER BEFORE ATTACKING
@@ -425,19 +417,30 @@ void AEnemyCharacter::ReceiveDamage_Implementation(const FDamageSpec& Spec)
 {
 	if (!HealthComponent || !HealthComponent->IsAlive())
 		return;
+if (bShowDebug)
+{
+	// ✅ DRAW DEBUG SPHERE - Enemy taking damage
+	DrawDebugSphere(
+		GetWorld(),
+		GetActorLocation(),
+		90.0f,
+		12,
+		FColor::Blue,  // Blue = enemy damaged
+		false,
+		2.0f,
+		0,
+		4.0f
+	);
+}
+	
 
 	// ✅ SIMPLE: Forward to HealthComponent
-	// It handles Dojo Mode, damage, stun, invincibility
 	HealthComponent->ApplyDamage(Spec.Amount, EDamageType::Electric, Spec.HitLocation);
-    
-	UE_LOG(LogTemp, Error, TEXT("💥 [ENEMY %s] Took %.1f damage! HP: %.1f/%.1f"),
-		   *GetName(),
+
+	UE_LOG(LogTemp, Error, TEXT("💥 ENEMY took %.1f damage! HP: %.1f/%.1f"),
 		   Spec.Amount,
 		   HealthComponent->Health,
 		   HealthComponent->MaxHealth);
-           
-	// ✅ Stun is handled automatically by HealthComponent based on damage type
-	// Electric damage causes stun proportional to damage amount
 }
 
 bool AEnemyCharacter::IsAlive_Implementation() const
@@ -450,56 +453,188 @@ bool AEnemyCharacter::IsAlive_Implementation() const
 //==============================================================================================
 void AEnemyCharacter::ExecuteMove(FName MoveName)
 {
-	UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
-	UE_LOG(LogTemp, Warning, TEXT("🎬 [ENEMY %s] EXECUTE MOVE: %s"), *GetName(), *MoveName.ToString());
-	UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+    UE_LOG(LogTemp, Warning, TEXT("🎬 [ENEMY %s] EXECUTE MOVE: %s"), *GetName(), *MoveName.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
 
-	// VALIDATION
-	if (!CombatStateComponent)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatStateComponent is NULL!"), *GetName());
-		return;
-	}
+    // ═════════════════════════════════════════════════════════
+    // VALIDATION
+    // ═════════════════════════════════════════════════════════
+    if (!CombatStateComponent)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatStateComponent is NULL!"), *GetName());
+        return;
+    }
 
-	if (!CombatDecisionEngine)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatDecisionEngine is NULL!"), *GetName());
-		return;
-	}
+    if (!CombatDecisionEngine)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatDecisionEngine is NULL!"), *GetName());
+        return;
+    }
 
-	if (!CombatAnimationComponent)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatAnimationComponent is NULL!"), *GetName());
-		return;
-	}
+    if (!CombatAnimationComponent)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatAnimationComponent is NULL!"), *GetName());
+        return;
+    }
 
-	if (MoveName.IsNone())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("❌ [ENEMY %s] MoveName is None!"), *GetName());
-		return;
-	}
+    if (MoveName.IsNone())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ [ENEMY %s] MoveName is None!"), *GetName());
+        return;
+    }
 
-	UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] All components valid"), *GetName());
+    UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] All components valid"), *GetName());
 
-	// BUILD CONTEXT
-	UE_LOG(LogTemp, Display, TEXT("⚙️ [ENEMY %s] Building context..."), *GetName());
-	FContextVector Context = CombatStateComponent->BuildContext(MoveName);
+    // ═════════════════════════════════════════════════════════
+    // FORCE FACE PLAYER BEFORE ATTACKING
+    // ═════════════════════════════════════════════════════════
+    if (PlayerCharacter)
+    {
+        float DeltaX = PlayerCharacter->GetActorLocation().X - GetActorLocation().X;
+        FRotator NewRotation = GetActorRotation();
+        NewRotation.Yaw = (DeltaX > 0) ? 0.0f : 180.0f;  // Face right (0°) or left (180°)
+        SetActorRotation(NewRotation);
+        
+        UE_LOG(LogTemp, Error, TEXT("👁️ [ENEMY] Facing player (Yaw: %.0f) DeltaX: %.1f"), NewRotation.Yaw, DeltaX);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY] No PlayerCharacter reference - can't face target!"));
+    }
 
-	// DECIDE MOVE
-	UE_LOG(LogTemp, Display, TEXT("🧠 [ENEMY %s] Deciding move..."), *GetName());
-	FActionCommand Command = CombatDecisionEngine->DecideNextMove(Context);
-	UE_LOG(LogTemp, Warning, TEXT("📋 [ENEMY %s] Action: %s"), *GetName(), *Command.MoveIdentifier.ToString());
+    // ═════════════════════════════════════════════════════════
+    // BUILD CONTEXT
+    // ═════════════════════════════════════════════════════════
+    UE_LOG(LogTemp, Display, TEXT("⚙️ [ENEMY %s] Building context..."), *GetName());
+    FContextVector Context = CombatStateComponent->BuildContext(MoveName);
 
-	// EXECUTE
-	CombatAnimationComponent->ExecuteActionCommand(Command);
+    // ═════════════════════════════════════════════════════════
+    // DECIDE MOVE
+    // ═════════════════════════════════════════════════════════
+    UE_LOG(LogTemp, Display, TEXT("🧠 [ENEMY %s] Deciding move..."), *GetName());
+    FActionCommand Command = CombatDecisionEngine->DecideNextMove(Context);
+    
+    UE_LOG(LogTemp, Warning, TEXT("📋 [ENEMY %s] Action: %s | Damage: %.1f | Stun: %.1f"), 
+           *GetName(), 
+           *Command.MoveIdentifier.ToString(),
+           Command.DamageToApply,           // ✅ CORRECT FIELD NAME
+           Command.StunDurationToInflict);  // ✅ CORRECT FIELD NAME
 
-	// SET COOLDOWN
-	CombatStateComponent->StartCooldown(Command.MoveIdentifier, 0.5f);
-	UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
-	UE_LOG(LogTemp, Warning, TEXT("✅ [ENEMY %s] EXECUTE COMPLETE"), *GetName());
-	UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
+    // ═════════════════════════════════════════════════════════
+    // SCHEDULE DAMAGE TEST (Temporary - replaces AnimNotify)
+    // ═════════════════════════════════════════════════════════
+    UE_LOG(LogTemp, Display, TEXT("⏲️ [ENEMY] Scheduling damage test in 0.4 seconds..."));
+    
+    GetWorld()->GetTimerManager().SetTimer(
+        TempDamageTestHandle,
+        FTimerDelegate::CreateLambda([this, Command]() {
+            UE_LOG(LogTemp, Warning, TEXT("⚡ [ENEMY] DAMAGE TEST TRIGGERED!"));
+            TestDirectDamage(Command.DamageToApply);  // ✅ CORRECT FIELD NAME
+        }),
+        0.4f,  // Damage after 0.4 seconds (mid-animation)
+        false
+    );
+
+    // ═════════════════════════════════════════════════════════
+    // EXECUTE ANIMATION
+    // ═════════════════════════════════════════════════════════
+    CombatAnimationComponent->ExecuteActionCommand(Command);
+
+    // ═════════════════════════════════════════════════════════
+    // SET COOLDOWN
+    // ═════════════════════════════════════════════════════════
+    CombatStateComponent->StartCooldown(Command.MoveIdentifier, 0.5f);
+    
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+    UE_LOG(LogTemp, Warning, TEXT("✅ [ENEMY %s] EXECUTE COMPLETE"), *GetName());
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
 }
 
+
+void AEnemyCharacter::TestDirectDamage(float Damage)
+{
+    if (!PlayerCharacter)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY] TestDirectDamage: No player"));
+        return;
+    }
+
+    // Hit detection
+    FVector Start = GetActorLocation();
+    FVector Forward = GetActorForwardVector();
+    FVector End = Start + (Forward * 200.f); // 200 units forward
+
+    FHitResult HitResult;
+    FCollisionQueryParams QueryParams;
+    QueryParams.AddIgnoredActor(this);
+    
+    bool bHit = GetWorld()->SweepSingleByChannel(
+        HitResult,
+        Start,
+        End,
+        FQuat::Identity,
+        ECC_Pawn,
+        FCollisionShape::MakeSphere(75.f),
+        QueryParams
+    );
+
+    if (bShowDebug)
+    {
+        // ✅ DRAW DEBUG SPHERE
+        DrawDebugSphere(
+            GetWorld(),
+            bHit ? HitResult.Location : End,
+            75.f,
+            12,
+            bHit ? FColor::Red : FColor::Green,
+            false,
+            2.0f,
+            0,
+            3.0f
+        );
+
+        // ✅ DRAW DEBUG LINE
+        DrawDebugLine(
+            GetWorld(),
+            Start,
+            End,
+            bHit ? FColor::Red : FColor::Yellow,
+            false,
+            2.0f,
+            0,
+            2.0f
+        );
+    }
+
+    if (bHit && HitResult.GetActor() == PlayerCharacter)
+    {
+        // ✅ HIT PLAYER!
+        if (IDamagable* DamagableTarget = Cast<IDamagable>(PlayerCharacter))
+        {
+            FDamageSpec DamageSpec;
+            DamageSpec.Amount = Damage;
+            DamageSpec.HitLocation = HitResult.ImpactPoint;
+            DamageSpec.HitNormal = HitResult.ImpactNormal;
+            DamageSpec.HitBone = HitResult.BoneName;
+            DamageSpec.InstigatorController = GetController();
+            DamageSpec.DamageCauser = this;
+            
+            IDamagable::Execute_ReceiveDamage(PlayerCharacter, DamageSpec);
+            
+            // ✅ NOTIFY GAME MODE
+            NotifyEnemyHit(Damage);
+            
+            UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 ENEMY HIT PLAYER for %.1f damage 🎯🎯🎯"), Damage);
+        }
+    }
+    else
+    {
+        // ✅ MISS
+      //  ResetEnemyCombo();
+        UE_LOG(LogTemp, Error, TEXT("❌❌❌ ENEMY ATTACK MISSED ❌❌❌"));
+    }
+}
 //==============================================================================================
 // MONTAGE ENDED HANDLER
 //==============================================================================================
@@ -550,6 +685,38 @@ bool AEnemyCharacter::IsExecutingMove() const
     
 		// ✅ Reset double jump flag when landing
 		bHasDoubleJumped = false;
-    
-		UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] Landed - jump reset"), *GetName());
 	}
+void AEnemyCharacter::NotifyEnemyHit(float DamageDealt)
+{
+	AGameModeBase* GameMode = UGameplayStatics::GetGameMode(GetWorld());
+	if (GameMode)
+	{
+		UFunction* RecordHitFunc = GameMode->FindFunction(FName("RecordEnemyHit"));
+		if (RecordHitFunc)
+		{
+			struct FRecordHitParams
+			{
+				float Damage;
+			};
+            
+			FRecordHitParams Params;
+			Params.Damage = DamageDealt;
+            
+			GameMode->ProcessEvent(RecordHitFunc, &Params);
+			UE_LOG(LogTemp, Log, TEXT("✅ Enemy hit recorded: %.1f damage"), DamageDealt);
+		}
+	}
+}
+
+void AEnemyCharacter::ResetEnemyCombo()
+{
+	AGameModeBase* GameMode = UGameplayStatics::GetGameMode(GetWorld());
+	if (GameMode)
+	{
+		UFunction* ResetFunc = GameMode->FindFunction(FName("ResetEnemyCombo"));
+		if (ResetFunc)
+		{
+			GameMode->ProcessEvent(ResetFunc, nullptr);
+		}
+	}
+}

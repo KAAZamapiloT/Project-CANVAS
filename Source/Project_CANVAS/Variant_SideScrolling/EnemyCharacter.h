@@ -328,5 +328,16 @@ protected:
 public:
     /** Called when enemy lands (resets jump flags) */
     virtual void Landed(const FHitResult& Hit) override;
+    /** Notify game mode that enemy landed a hit */
+    UFUNCTION(BlueprintCallable, Category = "Dojo Stats")
+    void NotifyEnemyHit(float DamageDealt);
 
+    /** Reset enemy's current combo counter */
+    UFUNCTION(BlueprintCallable, Category = "Dojo Stats")
+    void ResetEnemyCombo();
+UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Dojo Stats")
+    bool bShowDebug=false;
+    void TestDirectDamage(float Damage);
+
+    FTimerHandle TempDamageTestHandle;
 };

@@ -15,7 +15,7 @@ void ASideScrollingGameMode::BeginPlay()
 	APlayerController* OwningPlayer = UGameplayStatics::GetPlayerController(GetWorld(), 0);
 	
 	UserInterface = CreateWidget<USideScrollingUI>(OwningPlayer, UserInterfaceClass);
-
+	
 	check(UserInterface);
 }
 

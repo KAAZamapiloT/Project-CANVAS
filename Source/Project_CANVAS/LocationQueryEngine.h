@@ -697,6 +697,15 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Query")
     AActor* GetFarthestActorWithTag(const FString& Tag, FVector FromLocation);
+    /**
+     * Finds a safe spawn position with clearance and actor spacing validation.
+     * Uses intelligent retry logic across multiple fallback strategies.
+     * @param MinClearance Minimum sphere clearance required (default 150cm).
+     * @param MaxAttempts Maximum number of positions to try (default 10).
+     * @return Validated spawn position, or elevated emergency position if all attempts fail.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Validation")
+    FVector FindSafeSpawnPosition(float MinClearance = 150.0f, int32 MaxAttempts = 10);
 
     // ========================================
     // BATCH TAG OPERATIONS
@@ -781,4 +790,82 @@ private:
 
     /// Find closest actor with specific tag (real-time, no cache)
     AActor* FindClosestActorWithTag(const FString& Tag, FVector FromLocation);
+public:
+    /**
+ * Initializes playable area bounds either from level geometry or manual values.
+ * Call this during LocationEngine initialization.
+ * @param CustomBounds Optional manual bounds. If not provided, auto-detects from level.
+ */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Bounds")
+    void InitializePlayableAreaBounds();
+    /**
+     * Initializes playable area bounds with custom values.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Bounds")
+    void InitializePlayableAreaBoundsCustom(FBox CustomBounds);
+public:
+    /**
+     * Returns whether bounds have been initialized.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Bounds")
+    bool IsBoundsInitialized() const { return bBoundsInitialized; }
+    
+    /**
+     * Returns the playable area bounding box.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Bounds")
+    FBox GetPlayableAreaBounds() const { return PlayableAreaBounds; }
+
+    /**
+     * Checks if a position is within the playable area bounds.
+     * @param Position World position to test.
+     * @return true if position is inside bounds, false otherwise.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Bounds")
+    bool IsPositionInBounds(FVector Position) const;
+
+    /**
+     * Clamps a position to stay within playable area bounds.
+     * @param Position Position to clamp.
+     * @return Clamped position guaranteed to be inside bounds.
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Bounds")
+    FVector ClampPositionToBounds(FVector Position) const;
+
+    /**
+     * Visualizes the playable area bounds with debug geometry.
+     * @param Duration How long to display (seconds).
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Debug")
+    void VisualizePlayableAreaBounds(float Duration = 10.0f) const;
+private:
+    /**
+     * Playable area bounds for 2.5D fighting game.
+     * All spawned actors must stay within these limits.
+     * Configured at runtime or set to default values.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bounds", meta = (AllowPrivateAccess = "true"))
+    FBox PlayableAreaBounds;
+    
+    /** Z-height range for ground-level spawns (characters, props) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bounds", meta = (AllowPrivateAccess = "true"))
+    FVector2D GroundHeightRange = FVector2D(80.0f, 150.0f);
+    
+    /** Z-height range for aerial spawns (particles, overhead objects) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bounds", meta = (AllowPrivateAccess = "true"))
+    FVector2D AerialHeightRange = FVector2D(400.0f, 600.0f);
+    
+    /** Cached center of playable area for quick access */
+    FVector PlayableAreaCenter = FVector::ZeroVector;
+    
+    /** Flag: Has bounds been initialized? */
+    bool bBoundsInitialized = false;
+public:
+    
+    UFUNCTION(Exec, Category = "LocationEngine|Debug")
+    void RefreshPlayableAreaBounds() {
+        InitializePlayableAreaBounds();
+    }
+
+
 };

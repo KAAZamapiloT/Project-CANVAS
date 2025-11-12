@@ -12,6 +12,8 @@
 #include "WorldCollision.h"
 #include "PhysicsEngine/PhysicsSettings.h"
 #include "Components/PrimitiveComponent.h"
+#include "Engine/OverlapResult.h"  // Add this line
+#include "ScenePlan.h"  // Add at top
 
 // ========================================
 // INITIALIZATION
@@ -95,6 +97,162 @@ void ULocationQueryEngine::ScanForNamedLocations(UWorld* InWorldContext)
             }
         }
     }
+}
+// BOUNDING BOX
+
+void ULocationQueryEngine::InitializePlayableAreaBounds()
+{
+    if (WorldContext)
+    {
+        // Step 1: Get ground-level bounds
+        TArray<AActor*> GroundActors;
+        UGameplayStatics::GetAllActorsWithTag(WorldContext, FName("Ground.Floor"), GroundActors);
+        
+        // Step 2: Get aerial/ceiling bounds
+        TArray<AActor*> AerialActors;
+        UGameplayStatics::GetAllActorsWithTag(WorldContext, FName("Aerial.Ceiling"), AerialActors);
+        
+        if (GroundActors.Num() > 0 || AerialActors.Num() > 0)
+        {
+            PlayableAreaBounds = FBox(EForceInit::ForceInit);
+            
+            // ✅ NEW: Combine ground actor bounds
+            for (AActor* Actor : GroundActors)
+            {
+                if (IsValid(Actor))
+                {
+                    FVector Origin, BoxExtent;
+                    Actor->GetActorBounds(false, Origin, BoxExtent);
+                    PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
+                }
+            }
+            
+            // ✅ NEW: Combine aerial actor bounds
+            for (AActor* Actor : AerialActors)
+            {
+                if (IsValid(Actor))
+                {
+                    FVector Origin, BoxExtent;
+                    Actor->GetActorBounds(false, Origin, BoxExtent);
+                    PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
+                }
+            }
+            
+            bBoundsInitialized = true;
+            
+            // ✅ NEW: Update height ranges based on actual bounds
+            if (PlayableAreaBounds.IsValid)
+            {
+                float BoundsHeight = PlayableAreaBounds.Max.Z - PlayableAreaBounds.Min.Z;
+                
+                // Ground level: bottom 30% of total height
+                GroundHeightRange.X = PlayableAreaBounds.Min.Z;
+                GroundHeightRange.Y = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.3f);
+                
+                // Aerial level: top 40% of total height
+                AerialHeightRange.X = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.6f);
+                AerialHeightRange.Y = PlayableAreaBounds.Max.Z;
+                
+                UE_LOG(LogTemp, Display, TEXT("✅ Bounds calculated from %d ground + %d aerial actors"), 
+                    GroundActors.Num(), AerialActors.Num());
+                UE_LOG(LogTemp, Display, TEXT("   Ground height: %.0f to %.0f"), 
+                    GroundHeightRange.X, GroundHeightRange.Y);
+                UE_LOG(LogTemp, Display, TEXT("   Aerial height: %.0f to %.0f"), 
+                    AerialHeightRange.X, AerialHeightRange.Y);
+            }
+        }
+        else
+        {
+            // Default 2.5D bounds with proper vertical separation
+            PlayableAreaBounds = FBox(
+                FVector(-1000.0f, 0.0f, 0.0f),      // Min
+                FVector(1000.0f, 2000.0f, 1000.0f)  // Max (increased height for aerial)
+            );
+            
+            // Set default height ranges
+            GroundHeightRange = FVector2D(80.0f, 200.0f);
+            AerialHeightRange = FVector2D(500.0f, 800.0f);
+            
+            bBoundsInitialized = true;
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ No tagged actors found, using default bounds"));
+        }
+    }
+    
+    PlayableAreaCenter = PlayableAreaBounds.GetCenter();
+    
+    UE_LOG(LogTemp, Display, TEXT("📦 Playable area: %s"), *PlayableAreaBounds.ToString());
+    UE_LOG(LogTemp, Display, TEXT("   Center: (%.0f, %.0f, %.0f)"), 
+        PlayableAreaCenter.X, PlayableAreaCenter.Y, PlayableAreaCenter.Z);
+}
+
+
+// Version 2: With custom bounds parameter
+void ULocationQueryEngine::InitializePlayableAreaBoundsCustom(FBox CustomBounds)
+{
+    if (CustomBounds.IsValid && CustomBounds.GetSize().Size() > 0.0f)
+    {
+        PlayableAreaBounds = CustomBounds;
+        bBoundsInitialized = true;
+        PlayableAreaCenter = PlayableAreaBounds.GetCenter();
+        
+        UE_LOG(LogTemp, Display, TEXT("✅ Custom bounds set: %s"), *PlayableAreaBounds.ToString());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Invalid custom bounds, using auto-detect"));
+        InitializePlayableAreaBounds(); // Fall back to auto-detect
+    }
+}
+
+bool ULocationQueryEngine::IsPositionInBounds(FVector Position) const
+{
+    if (!bBoundsInitialized)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ Bounds not initialized, assuming position valid"));
+        return true; // Graceful degradation
+    }
+    
+    return PlayableAreaBounds.IsInside(Position);
+}
+
+FVector ULocationQueryEngine::ClampPositionToBounds(FVector Position) const
+{
+    if (!bBoundsInitialized) return Position;
+    
+    FVector Clamped = Position;
+    Clamped.X = FMath::Clamp(Clamped.X, PlayableAreaBounds.Min.X, PlayableAreaBounds.Max.X);
+    Clamped.Y = FMath::Clamp(Clamped.Y, PlayableAreaBounds.Min.Y, PlayableAreaBounds.Max.Y);
+    Clamped.Z = FMath::Clamp(Clamped.Z, PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z);
+    
+    return Clamped;
+}
+
+void ULocationQueryEngine::VisualizePlayableAreaBounds(float Duration) const
+{
+    if (!WorldContext || !bBoundsInitialized) return;
+    
+    // Draw full bounding box
+    DrawDebugBox(WorldContext, PlayableAreaCenter, PlayableAreaBounds.GetExtent(), 
+        FColor::Cyan, false, Duration, 0, 5.0f);
+    
+    // Draw center point
+    DrawDebugSphere(WorldContext, PlayableAreaCenter, 50.0f, 12, FColor::Yellow, false, Duration);
+    
+    // Draw ground height range plane
+    FVector GroundMin = FVector(PlayableAreaBounds.Min.X, PlayableAreaBounds.Min.Y, GroundHeightRange.X);
+    FVector GroundMax = FVector(PlayableAreaBounds.Max.X, PlayableAreaBounds.Max.Y, GroundHeightRange.Y);
+    DrawDebugBox(WorldContext, (GroundMin + GroundMax) * 0.5f, (GroundMax - GroundMin) * 0.5f, 
+        FColor::Green, false, Duration, 0, 2.0f);
+    
+    // ✅ NEW: Draw aerial height range plane
+    FVector AerialMin = FVector(PlayableAreaBounds.Min.X, PlayableAreaBounds.Min.Y, AerialHeightRange.X);
+    FVector AerialMax = FVector(PlayableAreaBounds.Max.X, PlayableAreaBounds.Max.Y, AerialHeightRange.Y);
+    DrawDebugBox(WorldContext, (AerialMin + AerialMax) * 0.5f, (AerialMax - AerialMin) * 0.5f, 
+        FColor::Blue, false, Duration, 0, 2.0f);
+    
+    UE_LOG(LogTemp, Display, TEXT("📦 Visualizing playable bounds for %.1f seconds"), Duration);
+    UE_LOG(LogTemp, Display, TEXT("   🟢 Green = Ground Zone (%.0f - %.0f)"), GroundHeightRange.X, GroundHeightRange.Y);
+    UE_LOG(LogTemp, Display, TEXT("   🔵 Blue = Aerial Zone (%.0f - %.0f)"), AerialHeightRange.X, AerialHeightRange.Y);
 }
 
 // ========================================
@@ -238,13 +396,39 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
     UE_LOG(LogTemp, Display, TEXT("🔍 ResolveLocationName: '%s'"), *LocationName);
     
     // 1. Check database for named locations
+    // 1. Check database for named locations
     if (LocationDatabase.Contains(UpperName))
     {
         FVector Pos = LocationDatabase[UpperName].WorldPosition;
-        UE_LOG(LogTemp, Warning, TEXT("   ✅ Found in database: [%.0f, %.0f, %.0f]"), 
-            Pos.X, Pos.Y, Pos.Z);
+    
+        // ✅ NEW: Check occupancy before returning
+        if (LocationDatabase[UpperName].bIsOccupied)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Location '%s' is OCCUPIED - finding alternative..."), *LocationName);
+        
+            // Try to find free location with same tag
+            TArray<FString> Tags = LocationDatabase[UpperName].Tags;
+            for (const FString& Tag : Tags)
+            {
+                TArray<FSpawnLocation> TaggedLocs = GetLocationsByTag(Tag);
+                for (const FSpawnLocation& Loc : TaggedLocs)
+                {
+                    if (!Loc.bIsOccupied && IsLocationClear(Loc.WorldPosition, Loc.ClearanceRadius))
+                    {
+                        UE_LOG(LogTemp, Display, TEXT("✅ Found free alternative: %s"), *Loc.LocationName);
+                        return Loc.WorldPosition;
+                    }
+                }
+            }
+        
+            // If no alternative, fall through to 2.5D fallback
+            UE_LOG(LogTemp, Warning, TEXT("No free alternatives for '%s', using fallback"), *LocationName);
+        }
+    
+        UE_LOG(LogTemp, Warning, TEXT("Found in database: (%.0f, %.0f, %.0f)"), Pos.X, Pos.Y, Pos.Z);
         return Pos;
     }
+
    
     // 2. Handle player-relative locations
     if (UpperName.Contains(TEXT("PLAYER")))
@@ -729,11 +913,12 @@ FSpawnLocation ULocationQueryEngine::FindNearestFreeLocation(FVector PreferredLo
 bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
 {
     if (!WorldContext) return false;
-    
+
     FCollisionShape SphereShape = FCollisionShape::MakeSphere(Radius);
     FCollisionQueryParams QueryParams;
     QueryParams.bTraceComplex = false;
-    
+
+    // ✅ FIX #1: Check static geometry
     bool bHasBlockingHit = WorldContext->OverlapAnyTestByChannel(
         Location,
         FQuat::Identity,
@@ -741,8 +926,52 @@ bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
         SphereShape,
         QueryParams
     );
-    
-    return !bHasBlockingHit;
+
+    if (bHasBlockingHit)
+    {
+        UE_LOG(LogTemp, Display, TEXT("❌ Location blocked by static geometry"));
+        return false;
+    }
+
+    // ✅ FIX #2: Check for nearby actors (prevent clustering)
+    TArray<FOverlapResult> Overlaps;
+    WorldContext->OverlapMultiByChannel(
+        Overlaps,
+        Location,
+        FQuat::Identity,
+        ECC_Pawn, // Check for characters/enemies
+        SphereShape,
+        QueryParams
+    );
+
+    for (const FOverlapResult& Overlap : Overlaps)
+    {
+        if (IsValid(Overlap.GetActor()) && Overlap.GetActor()->Tags.Num() > 0)
+        {
+            UE_LOG(LogTemp, Display, TEXT("❌ Too close to actor: %s"), *Overlap.GetActor()->GetName());
+            return false;
+        }
+    }
+
+    // ✅ FIX #3: Check minimum distance from all occupied locations
+    const float MinSpacing = 200.0f; // Minimum distance between spawns
+    for (const FSpawnLocation& Loc : DiscoveredLocations)
+    {
+        if (Loc.bIsOccupied && IsValid(Loc.OccupyingActor.Get()))
+        {
+            FVector OccupiedPos = Loc.OccupyingActor->GetActorLocation();
+            float Distance = FVector::Dist(Location, OccupiedPos);
+            
+            if (Distance < MinSpacing)
+            {
+                UE_LOG(LogTemp, Display, TEXT("❌ Too close to occupied location '%s' (%.0f < %.0f)"), 
+                    *Loc.LocationName, Distance, MinSpacing);
+                return false;
+            }
+        }
+    }
+
+    return true; // All checks passed
 }
 
 FVector ULocationQueryEngine::SnapToGround(FVector Location, float MaxTraceDistance)
@@ -1049,6 +1278,59 @@ FVector ULocationQueryEngine::GetActorCentroid(const FString& Tag) const
     }
     
     return Sum / Positions.Num();
+}
+FVector ULocationQueryEngine::FindSafeSpawnPosition(float MinClearance, int32 MaxAttempts)
+{
+    UE_LOG(LogTemp, Display, TEXT("🔍 Finding safe spawn position (clearance: %.0f)..."), MinClearance);
+
+    // Strategy 1: Try existing free locations first
+    TArray<FSpawnLocation> FreeLocations = GetFreeLocations();
+    for (const FSpawnLocation& Loc : FreeLocations)
+    {
+        if (IsLocationClear(Loc.WorldPosition, MinClearance))
+        {
+            UE_LOG(LogTemp, Display, TEXT("✅ Found existing free location: %s"), *Loc.LocationName);
+            return Loc.WorldPosition;
+        }
+    }
+
+    // Strategy 2: Try random positions with validation
+    TArray<FVector(ULocationQueryEngine::*)()> FallbackFunctions = {
+        &ULocationQueryEngine::GetRandomCenterPosition,
+        &ULocationQueryEngine::GetRandomBackgroundPosition,
+        &ULocationQueryEngine::GetRandomLeftSidePosition,
+        &ULocationQueryEngine::GetRandomRightSidePosition
+    };
+
+    for (int32 Attempt = 0; Attempt < MaxAttempts; Attempt++)
+    {
+        // Rotate through different fallback strategies
+        int32 FuncIndex = Attempt % FallbackFunctions.Num();
+        FVector Candidate = (this->*FallbackFunctions[FuncIndex])();
+        if (!IsPositionInBounds(Candidate))
+        {
+            UE_LOG(LogTemp, Display, TEXT("⏭️ Attempt %d out of bounds, retrying..."), Attempt + 1);
+            continue;
+        }
+        // Snap to ground
+        Candidate = SnapToGround(Candidate, 1000.0f);
+
+        // Validate clearance and spacing
+        if (IsLocationClear(Candidate, MinClearance))
+        {
+            UE_LOG(LogTemp, Display, TEXT("✅ Found safe position after %d attempts: (%.0f, %.0f, %.0f)"), 
+                Attempt + 1, Candidate.X, Candidate.Y, Candidate.Z);
+            return Candidate;
+        }
+
+        UE_LOG(LogTemp, Display, TEXT("⏭️ Attempt %d/%d failed, retrying..."), Attempt + 1, MaxAttempts);
+    }
+
+    // Strategy 3: Emergency fallback - return position even if not perfect
+    UE_LOG(LogTemp, Error, TEXT("❌ Could not find safe position after %d attempts!"), MaxAttempts);
+    FVector Emergency = ClampPositionToBounds(PlayableAreaCenter);
+    Emergency.Z += 200.0f;
+    return Emergency;
 }
 
 void ULocationQueryEngine::PrintActorTagStats(const FString& Tag) const
@@ -1357,10 +1639,9 @@ bool ULocationQueryEngine::IsLocationValidForSpawn(const FString& LocationName, 
 FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& PreferredLocation, float MinClearance)
 {
     FString UpperName = PreferredLocation.ToUpper();
-    
-    UE_LOG(LogTemp, Display, TEXT("🔍 FindValidSpawnLocation: Preferred='%s', MinClearance=%.0f"), 
+    UE_LOG(LogTemp, Display, TEXT("🔎 FindValidSpawnLocation: Preferred='%s', MinClearance=%.0f"), 
         *PreferredLocation, MinClearance);
-    
+
     // 1. Try preferred location first
     if (LocationDatabase.Contains(UpperName))
     {
@@ -1369,10 +1650,9 @@ FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& Prefe
             UE_LOG(LogTemp, Display, TEXT("✅ Found preferred location: %s"), *PreferredLocation);
             return LocationDatabase[UpperName];
         }
+        UE_LOG(LogTemp, Display, TEXT("⚠️ Preferred location invalid, searching alternatives..."));
     }
-    
-    UE_LOG(LogTemp, Display, TEXT("⚠️ Preferred location invalid, searching alternatives..."));
-    
+
     // 2. Find ANY free location with sufficient clearance
     for (const FSpawnLocation& Location : DiscoveredLocations)
     {
@@ -1382,40 +1662,26 @@ FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& Prefe
             return Location;
         }
     }
+
+    UE_LOG(LogTemp, Warning, TEXT("⚠️ No valid locations found, using smart fallback..."));
+
+    // 3. Use smart fallback with validation (NEW)
+    FVector SafePos = FindSafeSpawnPosition(MinClearance, 10);
     
-    UE_LOG(LogTemp, Warning, TEXT("⚠️ No valid location found, creating dynamic fallback"));
+    FSpawnLocation DynamicLocation;
+    DynamicLocation.LocationName = FString::Printf(TEXT("DYNAMIC_SPAWN_%s"), *FGuid::NewGuid().ToString().Left(8));
+    DynamicLocation.WorldPosition = SafePos;
+    DynamicLocation.ClearanceRadius = MinClearance;
+    DynamicLocation.Description = TEXT("Dynamically validated spawn location");
+    DynamicLocation.Tags.Add(TEXT("Dynamic"));
     
-    // 3. Fallback: Create dynamic location at random valid spot
-    for (int32 Attempt = 0; Attempt < 10; ++Attempt)
-    {
-        FVector RandomPos = GetRandomBackgroundPosition();
-        
-        if (IsLocationClear(RandomPos, MinClearance))
-        {
-            FSpawnLocation DynamicLocation;
-            DynamicLocation.LocationName = FString::Printf(TEXT("DYNAMIC_SPAWN_%d"), Attempt);
-            DynamicLocation.WorldPosition = RandomPos;
-            DynamicLocation.ClearanceRadius = MinClearance;
-            DynamicLocation.Description = TEXT("Dynamically generated spawn location");
-            DynamicLocation.Tags.Add(TEXT("Dynamic"));
-            
-            UE_LOG(LogTemp, Display, TEXT("✅ Created dynamic fallback: %s at [%.0f, %.0f, %.0f]"), 
-                *DynamicLocation.LocationName, RandomPos.X, RandomPos.Y, RandomPos.Z);
-            
-            return DynamicLocation;
-        }
-    }
+    // Add to database for tracking
+    AddLocation(DynamicLocation);
     
-    UE_LOG(LogTemp, Error, TEXT("❌ Could not find any valid spawn location!"));
+    UE_LOG(LogTemp, Display, TEXT("✅ Created dynamic fallback: %s at (%.0f, %.0f, %.0f)"), 
+        *DynamicLocation.LocationName, SafePos.X, SafePos.Y, SafePos.Z);
     
-    // 4. Ultimate fallback (will likely fail but better than crash)
-    FSpawnLocation EmergencyLocation;
-    EmergencyLocation.LocationName = TEXT("EMERGENCY_SPAWN");
-    EmergencyLocation.WorldPosition = FVector::ZeroVector;
-    EmergencyLocation.ClearanceRadius = MinClearance;
-    EmergencyLocation.Description = TEXT("Emergency fallback - may collide with geometry");
-    
-    return EmergencyLocation;
+    return DynamicLocation;
 }
 
 // ========================================
@@ -1424,89 +1690,152 @@ FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& Prefe
 
 FVector ULocationQueryEngine::GetRandomCornerPosition(const FString& CornerType)
 {
-    float XBase = CornerType.Contains(TEXT("LEFT")) ? -800.0f : 800.0f;
-    float YBase = 1500.0f;
-    float ZBase = 100.0f;
+    if (!bBoundsInitialized)
+    {
+        return FVector::ZeroVector;
+    }
     
-    float XOffset = FMath::RandRange(-100.0f, 100.0f);
-    float YOffset = FMath::RandRange(-50.0f, 50.0f);
+    // Determine corner based on bounds
+    bool bIsLeft = CornerType.Contains(TEXT("LEFT"));
+    bool bIsBack = CornerType.Contains(TEXT("BACK"));
     
-    FVector Pos = FVector(XBase + XOffset, YBase + YOffset, ZBase);
-    UE_LOG(LogTemp, Display, TEXT("   🎲 Corner fallback: [%.0f, %.0f, %.0f]"), 
-        Pos.X, Pos.Y, Pos.Z);
+    // Base position at corner
+    float XBase = bIsLeft ? PlayableAreaBounds.Min.X : PlayableAreaBounds.Max.X;
+    float YBase = bIsBack ? PlayableAreaBounds.Max.Y : PlayableAreaBounds.Min.Y;
+    
+    // Add small randomization (10% of bounds size)
+    float XRange = (PlayableAreaBounds.Max.X - PlayableAreaBounds.Min.X) * 0.05f;
+    float YRange = (PlayableAreaBounds.Max.Y - PlayableAreaBounds.Min.Y) * 0.05f;
+    
+    float X = XBase + FMath::RandRange(-XRange, XRange);
+    float Y = YBase + FMath::RandRange(-YRange, YRange);
+    float Z = FMath::RandRange(GroundHeightRange.X, GroundHeightRange.Y);
+    
+    FVector Pos = FVector(X, Y, Z);
+    UE_LOG(LogTemp, Display, TEXT("Corner fallback (%s): (%.0f, %.0f, %.0f)"), *CornerType, Pos.X, Pos.Y, Pos.Z);
     return Pos;
 }
+
 
 FVector ULocationQueryEngine::GetRandomBackgroundPosition()
 {
-    float X = FMath::RandRange(-700.0f, 700.0f);
-    float Y = FMath::RandRange(1200.0f, 1800.0f);
-    float Z = FMath::RandRange(80.0f, 150.0f);
+    if (!bBoundsInitialized)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Bounds not initialized! Call InitializePlayableAreaBounds() first"));
+        return FVector::ZeroVector;
+    }
+    
+    // Background = far from camera (high Y values in 2.5D)
+    float YMin = FMath::Lerp(PlayableAreaBounds.Min.Y, PlayableAreaBounds.Max.Y, 0.6f); // 60% back
+    float YMax = PlayableAreaBounds.Max.Y;
+    
+    float X = FMath::RandRange(PlayableAreaBounds.Min.X, PlayableAreaBounds.Max.X);
+    float Y = FMath::RandRange(YMin, YMax);
+    float Z = FMath::RandRange(GroundHeightRange.X, GroundHeightRange.Y);
     
     FVector Pos = FVector(X, Y, Z);
-    UE_LOG(LogTemp, Display, TEXT("   🎲 Background fallback: [%.0f, %.0f, %.0f]"), 
-        Pos.X, Pos.Y, Pos.Z);
+    UE_LOG(LogTemp, Display, TEXT("Background fallback: (%.0f, %.0f, %.0f)"), Pos.X, Pos.Y, Pos.Z);
     return Pos;
 }
+
 
 FVector ULocationQueryEngine::GetRandomForegroundPosition()
 {
-    float X = FMath::RandRange(-500.0f, 500.0f);
-    float Y = FMath::RandRange(200.0f, 400.0f);
-    float Z = FMath::RandRange(80.0f, 120.0f);
+    if (!bBoundsInitialized)
+    {
+        return FVector::ZeroVector;
+    }
+    
+    // Foreground = close to camera (low Y values in 2.5D)
+    float YMin = PlayableAreaBounds.Min.Y;
+    float YMax = FMath::Lerp(PlayableAreaBounds.Min.Y, PlayableAreaBounds.Max.Y, 0.3f); // Front 30%
+    
+    float X = FMath::RandRange(PlayableAreaBounds.Min.X, PlayableAreaBounds.Max.X);
+    float Y = FMath::RandRange(YMin, YMax);
+    float Z = FMath::RandRange(GroundHeightRange.X, GroundHeightRange.Y);
     
     FVector Pos = FVector(X, Y, Z);
-    UE_LOG(LogTemp, Display, TEXT("   🎲 Foreground fallback: [%.0f, %.0f, %.0f]"), 
-        Pos.X, Pos.Y, Pos.Z);
+    UE_LOG(LogTemp, Display, TEXT("Foreground fallback: (%.0f, %.0f, %.0f)"), Pos.X, Pos.Y, Pos.Z);
     return Pos;
 }
+
 
 FVector ULocationQueryEngine::GetRandomOverheadPosition()
 {
-    float X = FMath::RandRange(-600.0f, 600.0f);
-    float Y = FMath::RandRange(500.0f, 1200.0f);
-    float Z = FMath::RandRange(400.0f, 600.0f);
+    if (!bBoundsInitialized)
+    {
+        return FVector::ZeroVector;
+    }
+    
+    // Overhead = aerial height (particles, ceiling objects)
+    float X = FMath::RandRange(PlayableAreaBounds.Min.X, PlayableAreaBounds.Max.X);
+    float Y = FMath::RandRange(PlayableAreaBounds.Min.Y, PlayableAreaBounds.Max.Y);
+    float Z = FMath::RandRange(AerialHeightRange.X, AerialHeightRange.Y);
     
     FVector Pos = FVector(X, Y, Z);
-    UE_LOG(LogTemp, Display, TEXT("   🎲 Overhead fallback: [%.0f, %.0f, %.0f]"), 
-        Pos.X, Pos.Y, Pos.Z);
+    UE_LOG(LogTemp, Display, TEXT("Overhead fallback: (%.0f, %.0f, %.0f)"), Pos.X, Pos.Y, Pos.Z);
     return Pos;
 }
 
+
 FVector ULocationQueryEngine::GetRandomLeftSidePosition()
 {
-    float X = FMath::RandRange(-800.0f, -400.0f);
-    float Y = FMath::RandRange(400.0f, 1200.0f);
-    float Z = FMath::RandRange(80.0f, 150.0f);
+    if (!bBoundsInitialized)
+    {
+        return FVector::ZeroVector;
+    }
+    
+    // Left side = left 40% of arena (negative X in UE5)
+    float XMin = PlayableAreaBounds.Min.X;
+    float XMax = FMath::Lerp(PlayableAreaBounds.Min.X, PlayableAreaBounds.Max.X, 0.4f);
+    
+    float X = FMath::RandRange(XMin, XMax);
+    float Y = FMath::RandRange(PlayableAreaBounds.Min.Y, PlayableAreaBounds.Max.Y);
+    float Z = FMath::RandRange(GroundHeightRange.X, GroundHeightRange.Y);
     
     FVector Pos = FVector(X, Y, Z);
-    UE_LOG(LogTemp, Display, TEXT("   🎲 Left side fallback: [%.0f, %.0f, %.0f]"), 
-        Pos.X, Pos.Y, Pos.Z);
+    UE_LOG(LogTemp, Display, TEXT("Left side fallback: (%.0f, %.0f, %.0f)"), Pos.X, Pos.Y, Pos.Z);
     return Pos;
 }
 
 FVector ULocationQueryEngine::GetRandomRightSidePosition()
 {
-    float X = FMath::RandRange(400.0f, 800.0f);
-    float Y = FMath::RandRange(400.0f, 1200.0f);
-    float Z = FMath::RandRange(80.0f, 150.0f);
+    if (!bBoundsInitialized)
+    {
+        return FVector::ZeroVector;
+    }
+    
+    // Right side = right 40% of arena (positive X in UE5)
+    float XMin = FMath::Lerp(PlayableAreaBounds.Min.X, PlayableAreaBounds.Max.X, 0.6f);
+    float XMax = PlayableAreaBounds.Max.X;
+    
+    float X = FMath::RandRange(XMin, XMax);
+    float Y = FMath::RandRange(PlayableAreaBounds.Min.Y, PlayableAreaBounds.Max.Y);
+    float Z = FMath::RandRange(GroundHeightRange.X, GroundHeightRange.Y);
     
     FVector Pos = FVector(X, Y, Z);
-    UE_LOG(LogTemp, Display, TEXT("   🎲 Right side fallback: [%.0f, %.0f, %.0f]"), 
-        Pos.X, Pos.Y, Pos.Z);
+    UE_LOG(LogTemp, Display, TEXT("Right side fallback: (%.0f, %.0f, %.0f)"), Pos.X, Pos.Y, Pos.Z);
     return Pos;
 }
 
+
 FVector ULocationQueryEngine::GetRandomCenterPosition()
 {
-    float X = FMath::RandRange(-200.0f, 200.0f);
-    float Y = FMath::RandRange(600.0f, 900.0f);
-    float Z = 100.0f;
+    if (!bBoundsInitialized)
+    {
+        return FVector::ZeroVector;
+    }
     
-    FVector Pos = FVector(X, Y, Z);
-    UE_LOG(LogTemp, Display, TEXT("   🎲 Center fallback: [%.0f, %.0f, %.0f]"), 
-        Pos.X, Pos.Y, Pos.Z);
-    return Pos;
+    // Center = middle 40% of arena
+    FVector Center = PlayableAreaCenter;
+    float XRange = (PlayableAreaBounds.Max.X - PlayableAreaBounds.Min.X) * 0.2f; // ±20%
+    float YRange = (PlayableAreaBounds.Max.Y - PlayableAreaBounds.Min.Y) * 0.2f;
+    
+    float X = FMath::RandRange(Center.X - XRange, Center.X + XRange);
+    float Y = FMath::RandRange(Center.Y - YRange, Center.Y + YRange);
+    float Z = FMath::RandRange(GroundHeightRange.X, GroundHeightRange.Y);
+    
+    return FVector(X, Y, Z);
 }
 
 FVector ULocationQueryEngine::GetLocationCentroid() const

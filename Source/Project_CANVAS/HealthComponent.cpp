@@ -6,7 +6,9 @@
 
 #include "HealthComponent.h"
 #include "GameFramework/Character.h"
-#include "DojoGameMode.h" 
+
+#include "GameFramework/GameModeBase.h"
+#include "Kismet/GameplayStatics.h"
 UHealthComponent::UHealthComponent()
 {
     // ✅ Enable tick for stun/invincibility countdown (IMPORTANT!)
@@ -81,37 +83,43 @@ void UHealthComponent::ApplyDamage(float Amount, EDamageType DamageType, FVector
         UE_LOG(LogTemp, Log, TEXT("⚡ Damage blocked by invincibility frames!"));
         return;
     }
-    // ✅ CHECK IF IN DOJO MODE - ADD THIS SECTION
-    ADojoGameMode* DojoMode = Cast<ADojoGameMode>(GetWorld()->GetAuthGameMode());
-    if (DojoMode)
-    {
-        // ✅ DOJO MODE: Track hit but don't apply damage
-        float ActualDamage = Amount * (1.f - DamageReduction);
-        
-        UE_LOG(LogTemp, Warning, TEXT("🥋 [DOJO] Hit registered (%.1f damage) - No health lost"), ActualDamage);
-        
-        // Determine who got hit by checking tags
-        AActor* Owner = GetOwner();
-        if (Owner)
-        {
-            if (Owner->ActorHasTag("Player"))
-            {
-                DojoMode->RecordEnemyHit(ActualDamage); // Player got hit
-            }
-            else if (Owner->ActorHasTag("Enemy.Character"))
-            {
-                DojoMode->RecordPlayerHit(ActualDamage); // Enemy got hit
-            }
-        }
-
-        // Still play hit reaction animation
-        OnDamageTaken.Broadcast(ActualDamage, HitLocation);
-        
-        // ✅ EXIT EARLY - No damage in Dojo Mode
-        return;
-    }
     // Apply damage reduction (armor/defense system)
     float ActualDamage = Amount * (1.f - DamageReduction);
+    // ✅ CHECK IF IN DOJO MODE - FIXED ACCESS
+     AGameModeBase* GameMode = UGameplayStatics::GetGameMode(GetWorld());
+    if (GameMode)
+    {
+        
+        
+        // ═══════════════════════════════════════════════════════
+        // DOJO MODE: Track damage but don't reduce health
+        // ═══════════════════════════════════════════════════════
+        if (bDojoMode)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("🥋 [DOJO] Hit registered (%.1f damage) - No health lost"), ActualDamage);
+        
+            // Determine who got hit by checking tags
+            AActor* Owner = GetOwner();
+            if (Owner)
+            {
+                if (Owner->ActorHasTag(FName("Player.Character")))
+                {
+                    UE_LOG(LogTemp, Display, TEXT("🥋 Dojo: Enemy landed hit on player"));
+                }
+                else if (Owner->ActorHasTag(FName("Enemy.Character")))
+                {
+                    UE_LOG(LogTemp, Display, TEXT("🥋 Dojo: Player landed hit on enemy"));
+                }
+            }
+        
+            // Still broadcast for UI/animation feedback
+            OnDamageTaken.Broadcast(ActualDamage, HitLocation);
+        
+            // ✅ EXIT EARLY - No actual health loss in Dojo Mode
+            return;
+        }
+    }
+  
 
     // Apply damage and clamp
     Health = FMath::Clamp(Health - ActualDamage, 0.f, MaxHealth);

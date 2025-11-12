@@ -83,6 +83,8 @@ void USceneStateTracker::Init()
         
         if (LocationEngine)
         {
+            LocationEngine->InitializePlayableAreaBounds();
+            
             LocationEngine->ScanWorldLocationsAsync(GetWorld());
         }
         

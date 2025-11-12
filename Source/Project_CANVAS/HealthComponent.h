@@ -177,6 +177,10 @@ public:
     /** Validate component is ready for operations */
     UFUNCTION(BlueprintPure, Category="Health|Query")
     bool IsValidForOperations() const;
+public:
+    /** Enable Dojo training mode (stats only, no actual damage) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health|Dojo")
+    bool bDojoMode = false;
 
 protected:
     virtual void BeginPlay() override;

@@ -1,6 +1,5 @@
 ﻿// DojoStatsWidget.cpp
 #include "DojoStatsWidget.h"
-#include "DojoGameMode.h"
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
 #include "Kismet/GameplayStatics.h"
@@ -9,15 +8,7 @@ void UDojoStatsWidget::NativeConstruct()
 {
     Super::NativeConstruct();
 
-    // Get reference to Dojo Game Mode
-    DojoMode = Cast<ADojoGameMode>(GetWorld()->GetAuthGameMode());
-    if (!DojoMode)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ DojoStatsWidget: Not in Dojo Mode!"));
-        return;
-    }
-
-    // Bind button clicks
+    // Bind button callbacks if they exist
     if (ButtonReset)
     {
         ButtonReset->OnClicked.AddDynamic(this, &UDojoStatsWidget::OnResetClicked);
@@ -28,60 +19,144 @@ void UDojoStatsWidget::NativeConstruct()
         ButtonExit->OnClicked.AddDynamic(this, &UDojoStatsWidget::OnExitClicked);
     }
 
-    UE_LOG(LogTemp, Display, TEXT("✅ Dojo Stats Widget initialized"));
+    // Initial update
+    UpdateStats();
+
+    UE_LOG(LogTemp, Log, TEXT("✅ DojoStatsWidget initialized (Standalone mode)"));
 }
 
 void UDojoStatsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
     Super::NativeTick(MyGeometry, InDeltaTime);
-    
-    if (DojoMode)
-    {
-        UpdateStats();
-    }
+
+    // Auto-update display every frame
+    UpdateStats();
 }
 
 void UDojoStatsWidget::UpdateStats()
 {
-    if (!DojoMode) return;
-
     // Update Player Stats
     if (TextPlayerHits)
-        TextPlayerHits->SetText(FText::AsNumber(DojoMode->PlayerHitsLanded));
+    {
+        TextPlayerHits->SetText(FText::Format(
+            FText::FromString("Hits: {0}"),
+            FText::AsNumber(PlayerHits)
+        ));
+    }
 
     if (TextPlayerMaxCombo)
-        TextPlayerMaxCombo->SetText(FText::AsNumber(DojoMode->PlayerComboMax));
+    {
+        TextPlayerMaxCombo->SetText(FText::Format(
+            FText::FromString("Max Combo: {0}"),
+            FText::AsNumber(PlayerMaxCombo)
+        ));
+    }
 
     if (TextPlayerCombo)
-        TextPlayerCombo->SetText(FText::AsNumber(DojoMode->PlayerCurrentCombo));
+    {
+        TextPlayerCombo->SetText(FText::Format(
+            FText::FromString("Combo: {0}"),
+            FText::AsNumber(PlayerCombo)
+        ));
+    }
 
     if (TextPlayerDamage)
-        TextPlayerDamage->SetText(FText::AsNumber(FMath::RoundToInt(DojoMode->TotalDamageDealt)));
+    {
+        TextPlayerDamage->SetText(FText::Format(
+            FText::FromString("Damage: {0}"),
+            FText::AsNumber(FMath::RoundToInt(PlayerDamage))
+        ));
+    }
 
     // Update Enemy Stats
     if (TextEnemyHits)
-        TextEnemyHits->SetText(FText::AsNumber(DojoMode->EnemyHitsLanded));
+    {
+        TextEnemyHits->SetText(FText::Format(
+            FText::FromString("Hits: {0}"),
+            FText::AsNumber(EnemyHits)
+        ));
+    }
 
     if (TextEnemyMaxCombo)
-        TextEnemyMaxCombo->SetText(FText::AsNumber(DojoMode->EnemyComboMax));
+    {
+        TextEnemyMaxCombo->SetText(FText::Format(
+            FText::FromString("Max Combo: {0}"),
+            FText::AsNumber(EnemyMaxCombo)
+        ));
+    }
 
     if (TextEnemyCombo)
-        TextEnemyCombo->SetText(FText::AsNumber(DojoMode->EnemyCurrentCombo));
+    {
+        TextEnemyCombo->SetText(FText::Format(
+            FText::FromString("Combo: {0}"),
+            FText::AsNumber(EnemyCombo)
+        ));
+    }
 
     if (TextEnemyDamage)
-        TextEnemyDamage->SetText(FText::AsNumber(FMath::RoundToInt(DojoMode->TotalDamageTaken)));
+    {
+        TextEnemyDamage->SetText(FText::Format(
+            FText::FromString("Damage: {0}"),
+            FText::AsNumber(FMath::RoundToInt(EnemyDamage))
+        ));
+    }
+}
+
+void UDojoStatsWidget::ResetStats()
+{
+    PlayerHits = 0;
+    PlayerMaxCombo = 0;
+    PlayerCombo = 0;
+    PlayerDamage = 0.0f;
+
+    EnemyHits = 0;
+    EnemyMaxCombo = 0;
+    EnemyCombo = 0;
+    EnemyDamage = 0.0f;
+
+    UpdateStats();
+
+    UE_LOG(LogTemp, Warning, TEXT("🔄 Stats reset"));
 }
 
 void UDojoStatsWidget::OnResetClicked()
 {
-    if (DojoMode)
-    {
-        DojoMode->ResetStats();
-        UE_LOG(LogTemp, Warning, TEXT("🔄 Stats reset"));
-    }
+    ResetStats();
 }
 
 void UDojoStatsWidget::OnExitClicked()
 {
-    UGameplayStatics::OpenLevel(GetWorld(), FName("MainMenu"));
+    if (LevelName.IsNone())
+    {
+        UGameplayStatics::OpenLevel(GetWorld(), FName("MainMenu"));
+    }else
+    {
+        UGameplayStatics::OpenLevel(GetWorld(), LevelName);
+    }
+    // Return to main menu or previous level
+   
+}
+void UDojoStatsWidget::UpdateStatsWithValues(
+    int32 NewPlayerHits,
+    int32 NewPlayerMaxCombo,
+    int32 NewPlayerCombo,
+    float NewPlayerDamage,
+    int32 NewEnemyHits,
+    int32 NewEnemyMaxCombo,
+    int32 NewEnemyCombo,
+    float NewEnemyDamage)
+{
+    // Update member variables
+    PlayerHits = NewPlayerHits;
+    PlayerMaxCombo = NewPlayerMaxCombo;
+    PlayerCombo = NewPlayerCombo;
+    PlayerDamage = NewPlayerDamage;
+    
+    EnemyHits = NewEnemyHits;
+    EnemyMaxCombo = NewEnemyMaxCombo;
+    EnemyCombo = NewEnemyCombo;
+    EnemyDamage = NewEnemyDamage;
+    
+    // Update UI display
+    UpdateStats();
 }

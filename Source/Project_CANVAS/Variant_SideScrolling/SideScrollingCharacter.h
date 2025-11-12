@@ -265,4 +265,22 @@ public:
 	/** Returns true if the character has just wall jumped */
 	UFUNCTION(BlueprintPure, Category="Side Scrolling")
 	bool HasWallJumped() const;
+
+	/** Notify game mode that player landed a hit */
+	UFUNCTION(BlueprintCallable, Category = "Dojo Stats")
+	void NotifyPlayerHit(float DamageDealt);
+
+	/** Reset player's current combo counter */
+	UFUNCTION(BlueprintCallable, Category = "Dojo Stats")
+	void ResetPlayerCombo();
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Dojo Stats")
+	bool bShowDebug=false;
+
+protected:
+	/** Timer handle for temporary damage testing */
+	FTimerHandle TempPlayerDamageTestHandle;
+    
+	/** Test direct damage (temporary - until AnimNotify is added) */
+	void TestPlayerDirectDamage(float Damage);
+
 };

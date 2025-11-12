@@ -17,6 +17,9 @@
 #include"CombatStateComponent.h"
 #include "CombatAnimationComponent.h"
 #include"Kismet/GameplayStatics.h"
+#include"GameFramework/GameModeBase.h"
+#include "EnemyCharacter.h"  // For enemy class check
+#include "DrawDebugHelpers.h" 
 #include "CombatDecisionEngine.h"
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
@@ -323,57 +326,108 @@ void ASideScrollingCharacter::OnDamageTakenHandler(float Damage, FVector HitLoca
 }
 void ASideScrollingCharacter::OnHitWindowActive(float Damage, float stun)
 {
-	// ═════════════════════════════════════════════════════════
-	// HIT DETECTION VIA SPHERE TRACE
-	// ═════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════
+    // HIT DETECTION VIA SPHERE TRACE
+    // ═════════════════════════════════════════════════════════
+    FVector Start = GetActorLocation();
+    FVector Forward = GetActorForwardVector();
+    FVector End = Start + (Forward * 150.f); // 150 units forward
 
-	FVector Start = GetActorLocation();
-	FVector Forward = GetActorForwardVector();
-	FVector End = Start + (Forward * 150.f);  // 150 units forward
+    FHitResult HitResult;
+    FCollisionQueryParams QueryParams;
+    QueryParams.AddIgnoredActor(this);
 
-	FHitResult HitResult;
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(this);
-
-	// Sphere sweep for hit detection
-	bool bHit = GetWorld()->SweepSingleByChannel(
-		HitResult,
-		Start,
-		End,
-		FQuat::Identity,
-		ECC_Pawn,  // Hit pawns only
-		FCollisionShape::MakeSphere(75.f),  // 75 unit radius
-		QueryParams
+    // Sphere sweep for hit detection
+    bool bHit = GetWorld()->SweepSingleByChannel(
+        HitResult,
+        Start,
+        End,
+        FQuat::Identity,
+        ECC_Pawn, // Hit pawns only
+        FCollisionShape::MakeSphere(75.f), // 75 unit radius
+        QueryParams
+    );
+if (bShowDebug)
+{
+	// ✅ DRAW DEBUG SPHERE - Shows attack hitbox
+	DrawDebugSphere(
+		GetWorld(),
+		bHit ? HitResult.Location : End,
+		75.f,
+		12,
+		bHit ? FColor::Red : FColor::Green,  // Red if hit, Green if miss
+		false,
+		2.0f,  // Duration in seconds
+		0,
+		3.0f   // Thickness
 	);
 
-	if (bHit && HitResult.GetActor())
-	{
-		AActor* Target = HitResult.GetActor();
-
-		// Check if target implements IDamagable
-		if (IDamagable* DamagableTarget = Cast<IDamagable>(Target))
-		{
-			// Build damage specification
-			FDamageSpec DamageSpec;
-			DamageSpec.Amount = Damage;
-			DamageSpec.HitLocation = HitResult.ImpactPoint;
-			DamageSpec.HitNormal = HitResult.ImpactNormal;
-			DamageSpec.HitBone = HitResult.BoneName;
-			DamageSpec.InstigatorController = GetController();
-			DamageSpec.DamageCauser = this;
-
-			// Apply damage through interface
-			IDamagable::Execute_ReceiveDamage(Target, DamageSpec);
-
-			UE_LOG(LogTemp, Log, TEXT("Player hit %s for %.1f damage"),
-				   *Target->GetName(), Damage);
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Attack missed - no target hit"));
-	}
+	// ✅ DRAW DEBUG LINE - Shows attack direction
+	DrawDebugLine(
+		GetWorld(),
+		Start,
+		End,
+		bHit ? FColor::Red : FColor::Yellow,
+		false,
+		2.0f,
+		0,
+		2.0f
+	);
 }
+   
+
+    if (bHit && HitResult.GetActor())
+    {
+        AActor* Target = HitResult.GetActor();
+if (bShowDebug)
+{
+	// ✅ DRAW DEBUG POINT - Shows exact hit location
+	DrawDebugPoint(
+		GetWorld(),
+		HitResult.ImpactPoint,
+		15.0f,
+		FColor::Orange,
+		false,
+		2.0f
+	);
+
+}
+        
+        // Check if target implements IDamagable
+        if (IDamagable* DamagableTarget = Cast<IDamagable>(Target))
+        {
+            // Build damage specification
+            FDamageSpec DamageSpec;
+            DamageSpec.Amount = Damage;
+            DamageSpec.HitLocation = HitResult.ImpactPoint;
+            DamageSpec.HitNormal = HitResult.ImpactNormal;
+            DamageSpec.HitBone = HitResult.BoneName;
+            DamageSpec.InstigatorController = GetController();
+            DamageSpec.DamageCauser = this;
+
+            // Apply damage through interface
+            IDamagable::Execute_ReceiveDamage(Target, DamageSpec);
+
+            // ✅ NOTIFY GAME MODE - HIT SUCCESSFULLY LANDED!
+            NotifyPlayerHit(Damage);
+
+            UE_LOG(LogTemp, Warning, TEXT("🎯 PLAYER HIT %s for %.1f damage"), 
+                   *Target->GetName(), Damage);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Hit actor but not Damagable: %s"), 
+                   *Target->GetName());
+        }
+    }
+    else
+    {
+        // ✅ MISS - Reset combo
+       // ResetPlayerCombo();
+        UE_LOG(LogTemp, Error, TEXT("❌ PLAYER ATTACK MISSED - combo reset"));
+    }
+}
+
 
 void ASideScrollingCharacter::OnMoveCompleted(FName CompletedMove)
 {
@@ -559,18 +613,68 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 {
 	if (!HealthComp || !HealthComp->IsAlive())
 		return;
+	if (bShowDebug)
+	{
+		// ✅ DRAW DEBUG SPHERE - Player taking damage
+		DrawDebugSphere(
+			GetWorld(),
+			GetActorLocation(),
+			80.0f,
+			12,
+			FColor::Magenta,  // Purple = player damaged
+			false,
+			2.0f,
+			0,
+			4.0f
+		);
+
+		// ✅ DRAW DAMAGE DIRECTION
+		DrawDebugLine(
+			GetWorld(),
+			Spec.HitLocation,
+			GetActorLocation(),
+			FColor::Cyan,
+			false,
+			2.0f,
+			0,
+			3.0f
+		);
+	}
+
+	
 
 	// ✅ SIMPLE: Just forward to HealthComponent
-	// It handles Dojo Mode, damage, stun, invincibility internally
 	HealthComp->ApplyDamage(Spec.Amount, EDamageType::Physical, Spec.HitLocation);
-    
-	UE_LOG(LogTemp, Warning, TEXT("💥 Player took %.1f damage from %s"),
+
+	// ✅ CHECK IF DAMAGE CAME FROM ENEMY (using tags)
+	if (Spec.DamageCauser && Spec.DamageCauser->Tags.Contains(FName("Enemy.Character")))
+	{
+		// Notify game mode
+		AGameModeBase* GameMode = UGameplayStatics::GetGameMode(GetWorld());
+		if (GameMode)
+		{
+			UFunction* RecordHitFunc = GameMode->FindFunction(FName("RecordEnemyHit"));
+			if (RecordHitFunc)
+			{
+				struct FRecordHitParams
+				{
+					float Damage;
+				};
+                
+				FRecordHitParams Params;
+				Params.Damage = Spec.Amount;
+                
+				GameMode->ProcessEvent(RecordHitFunc, &Params);
+				UE_LOG(LogTemp, Error, TEXT("🎯 ENEMY HIT PLAYER for %.1f damage"), Spec.Amount);
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("💥 PLAYER took %.1f damage from %s"),
 		   Spec.Amount,
 		   Spec.DamageCauser ? *Spec.DamageCauser->GetName() : TEXT("Unknown"));
-           
-	// ✅ Character-level response happens via delegate (OnDamageTakenHandler)
-	// No need to manually manage stun here
 }
+
 
 void ASideScrollingCharacter::OnStunExpired()
 {
@@ -588,29 +692,206 @@ bool ASideScrollingCharacter::IsStunned() const
 // Clean separation of concerns
 void ASideScrollingCharacter::ExecuteMove(FName Input)
 {
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+    UE_LOG(LogTemp, Warning, TEXT("🎬 [PLAYER] EXECUTE MOVE: %s"), *Input.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
 
+    // ═════════════════════════════════════════════════════════
+    // VALIDATION
+    // ═════════════════════════════════════════════════════════
+    if (!CombatStateComp)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] CombatStateComp is NULL!"));
+        return;
+    }
 
-	if (!CombatStateComp)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ CombatStateComp is NULL!"));
-		return;
-	}
+    if (!DecisionEngine)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] DecisionEngine is NULL!"));
+        return;
+    }
+
+    if (!CombatAnimComp)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] CombatAnimComp is NULL!"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("✅ [PLAYER] All components valid"));
+
+    // ═════════════════════════════════════════════════════════
+    // BUILD CONTEXT
+    // ═════════════════════════════════════════════════════════
+    UE_LOG(LogTemp, Display, TEXT("⚙️ [PLAYER] Building context..."));
+    FContextVector Context = CombatStateComp->BuildContext(Input);
+
+    // ═════════════════════════════════════════════════════════
+    // DECIDE MOVE
+    // ═════════════════════════════════════════════════════════
+    UE_LOG(LogTemp, Display, TEXT("🧠 [PLAYER] Deciding move..."));
+    FActionCommand Command = DecisionEngine->DecideNextMove(Context);
     
-	if (!DecisionEngine)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ DecisionEngine is NULL!"));
-		return;
-	}
+    UE_LOG(LogTemp, Warning, TEXT("📋 [PLAYER] Action: %s | Damage: %.1f | Stun: %.1f"), 
+           *Command.MoveIdentifier.ToString(),
+           Command.DamageToApply,
+           Command.StunDurationToInflict);
+
+    // ═════════════════════════════════════════════════════════
+    // SCHEDULE DAMAGE TEST (Temporary - replaces AnimNotify)
+    // ═════════════════════════════════════════════════════════
+    UE_LOG(LogTemp, Display, TEXT("⏲️ [PLAYER] Scheduling damage test in 0.3 seconds..."));
     
-	if (!CombatAnimComp)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ CombatAnimComp is NULL!"));
-		return;
-	}
-	FContextVector Context = CombatStateComp->BuildContext(Input);
-	FActionCommand Command = DecisionEngine->DecideNextMove(Context);
-	CombatAnimComp->ExecuteActionCommand(Command);
-	CombatStateComp->StartCooldown(Command.MoveIdentifier, 0.5f);
+    GetWorld()->GetTimerManager().SetTimer(
+        TempPlayerDamageTestHandle,
+        FTimerDelegate::CreateLambda([this, Command]() {
+            UE_LOG(LogTemp, Warning, TEXT("⚡ [PLAYER] DAMAGE TEST TRIGGERED!"));
+            TestPlayerDirectDamage(Command.DamageToApply);
+        }),
+        0.3f,  // Damage after 0.3 seconds (mid-animation)
+        false
+    );
+
+    // ═════════════════════════════════════════════════════════
+    // EXECUTE ANIMATION
+    // ═════════════════════════════════════════════════════════
+    CombatAnimComp->ExecuteActionCommand(Command);
+
+    // ═════════════════════════════════════════════════════════
+    // SET COOLDOWN
+    // ═════════════════════════════════════════════════════════
+    CombatStateComp->StartCooldown(Command.MoveIdentifier, 0.5f);
+    
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+    UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] EXECUTE COMPLETE"));
+    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
+}
+// ═════════════════════════════════════════════════════════
+// TEST DIRECT DAMAGE (Temporary - Bypasses AnimNotify)
+// ═════════════════════════════════════════════════════════
+void ASideScrollingCharacter::TestPlayerDirectDamage(float Damage)
+{
+    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
+    UE_LOG(LogTemp, Error, TEXT("💥 [PLAYER] TestDirectDamage CALLED! Damage: %.1f"), Damage);
+    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
+
+    // ═════════════════════════════════════════════════════════
+    // HIT DETECTION - Sphere Sweep
+    // ═════════════════════════════════════════════════════════
+    FVector Start = GetActorLocation();
+    FVector Forward = GetActorForwardVector();
+    FVector End = Start + (Forward * 150.f); // 150 units forward
+
+    UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace Start: %s"), *Start.ToString());
+    UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace End: %s"), *End.ToString());
+    UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Forward Vector: %s"), *Forward.ToString());
+
+    FHitResult HitResult;
+    FCollisionQueryParams QueryParams;
+    QueryParams.AddIgnoredActor(this);
+    
+    bool bHit = GetWorld()->SweepSingleByChannel(
+        HitResult,
+        Start,
+        End,
+        FQuat::Identity,
+        ECC_Pawn,
+        FCollisionShape::MakeSphere(75.f),
+        QueryParams
+    );
+
+    // ═════════════════════════════════════════════════════════
+    // DRAW DEBUG VISUALIZATION
+    // ═════════════════════════════════════════════════════════
+    if (bShowDebug)
+    {
+        // Draw sphere at hit/end location
+        DrawDebugSphere(
+            GetWorld(),
+            bHit ? HitResult.Location : End,
+            75.f,
+            12,
+            bHit ? FColor::Red : FColor::Green,
+            false,
+            2.0f,
+            0,
+            3.0f
+        );
+
+        // Draw line showing attack direction
+        DrawDebugLine(
+            GetWorld(),
+            Start,
+            End,
+            bHit ? FColor::Red : FColor::Yellow,
+            false,
+            2.0f,
+            0,
+            2.0f
+        );
+
+        // Draw hit point
+        if (bHit)
+        {
+            DrawDebugPoint(
+                GetWorld(),
+                HitResult.ImpactPoint,
+                15.0f,
+                FColor::Orange,
+                false,
+                2.0f
+            );
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // PROCESS HIT RESULT
+    // ═════════════════════════════════════════════════════════
+    if (bHit && HitResult.GetActor())
+    {
+        AActor* HitActor = HitResult.GetActor();
+        UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] Hit actor: %s"), *HitActor->GetName());
+
+        // Check if enemy (by tag)
+        if (HitActor->Tags.Contains(FName("Enemy.Character")))
+        {
+            UE_LOG(LogTemp, Error, TEXT("🎯 [PLAYER] CONFIRMED HIT ON ENEMY!"));
+
+            // Apply damage through interface
+            if (IDamagable* DamagableTarget = Cast<IDamagable>(HitActor))
+            {
+                FDamageSpec DamageSpec;
+                DamageSpec.Amount = Damage;
+                DamageSpec.HitLocation = HitResult.ImpactPoint;
+                DamageSpec.HitNormal = HitResult.ImpactNormal;
+                DamageSpec.HitBone = HitResult.BoneName;
+                DamageSpec.InstigatorController = GetController();
+                DamageSpec.DamageCauser = this;
+                
+                IDamagable::Execute_ReceiveDamage(HitActor, DamageSpec);
+                
+                // ✅ NOTIFY GAME MODE
+                NotifyPlayerHit(Damage);
+                
+                UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 PLAYER HIT ENEMY for %.1f damage 🎯🎯🎯"), Damage);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] Enemy is not IDamagable!"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ [PLAYER] Hit %s but not an enemy"), *HitActor->GetName());
+        }
+    }
+    else
+    {
+        // ✅ MISS - Reset combo
+       // ResetPlayerCombo();
+        UE_LOG(LogTemp, Error, TEXT("❌❌❌ PLAYER ATTACK MISSED ❌❌❌"));
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════\n"));
 }
 
 
@@ -677,6 +958,44 @@ void ASideScrollingCharacter::HeavyAttack(const FInputActionValue& Value)
 void ASideScrollingCharacter::Dash(const FInputActionValue& Value)
 {
 	ExecuteMove(FName("Dash"));
+}
+void ASideScrollingCharacter::NotifyPlayerHit(float DamageDealt)
+{
+	// Get the game mode
+	AGameModeBase* GameMode = UGameplayStatics::GetGameMode(GetWorld());
+	if (GameMode)
+	{
+		// Call Blueprint event on game mode
+		// Your BP Game Mode should have a custom event called "RecordPlayerHit"
+		UFunction* RecordHitFunc = GameMode->FindFunction(FName("RecordPlayerHit"));
+		if (RecordHitFunc)
+		{
+			struct FRecordHitParams
+			{
+				float Damage;
+			};
+            
+			FRecordHitParams Params;
+			Params.Damage = DamageDealt;
+            
+			GameMode->ProcessEvent(RecordHitFunc, &Params);
+			UE_LOG(LogTemp, Log, TEXT("✅ Player hit recorded: %.1f damage"), DamageDealt);
+		}
+	}
+}
+
+void ASideScrollingCharacter::ResetPlayerCombo()
+{
+	AGameModeBase* GameMode = UGameplayStatics::GetGameMode(GetWorld());
+	if (GameMode)
+	{
+		UFunction* ResetFunc = GameMode->FindFunction(FName("ResetPlayerCombo"));
+		if (ResetFunc)
+		{
+			GameMode->ProcessEvent(ResetFunc, nullptr);
+			UE_LOG(LogTemp, Log, TEXT("✅ Player combo reset"));
+		}
+	}
 }
 
  
