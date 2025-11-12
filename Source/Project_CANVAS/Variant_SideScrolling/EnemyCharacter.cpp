@@ -631,7 +631,7 @@ void AEnemyCharacter::TestDirectDamage(float Damage)
     else
     {
         // ✅ MISS
-      //  ResetEnemyCombo();
+        ResetEnemyCombo();
         UE_LOG(LogTemp, Error, TEXT("❌❌❌ ENEMY ATTACK MISSED ❌❌❌"));
     }
 }

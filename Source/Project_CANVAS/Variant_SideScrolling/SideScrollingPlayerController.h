@@ -69,5 +69,22 @@ protected:
 	void OnPawnDestroyed(AActor* DestroyedActor);
    
 	
+public:
+	// Debug commands for LocationEngine
     
+	/** Shows playable area bounds with colored boxes */
+	UFUNCTION(Exec)
+	void ShowBounds(float Duration = 10.0f);
+    
+	/** Shows all spawn locations with debug spheres */
+	UFUNCTION(Exec)
+	void ShowLocations(float Duration = 10.0f);
+    
+	/** Prints location database to log */
+	UFUNCTION(Exec)
+	void ListLocations();
+    
+	/** Prints occupancy status of all locations */
+	UFUNCTION(Exec)
+	void ShowOccupancy();
 };

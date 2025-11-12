@@ -423,7 +423,7 @@ if (bShowDebug)
     else
     {
         // ✅ MISS - Reset combo
-       // ResetPlayerCombo();
+       ResetPlayerCombo();
         UE_LOG(LogTemp, Error, TEXT("❌ PLAYER ATTACK MISSED - combo reset"));
     }
 }
@@ -887,7 +887,7 @@ void ASideScrollingCharacter::TestPlayerDirectDamage(float Damage)
     else
     {
         // ✅ MISS - Reset combo
-       // ResetPlayerCombo();
+        ResetPlayerCombo();
         UE_LOG(LogTemp, Error, TEXT("❌❌❌ PLAYER ATTACK MISSED ❌❌❌"));
     }
     

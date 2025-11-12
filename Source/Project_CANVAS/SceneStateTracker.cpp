@@ -541,3 +541,14 @@ void USceneStateTracker::LogSceneStateVerbose()
     UE_LOG(LogTemp, Display, TEXT(""));
 }
 
+void USceneStateTracker::VisualizeBounds(float Duration)
+{
+    if (LocationEngine)
+    {
+        LocationEngine->VisualizePlayableAreaBounds(Duration);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ LocationEngine not initialized!"));
+    }
+}

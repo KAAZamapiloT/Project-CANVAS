@@ -267,3 +267,65 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
 	TogglePromptUI();
 }
 
+void  ASideScrollingPlayerController::ShowBounds(float Duration)
+{
+	// Get GameInstance (cast to SceneStateTracker)
+	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+    
+	if (StateTracker && StateTracker->LocationEngine)
+	{
+		StateTracker->LocationEngine->VisualizePlayableAreaBounds(Duration);
+        
+		// Show confirmation message on screen
+		ClientMessage(FString::Printf(TEXT("✅ Showing bounds for %.1f seconds"), Duration));
+	}
+	else
+	{
+		ClientMessage(TEXT("❌ LocationEngine not initialized!"));
+	}
+}
+
+void  ASideScrollingPlayerController::ShowLocations(float Duration)
+{
+	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+    
+	if (StateTracker && StateTracker->LocationEngine)
+	{
+		StateTracker->LocationEngine->VisualizeAllLocations(Duration);
+		ClientMessage(TEXT("✅ Showing all spawn locations"));
+	}
+	else
+	{
+		ClientMessage(TEXT("❌ LocationEngine not found"));
+	}
+}
+
+void  ASideScrollingPlayerController::ListLocations()
+{
+	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+    
+	if (StateTracker && StateTracker->LocationEngine)
+	{
+		StateTracker->LocationEngine->PrintAllLocationData();
+		ClientMessage(TEXT("✅ Location data printed to log (check Output Log window)"));
+	}
+	else
+	{
+		ClientMessage(TEXT("❌ LocationEngine not found"));
+	}
+}
+
+void  ASideScrollingPlayerController::ShowOccupancy()
+{
+	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+    
+	if (StateTracker && StateTracker->LocationEngine)
+	{
+		StateTracker->LocationEngine->PrintLocationsByStatus();
+		ClientMessage(TEXT("✅ Occupancy status printed to log"));
+	}
+	else
+	{
+		ClientMessage(TEXT("❌ LocationEngine not found"));
+	}
+}

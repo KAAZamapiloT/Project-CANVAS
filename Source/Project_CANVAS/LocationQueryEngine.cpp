@@ -913,7 +913,7 @@ FSpawnLocation ULocationQueryEngine::FindNearestFreeLocation(FVector PreferredLo
 bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
 {
     if (!WorldContext) return false;
-
+    float ReducedRadius = Radius*0.8;
     FCollisionShape SphereShape = FCollisionShape::MakeSphere(Radius);
     FCollisionQueryParams QueryParams;
     QueryParams.bTraceComplex = false;
@@ -954,7 +954,7 @@ bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
     }
 
     // ✅ FIX #3: Check minimum distance from all occupied locations
-    const float MinSpacing = 200.0f; // Minimum distance between spawns
+    const float MinSpacing = 100.0f; // Minimum distance between spawns
     for (const FSpawnLocation& Loc : DiscoveredLocations)
     {
         if (Loc.bIsOccupied && IsValid(Loc.OccupyingActor.Get()))
@@ -1666,7 +1666,7 @@ FSpawnLocation ULocationQueryEngine::FindValidSpawnLocation(const FString& Prefe
     UE_LOG(LogTemp, Warning, TEXT("⚠️ No valid locations found, using smart fallback..."));
 
     // 3. Use smart fallback with validation (NEW)
-    FVector SafePos = FindSafeSpawnPosition(MinClearance, 10);
+    FVector SafePos = FindSafeSpawnPosition(MinClearance, 60);
     
     FSpawnLocation DynamicLocation;
     DynamicLocation.LocationName = FString::Printf(TEXT("DYNAMIC_SPAWN_%s"), *FGuid::NewGuid().ToString().Left(8));

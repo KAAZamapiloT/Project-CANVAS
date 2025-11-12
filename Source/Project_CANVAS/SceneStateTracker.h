@@ -256,4 +256,12 @@ private:
 	 * Shows count of spawned actors and storage usage
 	 */
 	void LogSceneStateVerbose();
+public:
+	/**
+ * Visualizes the playable area bounds with debug geometry.
+ * @param Duration How long to display (seconds).
+ */
+	UFUNCTION(Exec, BlueprintCallable, Category = "LocationEngine|Debug")
+	void VisualizeBounds(float Duration=10.f);
+
 };
