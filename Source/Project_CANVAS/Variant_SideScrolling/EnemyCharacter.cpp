@@ -623,6 +623,7 @@ void AEnemyCharacter::TestDirectDamage(float Damage)
             IDamagable::Execute_ReceiveDamage(PlayerCharacter, DamageSpec);
             
             // ✅ NOTIFY GAME MODE
+        	
             NotifyEnemyHit(Damage);
             
             UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 ENEMY HIT PLAYER for %.1f damage 🎯🎯🎯"), Damage);
