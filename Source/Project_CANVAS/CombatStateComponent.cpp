@@ -214,28 +214,71 @@ float UCombatStateComponent::GetDistanceToEnemy() const
 FGameplayTagContainer UCombatStateComponent::GetCharacterTags(ACharacter* Character) const
 {
     FGameplayTagContainer Tags;
-
-    if (!Character||!Character->IsValidLowLevel())
+    
+    // ═══════════════════════════════════════════════════════
+    // VALIDATION
+    // ═══════════════════════════════════════════════════════
+    if (!Character || !Character->IsValidLowLevel())
     {
         return Tags;
     }
 
-    // Query HealthComponent for state tags (stunned, blocking, etc.)
+    // ═══════════════════════════════════════════════════════
+    // HEALTH-BASED TAGS (Stunned, Dead, Critical)
+    // ═══════════════════════════════════════════════════════
     if (UHealthComponent* HealthComp = Character->FindComponentByClass<UHealthComponent>())
     {
-        // TODO: Implement tag system in HealthComponent
-        // For now, check health state
+        // Check if stunned
         if (HealthComp->StunDuration > 0.f)
         {
-            Tags.AddTag(FGameplayTag::RequestGameplayTag(FName("State.Stunned")));
+            // ✅ Safe tag request - won't crash if tag missing
+            FGameplayTag StunnedTag = FGameplayTag::RequestGameplayTag(
+                FName("State.Stunned"), 
+                /*ErrorIfNotFound=*/ false
+            );
+            
+            if (StunnedTag.IsValid())
+            {
+                Tags.AddTag(StunnedTag);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("⚠️ GameplayTag 'State.Stunned' not found - register in Project Settings → GameplayTags"));
+            }
         }
     }
 
-    // Check if character is in air (jumping)
-    if (Character->GetCharacterMovement() && Character->GetCharacterMovement()->IsFalling())
+    // ═══════════════════════════════════════════════════════
+    // MOVEMENT-BASED TAGS (Airborne)
+    // ═══════════════════════════════════════════════════════
+    if (UCharacterMovementComponent* MovementComp = Character->GetCharacterMovement())
     {
-        Tags.AddTag(FGameplayTag::RequestGameplayTag(FName("State.Airborne")));
+        // Check if character is in air (jumping/falling)
+        if (MovementComp->IsFalling())
+        {
+            // ✅ Safe tag request - won't crash if tag missing
+            FGameplayTag AirborneTag = FGameplayTag::RequestGameplayTag(
+                FName("State.Airborne"), 
+                /*ErrorIfNotFound=*/ false
+            );
+            
+            if (AirborneTag.IsValid())
+            {
+                Tags.AddTag(AirborneTag);
+            }
+            else
+            {
+                // Only log once to avoid spam
+                static bool bLoggedOnce = false;
+                if (!bLoggedOnce)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("⚠️ GameplayTag 'State.Airborne' not found - register in Project Settings → GameplayTags"));
+                    bLoggedOnce = true;
+                }
+            }
+        }
     }
 
     return Tags;
 }
+

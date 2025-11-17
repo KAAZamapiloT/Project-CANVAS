@@ -68,10 +68,8 @@ protected:
 	UFUNCTION()
 	void OnPawnDestroyed(AActor* DestroyedActor);
    
-	
 public:
 	// Debug commands for LocationEngine
-    
 	/** Shows playable area bounds with colored boxes */
 	UFUNCTION(Exec)
 	void ShowBounds(float Duration = 10.0f);
@@ -87,4 +85,5 @@ public:
 	/** Prints occupancy status of all locations */
 	UFUNCTION(Exec)
 	void ShowOccupancy();
+
 };

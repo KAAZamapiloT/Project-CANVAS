@@ -5,6 +5,8 @@
 #include "SceneBuilder.h"
 #include "SceneHistoryManager.h"
 #include"ScenePlan.h"
+#include"LocationQueryEngine.h"
+#include "API_KEY.h"
 void USceneStateTracker::Init()
 {
     Super::Init();
@@ -84,8 +86,14 @@ void USceneStateTracker::Init()
         if (LocationEngine)
         {
             LocationEngine->InitializePlayableAreaBounds();
-            
+            API_KEY a;
             LocationEngine->ScanWorldLocationsAsync(GetWorld());
+            LocationEngine->ConfigureLLMFallback(
+           TEXT("https://api.groq.com/openai/v1/chat/completions"),
+           a.GetGroqKey(),
+           TEXT("llama-3.1-8b-instant")
+       );
+
         }
         
         UE_LOG(LogTemp, Display, TEXT("🔄 Async scans started"));
@@ -107,6 +115,60 @@ void USceneStateTracker::Init()
 
     UE_LOG(LogTemp, Warning, TEXT("✅ Init complete - waiting for scans"));
     UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+void USceneStateTracker::OnStart()
+{
+    Super::OnStart();
+    
+    UE_LOG(LogTemp, Display, TEXT("========================================"));
+    UE_LOG(LogTemp, Display, TEXT("🚀 SceneStateTracker::OnStart"));
+    UE_LOG(LogTemp, Display, TEXT("========================================"));
+    
+    // ✅ World is now GUARANTEED to be available
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ CRITICAL: World is STILL null in OnStart()!"));
+        return;
+    }
+    
+    // ✅ Initialize bounds NOW (world is loaded)
+    if (LocationEngine)
+    {
+        // Option A: Use custom bounds
+        FBox CustomBounds(
+            FVector(-1500.0f, -1000.0f, 0.0f),
+            FVector(1500.0f, 1000.0f, 800.0f)
+        );
+        LocationEngine->InitializePlayableAreaBoundsCustom(CustomBounds);
+        
+        // Verify initialization
+        if (LocationEngine->IsBoundsInitialized())
+        {
+            UE_LOG(LogTemp, Display, TEXT("✅ Bounds initialized: %s"), 
+                *LocationEngine->GetPlayableAreaBounds().ToString());
+            
+            // ✅ Show bounds for debugging (optional)
+            LocationEngine->VisualizePlayableAreaBounds(15.0f);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ Bounds initialization FAILED!"));
+        }
+        
+        // ✅ Re-scan locations with bounds now active
+        LocationEngine->ScanWorldLocationsAsync(World);
+    }
+    
+    // ✅ Re-scan assets if Init() couldn't access world
+    if (AssetIndexer && !bAssetScanComplete)
+    {
+        UE_LOG(LogTemp, Display, TEXT("🔄 Retrying asset scan with world access..."));
+        AssetIndexer->ScanAllAssetsAsync(World);
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("✅ OnStart complete - system fully initialized"));
 }
 
 void USceneStateTracker::OnAssetScanFinished()
@@ -294,7 +356,13 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
     }
 
     int32 Resolved = 0, Failed = 0;
-
+    
+    // ✅ FIX #1: Track used positions to prevent overlaps
+    TSet<FVector> UsedPositions;
+    const float MinPositionDistance = 150.0f;
+    
+    UE_LOG(LogTemp, Display, TEXT("3️⃣ ResolveLocationsInPlan: Processing %d requests..."), Plan.SpawnRequest.Num());
+    
     for (FSpawnRequest& Request : Plan.SpawnRequest)
     {
         if (Request.LocationName.IsEmpty())
@@ -304,31 +372,113 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
             continue;
         }
 
+        // Step 1: Resolve base location
         FSpawnLocation ResolvedLoc = LocationEngine->ResolveLocation(Request.LocationName);
         FVector BaseLocation = ResolvedLoc.WorldPosition;
-
-        if (!LocationEngine->IsLocationClear(BaseLocation, Request.ClearanceRadius))
+        
+        // ✅ FIX #2: Check if position conflicts with already-used positions
+        bool bPositionConflict = false;
+        for (const FVector& UsedPos : UsedPositions)
         {
+            float Distance = FVector::Dist(BaseLocation, UsedPos);
+            if (Distance < MinPositionDistance)
+            {
+                bPositionConflict = true;
+                UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Position conflict for '%s' - distance %.0fcm < %.0fcm"), 
+                    *Request.ObjectName, Distance, MinPositionDistance);
+                break;
+            }
+        }
+
+        // Step 2: Find alternative if position is blocked OR conflicted
+        if (!LocationEngine->IsLocationClear(BaseLocation, Request.ClearanceRadius) || bPositionConflict)
+        {
+            UE_LOG(LogTemp, Display, TEXT("  🔄 Finding alternative for '%s'..."), *Request.ObjectName);
+            
+            // Try nearby free location first
             FSpawnLocation Alternative = LocationEngine->FindNearestFreeLocation(
                 BaseLocation,
                 Request.ClearanceRadius
             );
-            BaseLocation = Alternative.WorldPosition;
+            
+            // ✅ FIX #3: Validate alternative isn't also conflicted
+            bool bAlternativeConflict = false;
+            for (const FVector& UsedPos : UsedPositions)
+            {
+                if (FVector::Dist(Alternative.WorldPosition, UsedPos) < MinPositionDistance)
+                {
+                    bAlternativeConflict = true;
+                    break;
+                }
+            }
+            
+            if (bAlternativeConflict || Alternative.WorldPosition.IsNearlyZero())
+            {
+                // ✅ FIX #4: Last resort - use safe spawn with random offset
+                UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Using fallback spawn for '%s'"), *Request.ObjectName);
+                
+                BaseLocation = LocationEngine->FindSafeSpawnPosition(Request.ClearanceRadius, 30);
+                
+                // Add random offset for guaranteed uniqueness
+                BaseLocation += FVector(
+                    FMath::RandRange(-250.0f, 250.0f),
+                    FMath::RandRange(-250.0f, 250.0f),
+                    0.0f
+                );
+            }
+            else
+            {
+                BaseLocation = Alternative.WorldPosition;
+                UE_LOG(LogTemp, Display, TEXT("  ✅ Found alternative at (%.0f, %.0f, %.0f)"), 
+                    BaseLocation.X, BaseLocation.Y, BaseLocation.Z);
+            }
         }
 
+        // Step 3: Apply location offset
         FVector FinalLocation = BaseLocation + Request.LocationOffset;
+        
+        // ✅ FIX #5: Emergency check - never spawn at zero
+        if (FinalLocation.IsNearlyZero())
+        {
+            UE_LOG(LogTemp, Error, TEXT("  ❌ CRITICAL: Zero position for '%s' - using emergency spawn"), 
+                *Request.ObjectName);
+            
+            FinalLocation = LocationEngine->GetRandomCenterPosition();
+            FinalLocation += FVector(
+                FMath::RandRange(-500.0f, 500.0f),
+                FMath::RandRange(-500.0f, 500.0f),
+                100.0f // Elevated for visibility
+            );
+        }
+        
+        // Step 4: Store validated position
         Request.SpawnLocation = FinalLocation;
-
+        
+        // ✅ FIX #6: ADD to used positions set (CRITICAL!)
+        UsedPositions.Add(FinalLocation);
+        
+        // Step 5: Mark location as occupied
         LocationEngine->SetLocationOccupied(Request.LocationName, true, nullptr);
+        
         Resolved++;
+        
+        UE_LOG(LogTemp, Display, TEXT("  ✅ '%s' → (%.0f, %.0f, %.0f)"), 
+            *Request.ObjectName, FinalLocation.X, FinalLocation.Y, FinalLocation.Z);
     }
 
+    // Summary log
     if (Failed > 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("  ⚠️  ResolveLocationsInPlan: %d/%d resolved"), 
-            Resolved, Resolved + Failed);
+        UE_LOG(LogTemp, Warning, TEXT("  ⚠️  ResolveLocationsInPlan complete: %d/%d resolved, %d failed"), 
+            Resolved, Resolved + Failed, Failed);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Display, TEXT("  ✅ ResolveLocationsInPlan complete: %d/%d successfully resolved"), 
+            Resolved, Resolved);
     }
 }
+
 
 void USceneStateTracker::OnActorSpawned(AActor* NewActor, const FString& ObjectName)
 {

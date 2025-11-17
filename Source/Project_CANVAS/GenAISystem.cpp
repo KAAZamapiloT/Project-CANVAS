@@ -59,13 +59,13 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
     // Build Groq JSON payload (OpenAI format)
     FString Payload = FString::Printf(TEXT(
         "{"
-        "\"model\":\"openai/gpt-oss-120b\","
+        "\"model\":\"openai/gpt-oss-20b\","
         "\"messages\":["
             "{\"role\":\"system\",\"content\":\"You are a JSON generator for a 3D scene builder. Only respond with valid JSON, no markdown, no code blocks.\"},"
             "{\"role\":\"user\",\"content\":\"%s\"}"
         "],"
         "\"temperature\":0.2,"
-        "\"max_tokens\":4096"
+        "\"max_tokens\":6000"
         "}"
     ), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
 
@@ -190,45 +190,45 @@ FString UGenAISystem::ConstructMasterPrompt(
     FString UserPrompt,
     UAssetIndexer* AssetIndexer)
 {
-	if (!AssetIndexer)
-	{
-		UE_LOG(LogTemp, Error, TEXT("GenAISystem: AssetIndexer is null"));
-		return TEXT("");
-	}
+    if (!AssetIndexer)
+    {
+        UE_LOG(LogTemp, Error, TEXT("GenAISystem: AssetIndexer is null"));
+        return TEXT("");
+    }
 
-	// === STEP 1: GET ALL ASSETS FROM INDEXER ===
-	TArray<FString> AvailableTextures = AssetIndexer->GetDiscoveredTextureNames();
-	TArray<FString> ActorTags = AssetIndexer->GetDiscoveredActorTags();
-	TArray<FString> AvailableMeshes = AssetIndexer->GetAllMeshNames();
-	TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
+    // === STEP 1: GET ALL ASSETS FROM INDEXER ===
+    TArray<FString> AvailableTextures = AssetIndexer->GetDiscoveredTextureNames();
+    TArray<FString> ActorTags = AssetIndexer->GetDiscoveredActorTags();
+    TArray<FString> AvailableMeshes = AssetIndexer->GetAllMeshNames();
+    TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
 
-	// === STEP 2: GET MATERIAL BASE NAMES ===
-	TArray<FString> MaterialBaseNames = AssetIndexer->GetMaterialBaseNames();
-	UE_LOG(LogTemp, Display, TEXT("GenAI: Using %d materials from %d textures"), MaterialBaseNames.Num(), AvailableTextures.Num());
-	UE_LOG(LogTemp, Display, TEXT("GenAI: Available meshes: %d"), AvailableMeshes.Num());
+    // === STEP 2: GET MATERIAL BASE NAMES ===
+    TArray<FString> MaterialBaseNames = AssetIndexer->GetMaterialBaseNames();
+    UE_LOG(LogTemp, Display, TEXT("GenAI: Using %d materials from %d textures"), MaterialBaseNames.Num(), AvailableTextures.Num());
+    UE_LOG(LogTemp, Display, TEXT("GenAI: Available meshes: %d"), AvailableMeshes.Num());
 
-	// === STEP 3: BUILD MESH LIST STRING (first 30 meshes for context) ===
-	FString MeshListString = TEXT("[");
-	for (int32 i = 0; i < FMath::Min(30, AvailableMeshes.Num()); i++)
-	{
-		MeshListString += FString::Printf(TEXT("\"%s\""), *AvailableMeshes[i]);
-		if (i < FMath::Min(30, AvailableMeshes.Num()) - 1) MeshListString += TEXT(", ");
-	}
-	if (AvailableMeshes.Num() > 30)
-	{
-		MeshListString += FString::Printf(TEXT(", ... %d more meshes]"), AvailableMeshes.Num() - 30);
-	}
-	else
-	{
-		MeshListString += TEXT("]");
-	}
+    // === STEP 3: BUILD MESH LIST STRING (first 30 meshes for context) ===
+    FString MeshListString = TEXT("[");
+    for (int32 i = 0; i < FMath::Min(30, AvailableMeshes.Num()); i++)
+    {
+        MeshListString += FString::Printf(TEXT("\"%s\""), *AvailableMeshes[i]);
+        if (i < FMath::Min(30, AvailableMeshes.Num()) - 1) MeshListString += TEXT(", ");
+    }
+    if (AvailableMeshes.Num() > 30)
+    {
+        MeshListString += FString::Printf(TEXT(", ... %d more meshes]"), AvailableMeshes.Num() - 30);
+    }
+    else
+    {
+        MeshListString += TEXT("]");
+    }
 
-	// === STEP 4: CONVERT TO CSV STRINGS ===
-	FString MaterialString = FString::Join(MaterialBaseNames, TEXT("\", \""));
-	FString TagString = FString::Join(ActorTags, TEXT("\", \""));
-	FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
+    // === STEP 4: CONVERT TO CSV STRINGS ===
+    FString MaterialString = FString::Join(MaterialBaseNames, TEXT("\", \""));
+    FString TagString = FString::Join(ActorTags, TEXT("\", \""));
+    FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
 
-   // === STEP 5: BUILD COMPREHENSIVE PROMPT ===
+    // === STEP 5: BUILD COMPREHENSIVE PROMPT ===
     return FString::Printf(TEXT(
         "You are an expert game environment designer specializing in Unreal Engine scenes.\n"
         "Generate a JSON scene plan based on the user request.\n\n"
@@ -251,8 +251,61 @@ FString UGenAISystem::ConstructMasterPrompt(
         "   System handles loading: material_name_diff_2k, material_name_rough_2k, etc.\n"
         "4. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
         "5. SPAWNING: Each spawned actor must have unique ObjectName\n"
-        "6. LOCATIONS: Use semantic names (e.g., 'PLAYER_FRONT', 'CENTER', 'LEFT_CORNER')\n"
-        "7. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n\n"
+        "\n"
+        "6. LOCATIONS: Use these semantic patterns for varied spatial distribution:\n"
+        "   NAMED ZONES (use these for scene building):\n"
+        "   - CENTER: Arena center (use for 1-3 key props)\n"
+        "   - BACKGROUND: Far from camera (use for 3-6 walls/decorations)\n"
+        "   - FOREGROUND: Close to camera (use for 1-3 interactive props)\n"
+        "   - OVERHEAD: Aerial zone (use for particles/ceiling objects)\n"
+        "   - LEFT_SIDE: Left arena (use for 3-5 props)\n"
+        "   - RIGHT_SIDE: Right arena (use for 3-5 props)\n"
+        "   - LEFT_CORNER, RIGHT_CORNER: Arena edges\n"
+        "   \n"
+        "   PLAYER-RELATIVE (use sparingly, max 2-3 spawns):\n"
+        "   - PLAYER_FRONT, PLAYER_BACK, PLAYER_LEFT, PLAYER_RIGHT\n"
+        "   \n"
+        "   DYNAMIC QUERIES (for gameplay-driven spawns):\n"
+        "   - CLOSEST:<Tag>: Near player-facing side of tagged actor\n"
+        "   - NEAR:<Tag>: Random offset from tagged actor\n"
+        "   \n"
+        "   EXPLICIT (when exact control needed):\n"
+        "   - CUSTOM:[X,Y,Z]: Example CUSTOM:[500,-300,100]\n"
+        "\n"
+        "7. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n"
+        "\n"
+        "8. SPAWN DISTRIBUTION STRATEGY:\n"
+        "   QUANTITY (match user intent):\n"
+        "   - Explicit count request (add 3 walls) → Spawn that exact number\n"
+        "   - Minimalist/simple/few → 5-10 spawns\n"
+        "   - Standard theme/scene → 12-18 spawns\n"
+        "   - Fill/crowded/detailed → 20-30 spawns\n"
+        "   \n"
+        "   SPATIAL COVERAGE (mandatory):\n"
+        "   - Distribute across MULTIPLE zones (BACKGROUND, LEFT_SIDE, RIGHT_SIDE, CENTER)\n"
+        "   - NEVER concentrate >30%% of spawns in PLAYER-RELATIVE positions\n"
+        "   - Each major zone (BACKGROUND, LEFT, RIGHT, CENTER) should have 2+ spawns\n"
+        "   \n"
+        "   MESH VARIETY:\n"
+        "   - Use 4+ different meshes\n"
+        "   - No mesh should appear more than 25%% of total spawns\n"
+        "   - Mix sizes: large (walls), medium (furniture), small (decorations)\n"
+        "   \n"
+        "   SPACING:\n"
+        "   - LocationOffset: Vary between ±100 and ±500 based on object size\n"
+        "   - Large objects (walls): ±300-600\n"
+        "   - Small objects (props): ±100-300\n"
+        "\n"
+
+        "\n"
+		"9. SCALE GUIDELINES:\n"
+		"   - Small props (barrels, baskets): [0.5-1.5, 0.5-1.5, 0.5-1.5]\n"
+		"   - Medium props (benches, tables): [1.0-2.0, 1.0-2.0, 1.0-2.0]\n"
+		"   - Large objects (walls, buildings): [1.0-3.0, 1.0-3.0, 1.0-3.0]\n"
+		"   - NEVER use scale >4.0 - objects become too large\n"
+		"   - Default scale: [1, 1, 1] if unsure\n"
+		"\n"
+        
         "=== JSON SCHEMA ===\n"
         "{\n"
         "  \"ThemeName\": \"descriptive_name\",\n"

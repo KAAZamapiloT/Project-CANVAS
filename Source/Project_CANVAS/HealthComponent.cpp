@@ -114,7 +114,13 @@ void UHealthComponent::ApplyDamage(float Amount, EDamageType DamageType, FVector
         
             // Still broadcast for UI/animation feedback
             OnDamageTaken.Broadcast(ActualDamage, HitLocation);
-        
+           
+            if (Health <= 0.0f)
+            {
+                UE_LOG(LogTemp, Error, TEXT("💀 %s DIED!"), *GetOwner()->GetName());
+                OnDeath.Broadcast(); // ← That's it!
+            }
+
             // ✅ EXIT EARLY - No actual health loss in Dojo Mode
             return;
         }
@@ -280,4 +286,17 @@ void UHealthComponent::TickInvincibility(float DeltaTime)
     {
         InvincibilityTimer = 0.f;
     }
+}
+
+void UHealthComponent::Respawn()
+
+{
+    Health = MaxHealth;
+    StunDuration = 0.0f;
+    InvincibilityTimer = 0.0f;
+
+    UE_LOG(LogTemp, Warning, TEXT("✨ %s respawned to full health"), *GetOwner()->GetName());
+
+    OnHealthChanged.Broadcast(Health, MaxHealth);
+    
 }

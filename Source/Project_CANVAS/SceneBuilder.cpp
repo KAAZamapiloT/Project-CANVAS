@@ -216,6 +216,7 @@ void USceneBuilder::SpawnNewActors(
 
     int32 SuccessCount = 0;
     int32 FailureCount = 0;
+    // Before spawning, validate scale:
 
     // ========================================
     // DEBUG: Show what we're about to spawn
@@ -320,11 +321,28 @@ void USceneBuilder::SpawnNewActors(
         MeshComp->SetReceivesDecals(true);
 
         // ✅ Configure collision
-        MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        MeshComp->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+
+        // Only overlap with Pawn, ignore everything else
+        MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        MeshComp->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Ignore);
+        MeshComp->SetCollisionResponseToChannel(ECollisionChannel::ECC_Pawn, ECollisionResponse::ECR_Overlap);
+
+        NewActor->SetActorEnableCollision(true);
+
 
         // ✅ Apply scale to component
-        MeshComp->SetWorldScale3D(Request.Scale);
+        FVector SafeScale = Request.Scale;
+        SafeScale.X = FMath::Clamp(SafeScale.X, 0.1f, 4.0f);
+        SafeScale.Y = FMath::Clamp(SafeScale.Y, 0.1f, 4.0f);
+        SafeScale.Z = FMath::Clamp(SafeScale.Z, 0.1f, 4.0f);
+    
+        // ✅ Log warning if scale was excessive
+        if (Request.Scale.X > 4.0f || Request.Scale.Y > 4.0f || Request.Scale.Z > 4.0f)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Large scale clamped for '%s': %s → %s"), 
+                *Request.ObjectName, *Request.Scale.ToString(), *SafeScale.ToString());
+        }
+        MeshComp->SetWorldScale3D(SafeScale);
 
         // ✅ Re-register component (ONLY ONCE)
         MeshComp->RegisterComponent();

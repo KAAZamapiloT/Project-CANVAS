@@ -46,6 +46,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamageTaken, float, DamageAmount
 /** Fired when character recovers from stun */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnStunRecovered);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeath);
 // ============ COMPONENT ============
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -192,4 +193,13 @@ private:
 
     /** Internal tick for invincibility frame countdown */
     void TickInvincibility(float DeltaTime);
+    // In HealthComponent.h
+public:
+    /** Called when health reaches 0 */
+   
+    UPROPERTY(BlueprintAssignable, Category = "Health")
+    FOnDeath OnDeath;
+     UFUNCTION(BlueprintCallable, Category="Health")
+    void Respawn();
+    
 };

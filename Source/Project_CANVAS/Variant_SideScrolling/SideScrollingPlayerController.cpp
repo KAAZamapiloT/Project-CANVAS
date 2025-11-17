@@ -267,16 +267,12 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
 	TogglePromptUI();
 }
 
-void  ASideScrollingPlayerController::ShowBounds(float Duration)
+void ASideScrollingPlayerController::ShowBounds(float Duration)
 {
-	// Get GameInstance (cast to SceneStateTracker)
 	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
-    
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->VisualizePlayableAreaBounds(Duration);
-        
-		// Show confirmation message on screen
 		ClientMessage(FString::Printf(TEXT("✅ Showing bounds for %.1f seconds"), Duration));
 	}
 	else
@@ -285,10 +281,9 @@ void  ASideScrollingPlayerController::ShowBounds(float Duration)
 	}
 }
 
-void  ASideScrollingPlayerController::ShowLocations(float Duration)
+void ASideScrollingPlayerController::ShowLocations(float Duration)
 {
 	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
-    
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->VisualizeAllLocations(Duration);
@@ -300,10 +295,10 @@ void  ASideScrollingPlayerController::ShowLocations(float Duration)
 	}
 }
 
-void  ASideScrollingPlayerController::ListLocations()
+
+void ASideScrollingPlayerController::ListLocations()
 {
 	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
-    
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->PrintAllLocationData();
@@ -315,10 +310,10 @@ void  ASideScrollingPlayerController::ListLocations()
 	}
 }
 
-void  ASideScrollingPlayerController::ShowOccupancy()
+
+void ASideScrollingPlayerController::ShowOccupancy()
 {
 	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
-    
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->PrintLocationsByStatus();

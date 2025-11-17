@@ -6,6 +6,7 @@
 #include "UObject/Object.h"
 #include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
+#include "LocationResolverLLM.h" 
 #include "LocationQueryEngine.generated.h"
 
 /**
@@ -279,7 +280,7 @@ public:
      * @return Player's location, or FVector::ZeroVector if no player pawn.
      */
     UFUNCTION(BlueprintCallable, Category = "LocationEngine|Player")
-    FVector GetPlayerPosition();
+    FVector GetPlayerPosition() const;
 
     /**
      * Gets a random position within an annulus (ring) around the player.
@@ -581,7 +582,7 @@ private:
     UPROPERTY()
     bool bIsScanning = false;
 
-private:
+public: 
     // ========================================
     // 2.5D FIGHTING GAME FALLBACK SYSTEM
     // ========================================
@@ -867,5 +868,24 @@ public:
         InitializePlayableAreaBounds();
     }
 
+    // In LocationQueryEngine.h
+
+public:
+    /**
+     * Configure LLM fallback.
+     * @param Endpoint - API URL
+     * @param APIKey - API key (empty = local)
+     * @param ModelName - Model name
+     */
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine")
+    void ConfigureLLMFallback(const FString& Endpoint, const FString& APIKey, const FString& ModelName);
+
+private:
+    /** LLM resolver (composed) */
+    UPROPERTY()
+    ULocationResolverLLM* LLMResolver = nullptr;
+
+    /** Build scene context string for LLM */
+    FString BuildSceneContext() const;
 
 };

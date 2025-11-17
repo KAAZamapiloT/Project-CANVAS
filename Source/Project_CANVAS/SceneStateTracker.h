@@ -264,4 +264,6 @@ public:
 	UFUNCTION(Exec, BlueprintCallable, Category = "LocationEngine|Debug")
 	void VisualizeBounds(float Duration=10.f);
 
+	void OnStart() override;;
+
 };
