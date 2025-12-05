@@ -606,8 +606,7 @@ void ASideScrollingCharacter::OnHealthChanged(float Current, float Max)
 void ASideScrollingCharacter::OnDeath()
 {
 	UE_LOG(LogTemp, Warning, TEXT("Player died!"));
-	// Disable AI, play death anim, destroy after delay
-	SetLifeSpan(3.0f);
+	BP_HandleDeath();
 }
 
 void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Spec)

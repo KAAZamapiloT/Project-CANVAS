@@ -898,5 +898,9 @@ private:
 
     /** Build scene context string for LLM */
     FString BuildSceneContext() const;
+public:
+    // Add this Getter
+    UFUNCTION(BlueprintCallable, Category = "LocationEngine")
+    ULocationResolverLLM* GetLLMResolver() const { return LLMResolver; }
 
 };

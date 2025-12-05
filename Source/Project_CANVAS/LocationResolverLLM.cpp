@@ -241,3 +241,135 @@ bool ULocationResolverLLM::ParseTransform(const FString& JsonResponse, FTransfor
 
     return true;
 }
+// LocationResolverLLM.cpp
+
+void ULocationResolverLLM::ResolveBatchLocationsAsync(
+    const TArray<FSpawnRequest>& Requests, 
+    const FString& SceneContext, 
+    FOnBatchLocationsResolved Callback)
+{
+    // 1. Build the Batch Prompt
+    FString Prompt = BuildBatchPrompt(Requests, SceneContext);
+
+    // 2. Setup Request
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(Endpoint);
+    Request->SetVerb("POST");
+    Request->SetHeader("Content-Type", "application/json");
+    if (!APIKey.IsEmpty()) Request->SetHeader("Authorization", FString::Printf(TEXT("Bearer %s"), *APIKey));
+
+    // Build Payload (Groq/OpenAI format)
+    TSharedPtr<FJsonObject> Payload = MakeShareable(new FJsonObject());
+    Payload->SetStringField("model", ModelName);
+    Payload->SetNumberField("temperature", 0.2); // Low temp = better math
+    
+    TArray<TSharedPtr<FJsonValue>> Messages;
+    TSharedPtr<FJsonObject> Msg = MakeShareable(new FJsonObject());
+    Msg->SetStringField("role", "user");
+    Msg->SetStringField("content", Prompt);
+    Messages.Add(MakeShareable(new FJsonValueObject(Msg)));
+    
+    Payload->SetArrayField("messages", Messages);
+
+    FString PayloadStr;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&PayloadStr);
+    FJsonSerializer::Serialize(Payload.ToSharedRef(), Writer);
+    Request->SetContentAsString(PayloadStr);
+
+    // 3. ASYNC CALLBACK (The magic part)
+   Request->OnProcessRequestComplete().BindLambda(
+         [this, Callback](FHttpRequestPtr Req, FHttpResponsePtr Res, bool bConnected)
+        {
+            FLocationMap Results; // ✅ Use the typedef
+            
+            if (bConnected && Res.IsValid() && Res->GetResponseCode() == 200)
+            {
+                TSharedPtr<FJsonObject> JsonObj;
+                TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Res->GetContentAsString());
+                
+                if (FJsonSerializer::Deserialize(Reader, JsonObj))
+                {
+                    // Extract content string from OpenAI/Groq format
+                    const TArray<TSharedPtr<FJsonValue>>* Choices;
+                    if (JsonObj->TryGetArrayField(TEXT("choices"), Choices) && Choices->Num() > 0)
+                    {
+                        FString Content = (*Choices)[0]->AsObject()->GetObjectField(TEXT("message"))->GetStringField(TEXT("content"));
+                        
+                        // Clean markdown
+                        Content = Content.Replace(TEXT("```json"), TEXT("")).Replace(TEXT("```"), TEXT("")).TrimStartAndEnd();
+                        
+                        // Parse inner JSON map
+                        TSharedPtr<FJsonObject> MapObj;
+                        TSharedRef<TJsonReader<>> MapReader = TJsonReaderFactory<>::Create(Content);
+                        
+                        if (FJsonSerializer::Deserialize(MapReader, MapObj))
+                        {
+                            for (auto& Elem : MapObj->Values)
+                            {
+                                TSharedPtr<FJsonObject> VecObj = Elem.Value->AsObject();
+                                if (VecObj.IsValid())
+                                {
+                                    FResolutionResult Item; // ✅ Use Struct
+
+                                    // 1. Parse Location
+                                    Item.Location.X = VecObj->GetNumberField(TEXT("x"));
+                                    Item.Location.Y = VecObj->GetNumberField(TEXT("y"));
+                                    Item.Location.Z = VecObj->GetNumberField(TEXT("z"));
+                                    
+                                    // 2. Parse Rotation (Yaw) - Optional
+                                    double Yaw = 0;
+                                    VecObj->TryGetNumberField(TEXT("yaw"), Yaw);
+                                    Item.RotationYaw = (float)Yaw;
+                                    
+                                    // 3. Parse Scale - Optional, default 1.0
+                                    double Scale = 1.0;
+                                    if (VecObj->TryGetNumberField(TEXT("scale"), Scale))
+                                    {
+                                        Item.Scale = (float)Scale;
+                                    }
+
+                                    Results.Add(Elem.Key, Item);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            UE_LOG(LogTemp, Error, TEXT("❌ Failed to deserialize inner JSON map: %s"), *Content);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("❌ LLM Request Failed. Status: %d"), Res.IsValid() ? Res->GetResponseCode() : 0);
+            }
+            
+            // EXECUTE CALLBACK
+             Callback.ExecuteIfBound(Results);
+        });
+
+    Request->ProcessRequest();
+}
+FString ULocationResolverLLM::BuildBatchPrompt(const TArray<FSpawnRequest>& Requests, const FString& SceneContext)
+{
+    FString ItemList = "";
+    for (const FSpawnRequest& Req : Requests)
+    {
+        ItemList += FString::Printf(TEXT("- ID: \"%s\", Preference: \"%s\", Radius: %.0f\n"), 
+            *Req.ObjectName, *Req.LocationName, Req.ClearanceRadius);
+    }
+
+    return FString::Printf(TEXT(
+        "Layout Task. Assign valid world coordinates (x,y,z), rotation (yaw), and scale for objects.\n"
+        "SCENE CONTEXT:\n%s\n\n"
+        "OBJECTS TO PLACE:\n%s\n"
+        "RULES:\n"
+        "1. Respect Bounds. Avoid overlaps.\n"
+        "2. Scale: 1.0 is standard. 0.5 is half size, 2.0 is double. Use context to decide size.\n"
+        "3. RETURN ONLY VALID JSON. Format:\n"
+        "{\n"
+        "  \"ObjID\": { \"x\": 100, \"y\": 200, \"z\": 0, \"yaw\": 90, \"scale\": 1.0 },\n"
+        "  \"ObjID_2\": { \"x\": -500, \"y\": 50, \"z\": 0, \"yaw\": 0, \"scale\": 0.5 }\n"
+        "}"), 
+        *SceneContext, *ItemList);
+}

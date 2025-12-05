@@ -282,5 +282,9 @@ protected:
     
 	/** Test direct damage (temporary - until AnimNotify is added) */
 	void TestPlayerDirectDamage(float Damage);
-
+        /** * Bridge function: C++ calls this, Blueprint executes it.
+         * Implement this event in your BP_SideScrollingCharacter Event Graph.
+         */
+        UFUNCTION(BlueprintImplementableEvent, Category = "Combat")
+        void BP_HandleDeath();
 };

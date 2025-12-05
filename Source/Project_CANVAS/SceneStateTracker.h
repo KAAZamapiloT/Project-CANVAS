@@ -256,6 +256,19 @@ private:
 	 * Shows count of spawned actors and storage usage
 	 */
 	void LogSceneStateVerbose();
+	
+private:
+	// 1. Store the plan here so it persists while waiting for HTTP
+	FEnhancedScenePlan PendingPlan;
+
+	// 2. The "Funnel" function. This builds the scene.
+	// It takes optional results from the LLM.
+	// Change parameter type
+	void FinalizeSceneBuild(const TMap<FString, FResolutionResult>& AsyncResults);
+	
+	FTimerHandle InitTimerHandle;
+	
+	void DelayedInit();
 public:
 	/**
  * Visualizes the playable area bounds with debug geometry.

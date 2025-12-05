@@ -14,7 +14,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Engine/OverlapResult.h"  // Add this line
 #include "ScenePlan.h"  // Add at top
-
+#include "GameFramework/PlayerStart.h"
 // ========================================
 // INITIALIZATION
 // ========================================
@@ -105,89 +105,120 @@ void ULocationQueryEngine::ScanForNamedLocations(UWorld* InWorldContext)
 }
 // BOUNDING BOX
 
+// LocationQueryEngine.cpp
+
 void ULocationQueryEngine::InitializePlayableAreaBounds()
 {
-    if (WorldContext)
+    if (!WorldContext) return;
+
+    UE_LOG(LogTemp, Warning, TEXT("🔍 LocationEngine: Initializing Bounds (Tag-Based Mode)..."));
+
+    // 1. Reset Bounds
+    PlayableAreaBounds = FBox(EForceInit::ForceInit); // Starts invalid/inverted
+
+    // 2. Define the tags that create the arena
+    TArray<FName> BoundaryTags = {
+        FName("Ground.Floor"),
+        FName("Aerial.Ceiling"),
+        FName("Location.Center"), 
+        FName("Background.Wall"), 
+        FName("Side.Wall"),
+        FName("Arena.Bounds") // Add this tag to your distant corner markers
+    };
+
+    int32 FoundAnchors = 0;
+
+    // 3. Iterate Tags
+    for (const FName& Tag : BoundaryTags)
     {
-        // Step 1: Get ground-level bounds
-        TArray<AActor*> GroundActors;
-        UGameplayStatics::GetAllActorsWithTag(WorldContext, FName("Ground.Floor"), GroundActors);
-        
-        // Step 2: Get aerial/ceiling bounds
-        TArray<AActor*> AerialActors;
-        UGameplayStatics::GetAllActorsWithTag(WorldContext, FName("Aerial.Ceiling"), AerialActors);
-        
-        // --- CALCULATION LOGIC ---
-        PlayableAreaBounds = FBox(EForceInit::ForceInit); // Start Invalid
+        TArray<AActor*> TaggedActors;
+        UGameplayStatics::GetAllActorsWithTag(WorldContext, Tag, TaggedActors);
 
-        // Process Ground Actors
-        for (AActor* Actor : GroundActors)
+        for (AActor* Actor : TaggedActors)
         {
-            if (IsValid(Actor))
-            {
-                FVector Origin, BoxExtent;
-                // true = only colliding components (often more accurate for floors)
-                Actor->GetActorBounds(true, Origin, BoxExtent); 
-                PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
-            }
-        }
-        
-        // Process Aerial Actors
-        for (AActor* Actor : AerialActors)
-        {
-            if (IsValid(Actor))
-            {
-                FVector Origin, BoxExtent;
-                Actor->GetActorBounds(true, Origin, BoxExtent);
-                PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
-            }
-        }
+            if (!IsValid(Actor)) continue;
 
-        // =========================================================
-        // ✅ FIX: FORCE MINIMUM ARENA SIZE IF DETECTION FAILED
-        // =========================================================
-        FVector Size = PlayableAreaBounds.GetSize();
-        
-        // If X or Y dimension is practically zero (less than 1 meter)
-        if (Size.X < 100.0f || Size.Y < 100.0f) 
-        {
-            UE_LOG(LogTemp, Warning, TEXT("⚠️ Bounds too small (Size: %s). Forcing default arena size."), *Size.ToString());
+            FVector Origin, BoxExtent;
+            // false = include visual meshes (even if Hidden or NoCollision)
+            Actor->GetActorBounds(false, Origin, BoxExtent);
+
+            // --- LOGIC SPLIT ---
             
-            // Get Player Position for center reference
-            FVector Center = FVector::ZeroVector;
-            APawn* Player = UGameplayStatics::GetPlayerPawn(WorldContext, 0);
-            if (Player) Center = Player->GetActorLocation();
-
-            // Force a 40 meter x 10 meter arena (2.5D style)
-            // X = Depth (Forward/Back), Y = Width (Left/Right) - Adjust based on your axis
-            FVector MinExtent = FVector(2000.0f, 2000.0f, 0.0f); 
-            
-            PlayableAreaBounds += (Center - MinExtent);
-            PlayableAreaBounds += (Center + MinExtent);
-        }
-
-        // Ensure Z height exists
-        if (PlayableAreaBounds.GetSize().Z < 100.0f)
-        {
-             PlayableAreaBounds.Max.Z = PlayableAreaBounds.Min.Z + 800.0f;
-        }
-        
-        bBoundsInitialized = true;
-
-        // Update heights...
-        if (PlayableAreaBounds.IsValid)
-        {
-            GroundHeightRange.X = PlayableAreaBounds.Min.Z;
-            GroundHeightRange.Y = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.3f);
-            AerialHeightRange.X = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.6f);
-            AerialHeightRange.Y = PlayableAreaBounds.Max.Z;
+            // CASE A: It is a Mesh/Volume (Has Size)
+            if (BoxExtent.SizeSquared() > 1.0f) 
+            {
+                PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
+                FoundAnchors++;
+            }
+            // CASE B: It is a Marker/Empty Actor (No Size)
+            // We MUST include its location, otherwise markers are ignored!
+            else 
+            {
+                FVector Loc = Actor->GetActorLocation();
+                PlayableAreaBounds += Loc; // Expand box to include this point
+                FoundAnchors++;
+                UE_LOG(LogTemp, Display, TEXT("   -> Included Marker: %s (at %s)"), *Actor->GetName(), *Loc.ToString());
+            }
         }
     }
-    
+
+    // 4. FALLBACK: If NO tags found, assume Player is center
+    if (FoundAnchors == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ No tagged geometry found. Using Player-Centric Fallback."));
+        
+        FVector Center = FVector::ZeroVector;
+        APawn* Player = UGameplayStatics::GetPlayerPawn(WorldContext, 0);
+        if (Player) Center = Player->GetActorLocation();
+        else 
+        {
+             AActor* Start = UGameplayStatics::GetActorOfClass(WorldContext, APlayerStart::StaticClass());
+             if (Start) Center = Start->GetActorLocation();
+        }
+
+        // Default 40m x 16m Arena
+        FVector Extent(2000.0f, 800.0f, 0.0f); 
+        PlayableAreaBounds += (Center - Extent);
+        PlayableAreaBounds += (Center + Extent);
+    }
+
+    // 5. ENFORCE MINIMUM VOLUME (The 2.5D Fix)
+    // Prevent flat boxes if the user only tagged the floor
+    FVector Size = PlayableAreaBounds.GetSize();
+    FVector Center = PlayableAreaBounds.GetCenter();
+
+    // Ensure X (Depth) >= 10m
+    if (Size.X < 1000.0f) 
+    {
+        PlayableAreaBounds.Min.X = Center.X - 1000.0f;
+        PlayableAreaBounds.Max.X = Center.X + 1000.0f;
+    }
+    // Ensure Y (Width) >= 5m
+    if (Size.Y < 500.0f) 
+    {
+        PlayableAreaBounds.Min.Y = Center.Y - 500.0f;
+        PlayableAreaBounds.Max.Y = Center.Y + 500.0f;
+    }
+    // Ensure Z (Height) >= 8m (Crucial for spawning)
+    if (Size.Z < 100.0f) 
+    {
+        PlayableAreaBounds.Min.Z = Center.Z - 20.0f;  // Slightly below center
+        PlayableAreaBounds.Max.Z = Center.Z + 800.0f; // High ceiling
+    }
+
+    // 6. Finalize
+    bBoundsInitialized = true;
     PlayableAreaCenter = PlayableAreaBounds.GetCenter();
-    
-    // Log the FINAL result
-    UE_LOG(LogTemp, Warning, TEXT("📦 FINAL Playable Area: %s"), *PlayableAreaBounds.ToString());
+
+    // Set intelligent height ranges
+    GroundHeightRange.X = PlayableAreaBounds.Min.Z;
+    GroundHeightRange.Y = PlayableAreaBounds.Min.Z + 200.0f;
+    AerialHeightRange.X = PlayableAreaBounds.Min.Z + 400.0f;
+    AerialHeightRange.Y = PlayableAreaBounds.Max.Z;
+
+    UE_LOG(LogTemp, Warning, TEXT("✅ Bounds Initialized: %s (Anchors: %d)"), 
+        *PlayableAreaBounds.ToString(), FoundAnchors);
+        
     VisualizePlayableAreaBounds(15.0f);
 }
 // Version 2: With custom bounds parameter

@@ -12,6 +12,25 @@
 #include "LocationResolverLLM.generated.h"
 
 struct FSpawnRequest;
+// ✅ NEW STRUCT: Holds Location, Rotation, AND Scale
+USTRUCT(BlueprintType)
+struct FResolutionResult
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FVector Location = FVector::ZeroVector;
+
+    UPROPERTY()
+    float RotationYaw = 0.0f;
+
+    UPROPERTY()
+    float Scale = 1.0f;
+};
+
+// Update the typedef to use the struct
+typedef TMap<FString, FResolutionResult> FLocationMap;
+DECLARE_DELEGATE_OneParam(FOnBatchLocationsResolved, const FLocationMap&);
 
 /**
  * Minimal LLM location resolver.
@@ -43,6 +62,12 @@ public:
         const FSpawnRequest* SpawnRequest = nullptr 
     );
 
+    void ResolveBatchLocationsAsync(
+         const TArray<FSpawnRequest>& Requests,
+         const FString& SceneContext,
+         FOnBatchLocationsResolved Callback
+     );
+    FString BuildBatchPrompt(const TArray<FSpawnRequest>& Requests, const FString& SceneContext);
 
     UFUNCTION(BlueprintPure, Category = "LocationResolver")
     bool IsEnabled() const { return !Endpoint.IsEmpty(); }
