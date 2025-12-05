@@ -880,6 +880,17 @@ public:
     UFUNCTION(BlueprintCallable, Category = "LocationEngine")
     void ConfigureLLMFallback(const FString& Endpoint, const FString& APIKey, const FString& ModelName);
 
+    UFUNCTION(Exec)
+    void DebugClearance()
+    {
+        for (const FSpawnLocation& Loc : DiscoveredLocations)
+        {
+            if (Loc.bIsOccupied)
+            {
+                DrawDebugSphere(WorldContext, Loc.WorldPosition, Loc.ClearanceRadius, 12, FColor::Red, false, 10.0f);
+            }
+        }
+    }
 private:
     /** LLM resolver (composed) */
     UPROPERTY()

@@ -68,6 +68,7 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
 	CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
 	CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
+	
 	Tags.Add("Player.Character");
 	Tags.Add(FName("Player")); // ✅ Matches HealthComponent Dojo check
 
@@ -665,14 +666,9 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 				Params.Damage = Spec.Amount;
                 
 				GameMode->ProcessEvent(RecordHitFunc, &Params);
-				UE_LOG(LogTemp, Error, TEXT("🎯 ENEMY HIT PLAYER for %.1f damage"), Spec.Amount);
 			}
 		}
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("💥 PLAYER took %.1f damage from %s"),
-		   Spec.Amount,
-		   Spec.DamageCauser ? *Spec.DamageCauser->GetName() : TEXT("Unknown"));
 }
 
 

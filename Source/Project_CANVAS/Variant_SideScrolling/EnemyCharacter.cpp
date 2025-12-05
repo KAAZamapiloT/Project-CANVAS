@@ -43,7 +43,10 @@ AEnemyCharacter::AEnemyCharacter()
 	GetCharacterMovement()->JumpZVelocity = 750.0f;
 	GetCharacterMovement()->AirControl = 1.0f;
 	JumpMaxCount = 4; // 1 ground jump + 3 air jumps
-	
+	HealthComponent=CreateDefaultSubobject<UHealthComponent>(FName("HealthComponent"));
+	//CombatDecisionEngine=CreateDefaultSubobject<UCombatDecisionEngine>("CombatDecisionEngine");
+//	CombatAnimationComponent=CreateDefaultSubobject<UCombatAnimationComponent>("CombatAnimationComponent");
+//	CombatStateComponent=CreateDefaultSubobject<UCombatStateComponent>("CombatState");
 	UE_LOG(LogTemp, Display, TEXT("🏗️ [ENEMY] Constructor called"));
 }
 
@@ -57,7 +60,7 @@ void AEnemyCharacter::BeginPlay()
 	
 	InitializeCombatComponents();
 	BindCombatDelegates();
-	
+	//CombatDecisionEngine=NewObject<UCombatDecisionEngine>(this,UCombatDecisionEngine::StaticClass());
 	if (HealthComponent)
 	{
 		HealthComponent->MaxHealth = MaxHealth;
@@ -111,18 +114,6 @@ void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AEnemyCharacter::InitializeCombatComponents()
 {
 	UE_LOG(LogTemp, Display, TEXT("⚙️ [ENEMY %s] Initializing components"), *GetName());
-	
-	HealthComponent = NewObject<UHealthComponent>(this);
-	if (HealthComponent)
-	{
-		HealthComponent->RegisterComponent();
-		UE_LOG(LogTemp, Display, TEXT("   ✅ HealthComponent created"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("   ❌ HealthComponent FAILED to create!"));
-	}
-
 	CombatAnimationComponent = NewObject<UCombatAnimationComponent>(this);
 	if (CombatAnimationComponent)
 	{

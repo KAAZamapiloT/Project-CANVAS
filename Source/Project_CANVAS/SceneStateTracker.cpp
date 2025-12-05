@@ -91,7 +91,7 @@ void USceneStateTracker::Init()
             LocationEngine->ConfigureLLMFallback(
            TEXT("https://api.groq.com/openai/v1/chat/completions"),
            a.GetGroqKey(),
-           TEXT("llama-3.1-8b-instant")
+           TEXT("openai/gpt-oss-20b")
        );
 
         }
@@ -136,14 +136,8 @@ void USceneStateTracker::OnStart()
     // ✅ Initialize bounds NOW (world is loaded)
     if (LocationEngine)
     {
-        // Option A: Use custom bounds
-        FBox CustomBounds(
-            FVector(-1500.0f, -1000.0f, 0.0f),
-            FVector(1500.0f, 1000.0f, 800.0f)
-        );
-        LocationEngine->InitializePlayableAreaBoundsCustom(CustomBounds);
-        
-        // Verify initialization
+     
+      LocationEngine->InitializePlayableAreaBounds();
         if (LocationEngine->IsBoundsInitialized())
         {
             UE_LOG(LogTemp, Display, TEXT("✅ Bounds initialized: %s"), 

@@ -117,80 +117,79 @@ void ULocationQueryEngine::InitializePlayableAreaBounds()
         TArray<AActor*> AerialActors;
         UGameplayStatics::GetAllActorsWithTag(WorldContext, FName("Aerial.Ceiling"), AerialActors);
         
-        if (GroundActors.Num() > 0 || AerialActors.Num() > 0)
+        // --- CALCULATION LOGIC ---
+        PlayableAreaBounds = FBox(EForceInit::ForceInit); // Start Invalid
+
+        // Process Ground Actors
+        for (AActor* Actor : GroundActors)
         {
-            PlayableAreaBounds = FBox(EForceInit::ForceInit);
-            
-            // ✅ NEW: Combine ground actor bounds
-            for (AActor* Actor : GroundActors)
+            if (IsValid(Actor))
             {
-                if (IsValid(Actor))
-                {
-                    FVector Origin, BoxExtent;
-                    Actor->GetActorBounds(false, Origin, BoxExtent);
-                    PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
-                }
-            }
-            
-            // ✅ NEW: Combine aerial actor bounds
-            for (AActor* Actor : AerialActors)
-            {
-                if (IsValid(Actor))
-                {
-                    FVector Origin, BoxExtent;
-                    Actor->GetActorBounds(false, Origin, BoxExtent);
-                    PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
-                }
-            }
-            
-            bBoundsInitialized = true;
-            
-            // ✅ NEW: Update height ranges based on actual bounds
-            if (PlayableAreaBounds.IsValid)
-            {
-                float BoundsHeight = PlayableAreaBounds.Max.Z - PlayableAreaBounds.Min.Z;
-                
-                // Ground level: bottom 30% of total height
-                GroundHeightRange.X = PlayableAreaBounds.Min.Z;
-                GroundHeightRange.Y = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.3f);
-                
-                // Aerial level: top 40% of total height
-                AerialHeightRange.X = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.6f);
-                AerialHeightRange.Y = PlayableAreaBounds.Max.Z;
-                
-                UE_LOG(LogTemp, Display, TEXT("✅ Bounds calculated from %d ground + %d aerial actors"), 
-                    GroundActors.Num(), AerialActors.Num());
-                UE_LOG(LogTemp, Display, TEXT("   Ground height: %.0f to %.0f"), 
-                    GroundHeightRange.X, GroundHeightRange.Y);
-                UE_LOG(LogTemp, Display, TEXT("   Aerial height: %.0f to %.0f"), 
-                    AerialHeightRange.X, AerialHeightRange.Y);
+                FVector Origin, BoxExtent;
+                // true = only colliding components (often more accurate for floors)
+                Actor->GetActorBounds(true, Origin, BoxExtent); 
+                PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
             }
         }
-        else
+        
+        // Process Aerial Actors
+        for (AActor* Actor : AerialActors)
         {
-            // Default 2.5D bounds with proper vertical separation
-            PlayableAreaBounds = FBox(
-                FVector(-1000.0f, 0.0f, 0.0f),      // Min
-                FVector(1000.0f, 2000.0f, 1000.0f)  // Max (increased height for aerial)
-            );
+            if (IsValid(Actor))
+            {
+                FVector Origin, BoxExtent;
+                Actor->GetActorBounds(true, Origin, BoxExtent);
+                PlayableAreaBounds += FBox(Origin - BoxExtent, Origin + BoxExtent);
+            }
+        }
+
+        // =========================================================
+        // ✅ FIX: FORCE MINIMUM ARENA SIZE IF DETECTION FAILED
+        // =========================================================
+        FVector Size = PlayableAreaBounds.GetSize();
+        
+        // If X or Y dimension is practically zero (less than 1 meter)
+        if (Size.X < 100.0f || Size.Y < 100.0f) 
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Bounds too small (Size: %s). Forcing default arena size."), *Size.ToString());
             
-            // Set default height ranges
-            GroundHeightRange = FVector2D(80.0f, 200.0f);
-            AerialHeightRange = FVector2D(500.0f, 800.0f);
+            // Get Player Position for center reference
+            FVector Center = FVector::ZeroVector;
+            APawn* Player = UGameplayStatics::GetPlayerPawn(WorldContext, 0);
+            if (Player) Center = Player->GetActorLocation();
+
+            // Force a 40 meter x 10 meter arena (2.5D style)
+            // X = Depth (Forward/Back), Y = Width (Left/Right) - Adjust based on your axis
+            FVector MinExtent = FVector(2000.0f, 2000.0f, 0.0f); 
             
-            bBoundsInitialized = true;
-            UE_LOG(LogTemp, Warning, TEXT("⚠️ No tagged actors found, using default bounds"));
+            PlayableAreaBounds += (Center - MinExtent);
+            PlayableAreaBounds += (Center + MinExtent);
+        }
+
+        // Ensure Z height exists
+        if (PlayableAreaBounds.GetSize().Z < 100.0f)
+        {
+             PlayableAreaBounds.Max.Z = PlayableAreaBounds.Min.Z + 800.0f;
+        }
+        
+        bBoundsInitialized = true;
+
+        // Update heights...
+        if (PlayableAreaBounds.IsValid)
+        {
+            GroundHeightRange.X = PlayableAreaBounds.Min.Z;
+            GroundHeightRange.Y = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.3f);
+            AerialHeightRange.X = FMath::Lerp(PlayableAreaBounds.Min.Z, PlayableAreaBounds.Max.Z, 0.6f);
+            AerialHeightRange.Y = PlayableAreaBounds.Max.Z;
         }
     }
     
     PlayableAreaCenter = PlayableAreaBounds.GetCenter();
     
-    UE_LOG(LogTemp, Display, TEXT("📦 Playable area: %s"), *PlayableAreaBounds.ToString());
-    UE_LOG(LogTemp, Display, TEXT("   Center: (%.0f, %.0f, %.0f)"), 
-        PlayableAreaCenter.X, PlayableAreaCenter.Y, PlayableAreaCenter.Z);
+    // Log the FINAL result
+    UE_LOG(LogTemp, Warning, TEXT("📦 FINAL Playable Area: %s"), *PlayableAreaBounds.ToString());
+    VisualizePlayableAreaBounds(15.0f);
 }
-
-
 // Version 2: With custom bounds parameter
 void ULocationQueryEngine::InitializePlayableAreaBoundsCustom(FBox CustomBounds)
 {
@@ -2166,7 +2165,7 @@ void ULocationQueryEngine::ConfigureLLMFallback(
 FString ULocationQueryEngine::BuildSceneContext() const
 {
     FVector PlayerPos = GetPlayerPosition();
-    
+   
     return FString::Printf(
         TEXT("ARENA BOUNDS:\n"
              "X: %d to %d (center: %d)\n"
@@ -2176,7 +2175,9 @@ FString ULocationQueryEngine::BuildSceneContext() const
              "PLAYER POSITION: [%d, %d, %d]\n"
              "\n"
              "GROUND HEIGHT: %.0f to %.0f\n"
-             "AERIAL HEIGHT: %.0f to %.0f"),
+             "AERIAL HEIGHT: %.0f to %.0f"
+
+             ),
         (int32)PlayableAreaBounds.Min.X, (int32)PlayableAreaBounds.Max.X, (int32)PlayableAreaCenter.X,
         (int32)PlayableAreaBounds.Min.Y, (int32)PlayableAreaBounds.Max.Y, (int32)PlayableAreaCenter.Y,
         (int32)PlayableAreaBounds.Min.Z, (int32)PlayableAreaBounds.Max.Z, (int32)GroundHeightRange.X,
