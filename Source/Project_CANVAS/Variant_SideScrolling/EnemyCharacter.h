@@ -332,6 +332,12 @@ protected:
     // ON ENEMY DEATH
     UFUNCTION(BlueprintImplementableEvent, Category = "Combat")
     void BP_OnEnemyDeath();
+
+    /** * Forces the enemy to find the currently active player pawn.
+     * Call this from GameMode immediately after respawning the player.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Combat")
+    void ResetPlayerReference();
 public:
     /** Called when enemy lands (resets jump flags) */
     virtual void Landed(const FHitResult& Hit) override;

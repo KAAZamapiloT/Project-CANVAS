@@ -299,6 +299,7 @@ FString UGenAISystem::ConstructMasterPrompt(
 
         "\n"
 		"9. SCALE GUIDELINES:\n"
+		"   - IMPORTANT: JSON Format Rule -> NO LEADING ZEROS for integers.\n"
 		"   - Small props (barrels, baskets): [0.5-1.5, 0.5-1.5, 0.5-1.5]\n"
 		"   - Medium props (benches, tables): [1.0-2.0, 1.0-2.0, 1.0-2.0]\n"
 		"   - Large objects (walls, buildings): [1.0-3.0, 1.0-3.0, 1.0-3.0]\n"

@@ -342,47 +342,101 @@ void AEnemyCharacter::OnHealthDepletedHandler()
 }
 // EnemyCharacter.cpp
 
+// EnemyCharacter.cpp
+
 void AEnemyCharacter::ResetEnemyState()
 {
-	UE_LOG(LogTemp, Warning, TEXT("🔄 [ENEMY %s] Resetting State..."), *GetName());
+    UE_LOG(LogTemp, Warning, TEXT("🔄 [ENEMY %s] Resetting State..."), *GetName());
 
-	// 1. Reset Health
-	if (HealthComponent)
-	{
-		HealthComponent->ResetHealth(); // Ensure this function exists in HealthComponent
-		// Or manually: HealthComponent->Health = HealthComponent->MaxHealth;
-	}
+    // 1. Reset Health
+    if (HealthComponent)
+    {
+        HealthComponent->ResetHealth();
+    }
 
-	// 2. Fix the Capsule Collision (Re-enable it)
-	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+    // 2. Fix the Capsule Collision
+    GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 
-	// 3. Fix the Mesh (The hard part)
-	USkeletalMeshComponent* MeshComp = GetMesh();
-	if (MeshComp)
-	{
-		// Stop Physics
-		MeshComp->SetSimulatePhysics(false);
-		MeshComp->SetCollisionProfileName(TEXT("CharacterMesh")); // Or whatever your default was
+    // 3. Fix the Mesh (Un-Ragdoll)
+    USkeletalMeshComponent* MeshComp = GetMesh();
+    if (MeshComp)
+    {
+        // Stop Physics simulation
+        MeshComp->SetSimulatePhysics(false);
+        MeshComp->SetCollisionProfileName(TEXT("CharacterMesh")); // Or your default profile
         
-		// 🚨 CRITICAL: Re-attach mesh to capsule because Ragdoll detaches it
-		MeshComp->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+        // Re-attach to capsule (Ragdoll detaches it)
+        MeshComp->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 
-		// Reset Location/Rotation (Standard Unreal Character offsets)
-		// Adjust Z if your feet are in the floor (usually -90 for UE mannequin)
-		MeshComp->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f)); 
-		MeshComp->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+        // Reset Transform (Standard UE5 Mannequin offsets)
+        MeshComp->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f)); 
+        MeshComp->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
         
-		// Reset Animation Mode
-		MeshComp->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-	}
+        // Restart Animation Blueprint
+        MeshComp->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+        MeshComp->InitializeAnimScriptInstance(true); // Force re-init anims
+    }
 
-	// 4. Restart AI
-	bIsInCombat = false; // Reset your internal combat flag
-	StartCombatBehavior(); // Kickstart the decision engine again
+    // 4. ✅ CRITICAL FIX: Reset Movement Component
+    // If this stays "None" or "Falling", the AI pathfinding will fail forever.
+    GetCharacterMovement()->StopMovementImmediately();
+    GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+    GetCharacterMovement()->Velocity = FVector::ZeroVector;
 
-	UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY] Reset Complete. Ready to fight."));
+    // 5. ✅ CRITICAL FIX: Restart AI Brain
+    // If you use Behavior Trees, they need a kickstart.
+    if (AAIController* AIC = Cast<AAIController>(GetController()))
+    {
+        if (UBrainComponent* Brain = AIC->GetBrainComponent())
+        {
+            Brain->RestartLogic(); // Re-runs the Behavior Tree from the Root
+            UE_LOG(LogTemp, Display, TEXT("🧠 [ENEMY] AI Brain Restarted"));
+        }
+    }
+
+    // 6. Restart Timer Logic (Fallback for non-BT AI)
+    bIsInCombat = false; 
+    StartCombatBehavior(); 
+
+    UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY] Reset Complete. Ready to fight."));
 }
+
+
+void AEnemyCharacter::ResetPlayerReference()
+{
+	// 1. Find the new live player pawn
+	ACharacter* NewPlayer = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
+
+	if (NewPlayer && NewPlayer != PlayerCharacter)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("🎯 [ENEMY %s] Retargeting to new Player: %s"), 
+			*GetName(), *NewPlayer->GetName());
+
+		// 2. Update internal reference
+		PlayerCharacter = NewPlayer;
+
+		// 3. Update Combat State Component (Critical for distance checks)
+		if (CombatStateComponent)
+		{
+			CombatStateComponent->SetEnemy(NewPlayer);
+		}
+
+		// 4. Update Blackboard (If using Behavior Tree)
+		if (AAIController* AIC = Cast<AAIController>(GetController()))
+		{
+			if (AIC->GetBlackboardComponent())
+			{
+				AIC->GetBlackboardComponent()->SetValueAsObject(FName("TargetActor"), NewPlayer);
+			}
+		}
+
+		// 5. Restart Combat Logic
+		bIsInCombat = false;
+		StartCombatBehavior();
+	}
+}
+
 //==============================================================================================
 // STATE QUERIES
 //==============================================================================================
