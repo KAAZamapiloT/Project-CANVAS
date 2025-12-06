@@ -412,6 +412,31 @@ if (bShowDebug)
             // ✅ NOTIFY GAME MODE - HIT SUCCESSFULLY LANDED!
             NotifyPlayerHit(Damage);
 
+
+
+        	///////////////////////////////////////////
+//JUICE 
+        	// 1. Slow down time heavily (or pause anims)
+        	CustomTimeDilation = 0.01f; 
+        	// Do the same for the enemy you hit
+        	if (ACharacter* Enemy = Cast<ACharacter>(HitResult.GetActor()))
+        	{
+        		Enemy->CustomTimeDilation = 0.01f;
+        	}
+
+        	// 2. Set a Timer to reset it after 0.1 seconds (The "Stop" duration)
+        	FTimerHandle HitStopTimer;
+        	GetWorld()->GetTimerManager().SetTimer(HitStopTimer, [this, Target]()
+			{
+				// Reset Player
+				this->CustomTimeDilation = 1.0f;
+				// Reset Enemy
+				if (Target) Target->CustomTimeDilation = 1.0f;
+			}, 0.1f, false);
+
+
+        	/////////////////////////////////////
+        	
             UE_LOG(LogTemp, Warning, TEXT("🎯 PLAYER HIT %s for %.1f damage"), 
                    *Target->GetName(), Damage);
         }

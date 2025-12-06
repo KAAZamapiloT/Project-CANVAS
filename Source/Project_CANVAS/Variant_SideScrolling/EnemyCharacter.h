@@ -247,7 +247,11 @@ public:
     UFUNCTION()
     void OnDamageTakenHandler(float DamageAmount, FVector HitLocation);
 
-
+    /** * Resets the enemy from Ragdoll state back to Fighting state.
+         * Re-attaches mesh, resets health, and restarts AI.
+         */
+    UFUNCTION(BlueprintCallable, Category = "Combat")
+    void ResetEnemyState();
 protected:
     // ========================================
     // INTERNAL STATE
@@ -325,6 +329,9 @@ protected:
     UPROPERTY(EditAnywhere, Category = "AI Movement|Jump")
     float JumpHeightThreshold = 150.0f;
 
+    // ON ENEMY DEATH
+    UFUNCTION(BlueprintImplementableEvent, Category = "Combat")
+    void BP_OnEnemyDeath();
 public:
     /** Called when enemy lands (resets jump flags) */
     virtual void Landed(const FHitResult& Hit) override;

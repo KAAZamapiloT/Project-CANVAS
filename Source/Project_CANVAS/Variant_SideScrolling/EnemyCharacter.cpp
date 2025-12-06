@@ -319,9 +319,70 @@ void AEnemyCharacter::OnMontageCompleted(UAnimMontage* Montage, bool bInterrupte
 void AEnemyCharacter::OnHealthDepletedHandler()
 {
 	StopCombatBehavior();
-	UE_LOG(LogTemp, Error, TEXT("💀 [ENEMY %s] DIED!"), *GetName());
-}
+    
+	// 1. Enable Physics
+	GetMesh()->SetSimulatePhysics(true);
+	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	// 2. Add Impulse (The Juice)
+	// Calculate direction from Player to Enemy
+	if (PlayerCharacter)
+	{
+		FVector HitDirection = GetActorLocation() - PlayerCharacter->GetActorLocation();
+		HitDirection.Normalize();
+        
+		// Add upward force so they arc backwards
+		FVector Impulse = (HitDirection * 1500.0f) + FVector(0, 0, 500.0f);
+        
+		// Apply to a specific bone (like the chest) for realistic impact
+		GetMesh()->AddImpulse(Impulse * GetMesh()->GetMass(), FName("spine_01"), true);
+	}
+	BP_OnEnemyDeath();
+}
+// EnemyCharacter.cpp
+
+void AEnemyCharacter::ResetEnemyState()
+{
+	UE_LOG(LogTemp, Warning, TEXT("🔄 [ENEMY %s] Resetting State..."), *GetName());
+
+	// 1. Reset Health
+	if (HealthComponent)
+	{
+		HealthComponent->ResetHealth(); // Ensure this function exists in HealthComponent
+		// Or manually: HealthComponent->Health = HealthComponent->MaxHealth;
+	}
+
+	// 2. Fix the Capsule Collision (Re-enable it)
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+
+	// 3. Fix the Mesh (The hard part)
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (MeshComp)
+	{
+		// Stop Physics
+		MeshComp->SetSimulatePhysics(false);
+		MeshComp->SetCollisionProfileName(TEXT("CharacterMesh")); // Or whatever your default was
+        
+		// 🚨 CRITICAL: Re-attach mesh to capsule because Ragdoll detaches it
+		MeshComp->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+
+		// Reset Location/Rotation (Standard Unreal Character offsets)
+		// Adjust Z if your feet are in the floor (usually -90 for UE mannequin)
+		MeshComp->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f)); 
+		MeshComp->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+        
+		// Reset Animation Mode
+		MeshComp->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	}
+
+	// 4. Restart AI
+	bIsInCombat = false; // Reset your internal combat flag
+	StartCombatBehavior(); // Kickstart the decision engine again
+
+	UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY] Reset Complete. Ready to fight."));
+}
 //==============================================================================================
 // STATE QUERIES
 //==============================================================================================

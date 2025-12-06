@@ -227,15 +227,29 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
         UE_LOG(LogTemp, Error, TEXT("❌ Critical subsystems not ready - skipping plan"));
         return;
     }
+
     UE_LOG(LogTemp, Warning, TEXT(""));
     UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
     UE_LOG(LogTemp, Warning, TEXT("║  📥 Plan Received - %d props, %d spawn    ║"), 
         Plan.Props.Num(), Plan.SpawnRequest.Num());
     UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════╝"));
-  ClearAllSpawnedActors();
-  UE_LOG(LogTemp, Warning, TEXT("<Clearing ALL ACTORS>"));
+
+    // 1. Lazy Initialize Bounds (The Fix for "No tagged geometry")
+    // We do this here to ensure the level is fully loaded before we measure it.
+    if (LocationEngine && !LocationEngine->IsBoundsInitialized())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("🔄 Lazy-Initializing Location Bounds..."));
+        LocationEngine->InitializePlayableAreaBounds();
+        LocationEngine->ScanWorldLocationsAsync(GetWorld());
+    }
+
+    // 2. Reset Scene
+    ClearAllSpawnedActors();
+    UE_LOG(LogTemp, Warning, TEXT("<Clearing ALL ACTORS>"));
+    
     FEnhancedScenePlan EnrichedPlan = Plan;
 
+    // 3. Synchronous Resolution (Assets)
     UE_LOG(LogTemp, Display, TEXT("🔄 [1/3] ResolveTexturesFromNames..."));
     ResolveTexturesFromNames(EnrichedPlan);
     UE_LOG(LogTemp, Display, TEXT("✅ Texture resolution done"));
@@ -244,17 +258,22 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
     ResolveMeshesFromNames(EnrichedPlan);
     UE_LOG(LogTemp, Display, TEXT("✅ Mesh resolution done"));
 
+    // 4. Spatial Resolution (The Fork)
     if (EnrichedPlan.bSpawnActors && EnrichedPlan.SpawnRequest.Num() > 0)
     {
-        UE_LOG(LogTemp, Display, TEXT("🔄 [3/3] ResolveLocationsInPlan..."));
-        ResolveLocationsInPlan(EnrichedPlan);
-        UE_LOG(LogTemp, Display, TEXT("✅ Location resolution done"));
+        UE_LOG(LogTemp, Display, TEXT("🔄 [3/3] ResolveLocationsInPlan (Async)..."));
+        
+        // 🛑 HANDOFF: This function will trigger the build later.
+        // We pass 'UserPrompt' so it can save history when done.
+        ResolveLocationsInPlan(EnrichedPlan); 
+        
+        // We return here to prevent double-building.
+        return; 
     }
 
-    if (HistoryManager)
-    {
-        HistoryManager->SavePlan(EnrichedPlan, UserPrompt);
-    }
+    // 5. Environment-Only Path (No Spawns)
+    // If we are here, we are only changing lights/fog/props, so we build immediately.
+    UE_LOG(LogTemp, Display, TEXT("ℹ️ No spawns requested. Executing Environment/Prop plan immediately."));
 
     if (SceneBuilder)
     {
@@ -262,9 +281,13 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
         SceneBuilder->BuildScene(EnrichedPlan, GetWorld());
     }
 
-    LogSceneStateVerbose();
+    if (HistoryManager)
+    {
+        HistoryManager->SavePlan(EnrichedPlan, UserPrompt);
+    }
 
-    UE_LOG(LogTemp, Warning, TEXT("✅ Plan execution complete"));
+    LogSceneStateVerbose();
+    UE_LOG(LogTemp, Warning, TEXT("✅ Plan execution complete (Environment Only)"));
     UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
@@ -348,8 +371,6 @@ void USceneStateTracker::ResolveMeshesFromNames(FEnhancedScenePlan& Plan)
     }
 }
 
-// SceneStateTracker.cpp
-
 void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
 {
     if (!LocationEngine || !LocationEngine->GetLLMResolver())
@@ -358,14 +379,9 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
         return;
     }
 
-    // 1. Store Plan Globally (So we can access it when the Async callback fires)
+    // Store Plan Globally
     PendingPlan = Plan; 
-
-    // 2. Identify which items need LLM help
     TArray<FSpawnRequest> BatchRequests;
-    
-    // Track occupied spots from local resolution
-    TSet<FVector> LocalOccupiedPositions;
 
     UE_LOG(LogTemp, Display, TEXT("🔄 Phase 1: Separating Local vs Remote requests..."));
 
@@ -373,61 +389,37 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
     {
         FSpawnRequest& Req = PendingPlan.SpawnRequest[i];
 
-        // --- CHECK: Can we resolve this locally? ---
-        // We check if it's "CUSTOM:...", "PLAYER_...", or a specific named location in DB
-        bool bIsLocal = Req.LocationName.StartsWith("CUSTOM") || 
-                        Req.LocationName.Contains("PLAYER") ||
-                        Req.LocationName.Contains("CLOSEST") ||
-                        Req.LocationName.Contains("NEAR");
+        // Try Local Resolution (Fast)
+        FVector LocalResult = LocationEngine->ResolveLocationName(Req.LocationName);
 
-        if (bIsLocal)
+        if (!LocalResult.IsZero())
         {
-            // Resolve immediately
-            FVector LocalPos = LocationEngine->ResolveLocationName(Req.LocationName);
-            
-            // Validate
-            if (!LocalPos.IsZero() && LocationEngine->IsLocationClear(LocalPos, Req.ClearanceRadius))
-            {
-                Req.SpawnLocation = LocalPos;
-                LocalOccupiedPositions.Add(LocalPos);
-                LocationEngine->SetLocationOccupied(Req.LocationName, true);
-                UE_LOG(LogTemp, Display, TEXT("   ✅ Local Resolve: %s -> %s"), *Req.ObjectName, *LocalPos.ToString());
-            }
-            else
-            {
-                // Local failed? Add to AI batch as fallback
-                UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Local blocked/failed for '%s'. Queueing for AI."), *Req.ObjectName);
-                BatchRequests.Add(Req);
-            }
+            Req.SpawnLocation = LocalResult;
+            LocationEngine->SetLocationOccupied(Req.LocationName, true);
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Local Resolve: %s -> %s"), *Req.ObjectName, *LocalResult.ToString());
         }
         else
         {
-            // It is a semantic zone (BACKGROUND, LEFT_SIDE, etc) -> Queue for AI
+            UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Local Failed for '%s'. Queueing for Batch AI."), *Req.ObjectName);
             BatchRequests.Add(Req);
         }
     }
 
-    // --- THE FORK IN THE ROAD ---
-
+    // The Fork
     if (BatchRequests.Num() == 0)
     {
-        // BRANCH A: Everything resolved locally! Build now.
         UE_LOG(LogTemp, Display, TEXT("🚀 All locations resolved locally. Building immediately."));
         FinalizeSceneBuild(TMap<FString, FResolutionResult>()); 
     }
     else
     {
-        // BRANCH B: We have items for the LLM.
         UE_LOG(LogTemp, Warning, TEXT("⏳ Sending Async Batch for %d items... Game continues."), BatchRequests.Num());
         
-        // CALL ASYNC - Note we bind 'FinalizeSceneBuild' as the callback
         LocationEngine->GetLLMResolver()->ResolveBatchLocationsAsync(
             BatchRequests,
             LocationEngine->GetLocationContextForLLM(),
             FOnBatchLocationsResolved::CreateUObject(this, &USceneStateTracker::FinalizeSceneBuild)
         );
-        
-        // 🛑 EXIT FUNCTION. DO NOT BUILD YET.
     }
 }
 
@@ -435,67 +427,31 @@ void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResul
 {
     UE_LOG(LogTemp, Display, TEXT("🔄 Phase 2: Finalizing Scene Plan..."));
 
-    // --- CHECK FOR API FAILURE (HTTP 429 / Timeout) ---
     bool bApiFailed = (AsyncResults.Num() == 0);
-    if (bApiFailed)
+    if (bApiFailed && PendingPlan.SpawnRequest.Num() > 0)
     {
-        UE_LOG(LogTemp, Error, TEXT("⚠️ Async Results Empty (API Failure or Rate Limit). Running Emergency Fallback for ALL items."));
+        UE_LOG(LogTemp, Error, TEXT("⚠️ Async Results Empty (API Failure or Rate Limit). Running Fallback Logic."));
     }
 
-    // 1. APPLY LLM RESULTS (If available)
-    if (!bApiFailed)
-    {
-        for (FSpawnRequest& Req : PendingPlan.SpawnRequest)
-        {
-            if (AsyncResults.Contains(Req.ObjectName))
-            {
-                const FResolutionResult& Res = AsyncResults[Req.ObjectName];
-                
-                // Apply Basic Transform
-                Req.SpawnLocation = Res.Location;
-                Req.Rotation = FRotator(0, Res.RotationYaw, 0);
-                
-                // --- SMART SCALE LOGIC ---
-                // Determine if we should apply the LLM's scale or clamp it
-                float TargetScale = Res.Scale;
-                
-                // Load the mesh to check its physical size
-                if (!Req.AssetPath.IsEmpty())
-                {
-                    UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *Req.AssetPath));
-                    if (Mesh)
-                    {
-                        FBoxSphereBounds Bounds = Mesh->GetBounds();
-                        float MaxSize = Bounds.BoxExtent.GetMax() * 2.0f; // Diameter in cm
-                        
-                        // If object is HUGE (>20 meters) and LLM wants to scale it UP
-                        if (MaxSize > 2000.0f && TargetScale > 1.0f)
-                        {
-                            UE_LOG(LogTemp, Warning, TEXT("📉 Clamping giant mesh '%s' (Size: %.0f). Scale %.2f -> 1.0"), 
-                                *Req.ObjectName, MaxSize, TargetScale);
-                            TargetScale = 1.0f;
-                        }
-                    }
-                }
-                
-                Req.Scale = FVector(TargetScale);
-                
-                UE_LOG(LogTemp, Display, TEXT("   🧠 AI Placed: %s -> %s (Scale: %.1f)"), 
-                    *Req.ObjectName, *Req.SpawnLocation.ToString(), TargetScale);
-            }
-        }
-    }
-
-    // 2. EMERGENCY FALLBACK / VALIDATION
-    // Runs for ANY item that is still at (0,0,0) OR if the API failed entirely
+    // Process Results
     for (FSpawnRequest& Req : PendingPlan.SpawnRequest)
     {
-        // Treat (0,0,0) as an error state for generated content
+        // A. Apply AI Result
+        if (!bApiFailed && AsyncResults.Contains(Req.ObjectName))
+        {
+            const FResolutionResult& Res = AsyncResults[Req.ObjectName];
+            Req.SpawnLocation = Res.Location;
+            Req.Rotation = FRotator(0, Res.RotationYaw, 0);
+            if (Res.Scale > 0.1f) Req.Scale = FVector(Res.Scale);
+            
+            UE_LOG(LogTemp, Display, TEXT("   🧠 AI Placed: %s at %s"), *Req.ObjectName, *Req.SpawnLocation.ToString());
+        }
+        
+        // B. Emergency Fallback (for 429s or Hallucinations)
         if (Req.SpawnLocation.IsNearlyZero())
         {
-            UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Generating Fallback for '%s'"), *Req.ObjectName);
+            UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Triggering Fallback for '%s'"), *Req.ObjectName);
             
-            // Use Local Algorithm to find a safe spot
             FSpawnLocation FallbackLoc = LocationEngine->FindValidSpawnLocation(
                 Req.LocationName, 
                 Req.ClearanceRadius
@@ -503,23 +459,40 @@ void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResul
             
             Req.SpawnLocation = FallbackLoc.WorldPosition;
             
-            // Add slight jitter to prevent perfect stacking if multiple fail
+            // Jitter to prevent stacking
             Req.SpawnLocation.X += FMath::RandRange(-50.0f, 50.0f);
             Req.SpawnLocation.Y += FMath::RandRange(-50.0f, 50.0f);
         }
+
+        // C. World-Relative Scale Check (Prevent Giant Meshes)
+        if (!Req.AssetPath.IsEmpty())
+        {
+            UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *Req.AssetPath));
+            if (Mesh)
+            {
+                FBoxSphereBounds Bounds = Mesh->GetBounds();
+                float RealSize = Bounds.BoxExtent.GetMax() * 2.0f;
+                
+                if (RealSize > 2000.0f && Req.Scale.X >= 1.0f)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("📉 Clamping giant mesh '%s' (Size: %.0f). Scale Reset to 1.0"), 
+                        *Req.ObjectName, RealSize);
+                    Req.Scale = FVector::OneVector;
+                }
+            }
+        }
         
-        // CRITICAL: Mark as occupied so physics/logic knows this spot is taken
         LocationEngine->SetLocationOccupied(Req.LocationName, true);
     }
 
-    // 3. EXECUTE BUILD (Guaranteed Single Execution)
+    // Execute Build
     if (SceneBuilder)
     {
         UE_LOG(LogTemp, Warning, TEXT("🎬 Triggering SceneBuilder with %d actors"), PendingPlan.SpawnRequest.Num());
         SceneBuilder->BuildScene(PendingPlan, GetWorld());
     }
     
-    // 4. Save History
+    // Save History
     if (HistoryManager)
     {
         HistoryManager->SavePlan(PendingPlan, "Finalized Build");
@@ -527,7 +500,11 @@ void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResul
     
     // Cleanup
     PendingPlan = FEnhancedScenePlan();
+    UE_LOG(LogTemp, Warning, TEXT("✅ Plan execution complete"));
+    UE_LOG(LogTemp, Warning, TEXT(""));
 }
+
+
 void USceneStateTracker::OnActorSpawned(AActor* NewActor, const FString& ObjectName)
 {
     if (!NewActor)

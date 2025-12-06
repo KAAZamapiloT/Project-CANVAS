@@ -634,6 +634,9 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
     // ========================================
     // 7. LLM FALLBACK (BEFORE 2.5D!)
     // ========================================
+    /*
+     *DISBALING LLM FALLBACK FOR THIS FUNCTION SINCE IT IS CAUSING A LOT OF PROBLEMS AND EACH RESOLUTION CAUSE ONE REQUEST AND
+     *IT OVERWHELM THE SERVER
     if (LLMResolver && LLMResolver->IsEnabled())
     {
         UE_LOG(LogTemp, Warning, TEXT("⚠️ '%s' not resolved - attempting LLM fallback..."), *LocationName);
@@ -651,7 +654,7 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
         
         UE_LOG(LogTemp, Warning, TEXT("❌ LLM fallback failed for '%s', trying 2.5D fallback"), *LocationName);
     }
-    
+    */
     // ========================================
     // 8. 2.5D SEMANTIC FALLBACK (Safety net)
     // ========================================
@@ -700,6 +703,8 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
     // ========================================
     // 9. SMART FALLBACK WITH UNIQUENESS
     // ========================================
+    /*
+     *REEMOVING THIS BECAUSE IT CAN FAIL LLM FALLBACK
     UE_LOG(LogTemp, Warning, TEXT("⚠️ '%s' - using smart positioning fallback"), *LocationName);
     
     TArray<FVector(ULocationQueryEngine::*)()> Strategies = {
@@ -727,17 +732,22 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
             return Candidate;
         }
     }
+    */
+
     
     // ========================================
     // 10. EMERGENCY FALLBACK (Final resort)
     // ========================================
-    FVector Emergency = PlayableAreaCenter;
+ /*
+  *COMMENTING THIS OUT BECAUSE IT WILL PREVEN LLM FALLBACK 
+  *   FVector Emergency = PlayableAreaCenter;
     Emergency.X += FMath::RandRange(-500.0f, 500.0f);
     Emergency.Y += FMath::RandRange(-500.0f, 500.0f);
     Emergency.Z = 300.0f; // Elevated so it's visible
     UE_LOG(LogTemp, Error, TEXT("❌ All fallbacks exhausted for '%s' - using emergency: (%.0f, %.0f, %.0f)"),
-        *LocationName, Emergency.X, Emergency.Y, Emergency.Z);
-    return Emergency;
+        *LocationName, Emergency.X, Emergency.Y, Emergency.Z);*/
+    
+    return FVector::Zero();
 }
 
 
@@ -991,26 +1001,35 @@ FSpawnLocation ULocationQueryEngine::FindNearestFreeLocation(FVector PreferredLo
     Result.ClearanceRadius = MinClearance;
     return Result;
 }
-
 bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
 {
-    if (!WorldContext)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("IsLocationClear: No WorldContext"));
-        return false;
-    }
+    if (!WorldContext) return false;
 
-    // ✅ FIX #1: Relaxed static geometry check (70% radius = 30% tolerance)
-    FCollisionShape SphereShape = FCollisionShape::MakeSphere(Radius * 0.7f);
+    // 1. DEFINE STATIC TAGS (Optimization: Created once, not every call)
+    static const FName TagEnemy(TEXT("Enemy.Character"));
+    static const FName TagPlayer(TEXT("Player.Character"));
+
+    // =================================================================
+    // ✅ FIX #1: LIFT THE CHECK
+    // Don't check centered at 0 (Floor). Check centered at Radius (Air).
+    // This prevents the floor itself from triggering a collision.
+    // =================================================================
+    float LiftAmount = Radius * 1.0f; 
+    FVector CheckOrigin = Location + FVector(0, 0, LiftAmount);
+
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(Radius * 0.8f); // 80% size for tolerance
     FCollisionQueryParams QueryParams;
     QueryParams.bTraceComplex = false;
-    
-    // Use sweep instead of overlap for better penetration detection
+    QueryParams.AddIgnoredActor(GetPlayerPawn()); // Don't let player block spawns (optional)
+
+    // =================================================================
+    // CHECK 1: GEOMETRY (Walls, Ceiling, Static Meshes)
+    // =================================================================
     FHitResult Hit;
     bool bHit = WorldContext->SweepSingleByChannel(
         Hit,
-        Location,
-        Location + FVector(0, 0, 1), // Tiny sweep upward
+        CheckOrigin,
+        CheckOrigin, // Stationary sweep
         FQuat::Identity,
         ECC_WorldStatic,
         SphereShape,
@@ -1019,72 +1038,66 @@ bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
     
     if (bHit && Hit.bBlockingHit)
     {
-        // ✅ FIX #2: Check penetration depth - allow small overlaps
-        float PenetrationDepth = Radius - Hit.Distance;
-        if (PenetrationDepth > Radius * 0.3f) // Only reject if >30% penetration
+        // Allow small overlaps (e.g. touching a wall slightly)
+        // But reject if we are deep inside geometry
+        if (Hit.PenetrationDepth > 10.0f) 
         {
-            UE_LOG(LogTemp, Verbose, TEXT("❌ Deep penetration: %.0fcm into static geometry"), PenetrationDepth);
+            // UE_LOG(LogTemp, Verbose, TEXT("❌ Blocked by geometry: %s"), *Hit.GetActor()->GetName());
             return false;
         }
     }
 
-    // ✅ FIX #3: Check for nearby actors (relaxed to 90% = 10% tolerance)
+    // =================================================================
+    // CHECK 2: IMPORTANT ACTORS (Enemies, Player)
+    // =================================================================
     TArray<FOverlapResult> Overlaps;
     WorldContext->OverlapMultiByChannel(
         Overlaps,
-        Location,
+        CheckOrigin, // Use lifted origin
         FQuat::Identity,
         ECC_Pawn,
-        FCollisionShape::MakeSphere(Radius * 0.9f),
+        SphereShape,
         QueryParams
     );
 
-    // Reject if overlapping with important actors
     for (const FOverlapResult& Overlap : Overlaps)
     {
         AActor* OverlapActor = Overlap.GetActor();
         if (IsValid(OverlapActor) && OverlapActor->Tags.Num() > 0)
         {
-            // Only block for characters/enemies, allow props
-            if (OverlapActor->Tags.Contains(TEXT("Enemy.Character")) ||
-                OverlapActor->Tags.Contains(TEXT("Player.Character")))
+            if (OverlapActor->ActorHasTag(TagEnemy) || OverlapActor->ActorHasTag(TagPlayer))
             {
-                UE_LOG(LogTemp, Verbose, TEXT("❌ Overlaps with character: %s"), *OverlapActor->GetName());
                 return false;
             }
         }
     }
 
-    // ✅ FIX #4: Check minimum distance from occupied locations
-    const float MinSpacing = 80.0f; // Reduced from 200cm → 100cm → 80cm
+    // =================================================================
+    // CHECK 3: LOGICAL OCCUPANCY (Other Spawns)
+    // =================================================================
+    
+    // Optimization: Pre-calculate squared distance to avoid Sqrt() calls
+    const float MinSpacingSq = FMath::Square(80.0f); 
     
     for (const FSpawnLocation& Loc : DiscoveredLocations)
     {
-        // ✅ FIX #5: Auto-release ghost occupancy
-        if (Loc.bIsOccupied && !IsValid(Loc.OccupyingActor.Get()))
+        // Auto-release ghost occupancy
+        if (Loc.bIsOccupied && !Loc.OccupyingActor.IsValid())
         {
-            // Cast away const to modify (safe in this context)
             const_cast<FSpawnLocation&>(Loc).bIsOccupied = false;
-            const_cast<FSpawnLocation&>(Loc).OccupyingActor = nullptr;
-            UE_LOG(LogTemp, Verbose, TEXT("🔄 Auto-released ghost occupancy at '%s'"), *Loc.LocationName);
-            continue; // Skip this location now that it's freed
+            continue; 
         }
 
-        if (Loc.bIsOccupied && IsValid(Loc.OccupyingActor.Get()))
+        if (Loc.bIsOccupied)
         {
-            FVector OccupiedPos = Loc.OccupyingActor->GetActorLocation();
-            float Distance = FVector::Dist(Location, OccupiedPos);
-
-            if (Distance < MinSpacing)
+            // Use DistSquared for performance
+            if (FVector::DistSquared(Location, Loc.WorldPosition) < MinSpacingSq)
             {
-                UE_LOG(LogTemp, Verbose, TEXT("❌ Too close to occupied location: %.0fcm < %.0fcm"), 
-                    Distance, MinSpacing);
                 return false;
             }
         }
     }
 
-    // All checks passed!
     return true;
 }
 
