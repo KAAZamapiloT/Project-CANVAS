@@ -479,6 +479,10 @@ private:
      */
     FString ExtractMaterialBaseName(const FString& TextureName);
 
+
+
+
+    
 private:
     /**
      * scan time for starting scsaniing assets used in setting timers
