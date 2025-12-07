@@ -7,6 +7,7 @@
 #include"ScenePlan.h"
 #include"LocationQueryEngine.h"
 #include "API_KEY.h"
+#include "NiagaraComponent.h"
 void USceneStateTracker::Init()
 {
     Super::Init();
@@ -244,7 +245,7 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
     }
 
     // 2. Reset Scene
-    ClearAllSpawnedActors();
+    ClearAllGeneratedContent();
     UE_LOG(LogTemp, Warning, TEXT("<Clearing ALL ACTORS>"));
     
     FEnhancedScenePlan EnrichedPlan = Plan;
@@ -735,5 +736,62 @@ void USceneStateTracker::VisualizeBounds(float Duration)
     else
     {
         UE_LOG(LogTemp, Error, TEXT("❌ LocationEngine not initialized!"));
+    }
+}
+
+
+void USceneStateTracker::ClearAllGeneratedContent()
+{
+    UE_LOG(LogTemp, Warning, TEXT("☢️ SceneStateTracker: INITIATING GLOBAL CONTENT CLEAR ☢️"));
+
+    // 1. Destroy all temporary props (Handles all particles ATTACHED to spawned actors)
+    ClearAllSpawnedActors(); // Assuming this is the existing function you mentioned
+
+    // 2. Strip effects from persistent actors (Handles all particles ATTACHED to Player/Level)
+    ClearParticlesFromPersistentActors();
+
+    // Add any future environment/light resets here if needed
+}
+
+
+void USceneStateTracker::ClearParticlesFromPersistentActors()
+{
+    int32 TotalEffectsStripped = 0;
+    
+    // Iterate through all actors we've marked as persistent
+    for (AActor* TargetActor : ActorsToCleanEffectsFrom)
+    {
+        if (!TargetActor || !IsValid(TargetActor)) continue;
+
+        // Get all components of the actor
+        TArray<UActorComponent*> Components;
+        TargetActor->GetComponents(Components);
+
+        for (UActorComponent* Comp : Components)
+        {
+            // Check for the unique tag used by the SceneBuilder for generated FX
+            if (Comp && Comp->ComponentTags.Contains(TEXT("GenAI_FX")))
+            {
+                // Double-check it's a particle system (optional, but safer)
+                if (Comp->IsA<UNiagaraComponent>()) 
+                {
+                    Comp->DestroyComponent(); // Destroys the component, not the Actor
+                    TotalEffectsStripped++;
+                }
+            }
+            
+        }
+        TargetActor->Tags.Remove(FName("HasGenAI_FX"));
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("   ✨ Stripped %d particle effects from persistent actors."), TotalEffectsStripped);
+}
+
+void USceneStateTracker::RegisterActorForEffectCleanup(AActor* Actor)
+{
+    if (Actor && !ActorsToCleanEffectsFrom.Contains(Actor))
+    {
+        ActorsToCleanEffectsFrom.Add(Actor);
+        UE_LOG(LogTemp, Log, TEXT("   📝 Registered persistent actor for cleanup: %s"), *Actor->GetName());
     }
 }

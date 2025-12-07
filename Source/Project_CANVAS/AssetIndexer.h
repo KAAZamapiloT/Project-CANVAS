@@ -292,6 +292,11 @@ public:
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Meshes")
     int32 GetVariantCount(const FString& SearchName);
     
+    /** * @brief Resolves a short name (e.g. "Fire") to a full asset path (e.g. "/Game/VFX/NS_Fire.NS_Fire").
+     * Uses substring matching.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Particles")
+    FString ResolveParticlePath(const FString& SearchName);
     // ========================================
     // MESH INFO QUERIES
     // ========================================

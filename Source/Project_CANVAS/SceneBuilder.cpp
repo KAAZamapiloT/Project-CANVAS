@@ -31,6 +31,8 @@
 #include"SceneStateTracker.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
 // --- Define your content paths ---
 // You MUST place your assets in these folders, or change these paths.
 // The parser gets "T_Brick_Normal", this path turns it into "/Game/Textures/Generative/T_Brick_Normal.T_Brick_Normal"
@@ -500,49 +502,72 @@ void USceneBuilder::ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTex
         });
     }
 }
-
 void USceneBuilder::ApplyParticleEffects(AActor* Actor, const FString& ParticleEffectName)
 {
-    if (!Actor || ParticleEffectName.IsEmpty()) return;
+    // 1. Validation
+    if (!Actor) return;
+    if (ParticleEffectName.IsEmpty() || ParticleEffectName.Equals("None", ESearchCase::IgnoreCase)) return;
 
-    // Find an existing component to update
-    UParticleSystemComponent* ParticleComp = Actor->FindComponentByClass<UParticleSystemComponent>();
-    if (!ParticleComp)
+    // 2. Resolve Path
+    FString FullPath;
+    if (StateTracker && StateTracker->AssetIndexer)
     {
-        // If one doesn't exist, create it
-        ParticleComp = NewObject<UParticleSystemComponent>(Actor);
-        ParticleComp->RegisterComponent();
-        ParticleComp->AttachToComponent(Actor->GetRootComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+        FullPath = StateTracker->AssetIndexer->ResolveParticlePath(ParticleEffectName);
+    }
+    
+    // Fallback if indexer fails
+    if (FullPath.IsEmpty())
+    {
+         // Assuming GParticleBasePath is defined at top of file
+         FullPath = FString::Printf(TEXT("%s%s.%s"), *GParticleBasePath, *ParticleEffectName, *ParticleEffectName);
     }
 
-    // Construct the asset path
-    FString FullPath = FString::Printf(TEXT("%s%s.%s"), *GParticleBasePath, *ParticleEffectName, *ParticleEffectName);
+    if (FullPath.IsEmpty()) return;
+
     FSoftObjectPath AssetPath = FSoftObjectPath(FullPath);
-
-    TWeakObjectPtr<UParticleSystemComponent> WeakParticleComp = ParticleComp;
-
-    // --- FIX 2: Changed GetStreamStreamer() to GetStreamableManager() ---
-    // Async load the particle system
+    
+    // 3. Async Load & Spawn
     FStreamableManager& Streamer = UAssetManager::Get().GetStreamableManager();
-    Streamer.RequestAsyncLoad(AssetPath, [WeakParticleComp, AssetPath]()
+    TWeakObjectPtr<AActor> WeakActor = Actor;
+    TWeakObjectPtr<USceneStateTracker> WeakTracker = StateTracker; // Capture tracker safely
+
+    Streamer.RequestAsyncLoad(AssetPath, [WeakActor, WeakTracker, AssetPath, ParticleEffectName]()
     {
-        // This runs on the Game Thread when loading is done
-        if (!WeakParticleComp.IsValid()) return;
+        if (!WeakActor.IsValid()) return;
+
+        UNiagaraSystem* LoadedSystem = Cast<UNiagaraSystem>(AssetPath.ResolveObject());
         
-        UParticleSystem* LoadedSystem = Cast<UParticleSystem>(AssetPath.ResolveObject());
         if (LoadedSystem)
         {
-            UE_LOG(LogTemp, Log, TEXT("SceneBuilder: Applying particle system %s"), *LoadedSystem->GetName());
-            WeakParticleComp->SetTemplate(LoadedSystem);
-            WeakParticleComp->ActivateSystem();
+            // A. SPAWN
+            UNiagaraComponent* SpawnedComp = UNiagaraFunctionLibrary::SpawnSystemAttached(
+                LoadedSystem,
+                WeakActor->GetRootComponent(),
+                NAME_None,
+                FVector::ZeroVector, FRotator::ZeroRotator,
+                EAttachLocation::SnapToTarget,
+                true
+            );
+
+            if (SpawnedComp)
+            {
+                // 1. Tag the COMPONENT (so we know which particle to delete)
+                SpawnedComp->ComponentTags.Add(TEXT("GenAI_FX"));
+
+                // 2. Tag the ACTOR (so we can find the actor later without a list)
+                if (WeakActor.IsValid())
+                {
+                  //  WeakActor->Tags.AddUnique(FName("HasGenAI_FX")); // <--- NEW ALTERNATIVE
+                     WeakTracker->RegisterActorForEffectCleanup(WeakActor.Get()); 
+                }
+            }
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Failed to load particle system: %s"), *AssetPath.ToString());
+             UE_LOG(LogTemp, Warning, TEXT("⚠️ SceneBuilder: Failed to load particle: %s"), *AssetPath.ToString());
         }
     });
 }
-
 void USceneBuilder::ApplyLightingSettings(const FLightingPlan& Lighting, UWorld* WorldContext)
 {
     if (!WorldContext) return;

@@ -34,7 +34,7 @@ AEnemyCharacter::AEnemyCharacter()
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
 	// ✅ ADD THESE LINES FOR AUTO-FACING:
-	GetCharacterMovement()->bOrientRotationToMovement = true;
+	GetCharacterMovement()->bOrientRotationToMovement = false;
 	GetCharacterMovement()->RotationRate = FRotator(0.f, 720.f, 0.f);
 	GetCharacterMovement()->bUseControllerDesiredRotation = false;
     
@@ -99,8 +99,40 @@ void AEnemyCharacter::Tick(float DeltaTime)
 		StopCombatBehavior();
 		return;
 	}
+	UpdateFacing(DeltaTime);
 }
+void AEnemyCharacter::UpdateFacing(float DeltaTime)
+{
+	// 1. Safety Checks
+	if (!PlayerCharacter || !HealthComponent || !HealthComponent->IsAlive())
+	{
+		return;
+	}
 
+	// 2. Don't rotate while being hit or dead (Optional polish)
+	if (HealthComponent->IsStunned() || GetMesh()->IsSimulatingPhysics())
+	{
+		return;
+	}
+
+	// 3. Calculate Direction
+	// Only care about X-axis (2.5D Fighter logic)
+	float MyX = GetActorLocation().X;
+	float TargetX = PlayerCharacter->GetActorLocation().X;
+    
+	// If Player is to my RIGHT (+X), I should face 0 degrees.
+	// If Player is to my LEFT (-X), I should face 180 degrees.
+	float TargetYaw = (TargetX > MyX) ? 0.0f : 180.0f;
+
+	// 4. Smoothly Rotate
+	FRotator CurrentRot = GetActorRotation();
+	FRotator TargetRot = FRotator(0.0f, TargetYaw, 0.0f);
+
+	// Use a high speed (15.0f) for snappy fighting game turns
+	FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.0f);
+
+	SetActorRotation(NewRot);
+}
 void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UE_LOG(LogTemp, Log, TEXT("🛑 [ENEMY %s] EndPlay"), *GetName());

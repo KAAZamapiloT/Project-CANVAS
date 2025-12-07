@@ -166,6 +166,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Scene Generation|Debug")
 	FString GetActorNameByActor(AActor* Actor) const;
 
+
+	/**
+	 * Registers a persistent actor (Player, Enemy, Walls) so we can strip 
+	 * GenAI effects from it later without destroying the actor itself.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Scene Generation|Tracking")
+	void RegisterActorForEffectCleanup(AActor* Actor);
 	/**
 	 * Removes and destroys a spawned actor by its unique name. This is the primary removal method.
 	 * @param ObjectName Unique name (e.g., "Chair_01").
@@ -196,6 +203,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Scene Generation|Actor Management")
 	void ClearAllSpawnedActors();
 
+	UFUNCTION(BlueprintCallable, Category = "Scene Generation|Actor Management")
+	void ClearParticlesFromPersistentActors();
+	
 	// ========================================================================
 	// INTERNAL FUNCTIONS - Private Implementation
 	// ========================================================================
@@ -210,6 +220,9 @@ public:
 	 */
 	UFUNCTION()
 	void OnActorSpawned(AActor* NewActor, const FString& ObjectName);
+
+	UFUNCTION(BlueprintCallable, Category = "Scene Generation|Actor Management")
+	void ClearAllGeneratedContent();
 private:
 	/**
 	 * Initialization state tracking
@@ -258,6 +271,10 @@ private:
 	void LogSceneStateVerbose();
 	
 private:
+
+	UPROPERTY()
+	TArray<AActor*> ActorsToCleanEffectsFrom;
+	
 	// 1. Store the plan here so it persists while waiting for HTTP
 	FEnhancedScenePlan PendingPlan;
 

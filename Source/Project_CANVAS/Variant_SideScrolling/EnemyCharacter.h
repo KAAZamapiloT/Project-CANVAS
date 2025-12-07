@@ -338,6 +338,11 @@ protected:
      */
     UFUNCTION(BlueprintCallable, Category = "Combat")
     void ResetPlayerReference();
+
+    /** * Calculates the correct Yaw to face the player.
+     * Returns 0.0f (Face Right) or 180.0f (Face Left).
+     */
+    void UpdateFacing(float DeltaTime);
 public:
     /** Called when enemy lands (resets jump flags) */
     virtual void Landed(const FHitResult& Hit) override;

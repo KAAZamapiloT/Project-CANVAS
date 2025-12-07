@@ -15,6 +15,7 @@
 #include "AssetIndexer.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Async/Async.h"
+#include"NiagaraSystem.h"
 void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
 {
     if (bIsScanning)
@@ -90,8 +91,33 @@ void UAssetIndexer::ScanForParticlesAsync(FString ScanPath)
 {
     AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
     {
-        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning particles in %s"), *ScanPath);
-        ScanAssetsOfType(UParticleSystem::StaticClass(), ScanPath, DiscoveredParticleNames);
+        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning Niagara particles in %s"), *ScanPath);
+        
+        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+        
+        FARFilter Filter;
+        // Specifically look for Niagara Systems
+        Filter.ClassPaths.Add(UNiagaraSystem::StaticClass()->GetClassPathName());
+        Filter.PackagePaths.Add(FName(*ScanPath));
+        Filter.bRecursivePaths = true;
+
+        TArray<FAssetData> AssetDataArray;
+        AssetRegistryModule.Get().GetAssets(Filter, AssetDataArray);
+
+        DiscoveredParticleNames.Empty();
+
+        for (const FAssetData& AssetData : AssetDataArray)
+        {
+            // CRITICAL FIX: Get the FULL PATH, not just the name.
+            // Example: /Game/Particles/Fire/NS_Fire.NS_Fire
+            FString FullPath = AssetData.GetSoftObjectPath().ToString();
+            
+            DiscoveredParticleNames.Add(FullPath);
+            UE_LOG(LogTemp, Verbose, TEXT("   Found Particle: %s"), *FullPath);
+        }
+        
+        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Found %d Niagara systems"), DiscoveredParticleNames.Num());
+
         CheckAllScansComplete();
     });
 }
@@ -881,3 +907,40 @@ TArray<FString> UAssetIndexer::ResolveAllMeshPaths(const FString& SearchName)
     return AllMatches;
 }
 
+FString UAssetIndexer::ResolveParticlePath(const FString& SearchName)
+{
+    if (SearchName.IsEmpty()) return TEXT("");
+
+    FString NormalizedSearch = SearchName.ToLower();
+
+    UE_LOG(LogTemp, Display, TEXT("AssetIndexer: Resolving particle '%s'"), *SearchName);
+
+    // Strategy 1: Exact Match (ignoring case) on the filename
+    // e.g. Input: "NS_Fire" -> Matches "/Game/VFX/NS_Fire.NS_Fire"
+    for (const FString& FullPath : DiscoveredParticleNames)
+    {
+        FString Filename = FPaths::GetBaseFilename(FullPath).ToLower();
+        
+        if (Filename.Equals(NormalizedSearch))
+        {
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Exact Match: %s"), *FullPath);
+            return FullPath;
+        }
+    }
+
+    // Strategy 2: Substring Match
+    // e.g. Input: "Fire" -> Matches "/Game/VFX/NS_BlueFire.NS_BlueFire"
+    for (const FString& FullPath : DiscoveredParticleNames)
+    {
+        FString Filename = FPaths::GetBaseFilename(FullPath).ToLower();
+        
+        if (Filename.Contains(NormalizedSearch))
+        {
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Substring Match: %s"), *FullPath);
+            return FullPath;
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("   ❌ Particle not found: %s"), *SearchName);
+    return TEXT("");
+}

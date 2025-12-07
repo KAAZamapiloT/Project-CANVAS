@@ -27,7 +27,9 @@ public class Project_CANVAS : ModuleRules
 			"GameplayTags",
 			"GameplayAbilities",
 			"AssetRegistry",
-			"NavigationSystem"
+			"NavigationSystem",
+			"Niagara",
+			"NiagaraBlueprintNodes"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
