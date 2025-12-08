@@ -65,7 +65,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
             "{\"role\":\"user\",\"content\":\"%s\"}"
         "],"
         "\"temperature\":0.2,"
-        "\"max_tokens\":6000"
+        "\"max_tokens\":7000"
         "}"
     ), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
 
@@ -201,12 +201,18 @@ FString UGenAISystem::ConstructMasterPrompt(
     TArray<FString> ActorTags = AssetIndexer->GetDiscoveredActorTags();
     TArray<FString> AvailableMeshes = AssetIndexer->GetAllMeshNames();
     TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
-
+	// In ConstructMasterPrompt:
+	TArray<FString> AvailableParticles = AssetIndexer->GetDiscoveredParticleNames();
     // === STEP 2: GET MATERIAL BASE NAMES ===
     TArray<FString> MaterialBaseNames = AssetIndexer->GetMaterialBaseNames();
     UE_LOG(LogTemp, Display, TEXT("GenAI: Using %d materials from %d textures"), MaterialBaseNames.Num(), AvailableTextures.Num());
     UE_LOG(LogTemp, Display, TEXT("GenAI: Available meshes: %d"), AvailableMeshes.Num());
 
+
+	TArray<FString> CleanParticleNames;
+	for(const FString& Path : AvailableParticles) {
+		CleanParticleNames.Add(FPaths::GetBaseFilename(Path));
+	}
     // === STEP 3: BUILD MESH LIST STRING (first 30 meshes for context) ===
     FString MeshListString = TEXT("[");
     for (int32 i = 0; i < FMath::Min(30, AvailableMeshes.Num()); i++)
@@ -227,31 +233,42 @@ FString UGenAISystem::ConstructMasterPrompt(
     FString MaterialString = FString::Join(MaterialBaseNames, TEXT("\", \""));
     FString TagString = FString::Join(ActorTags, TEXT("\", \""));
     FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
-
+	FString ParticleString = FString::Join(CleanParticleNames, TEXT("\", \""));
     // === STEP 5: BUILD COMPREHENSIVE PROMPT ===
     return FString::Printf(TEXT(
         "You are an expert game environment designer specializing in Unreal Engine scenes.\n"
         "Generate a JSON scene plan based on the user request.\n\n"
         "USER REQUEST: \"%s\"\n\n"
-        "=== AVAILABLE STATIC MESHES (for SpawnRequest.AssetPath) ===\n"
-        "Use EXACT names from this list (total: %d meshes):\n"
-        "%s\n\n"
+       "=== AVAILABLE SPAWNABLE ASSETS (Use for SpawnRequest.AssetPath) ===\n"
+        "You may use EXACT names from EITHER list below:\n"
+        "\n"
+        "--- STATIC MESHES ---\n"
+        "%s\n"
+        "\n"
+        "--- PARTICLE EFFECTS ---\n"
+        "%s\n"
+        "\n"
+        
         "=== AVAILABLE ACTOR TAGS (for Props.TagName) ===\n"
         "Modify only actors with these tags:\n"
         "[\"%s\"]\n\n"
+        
         "=== AVAILABLE MATERIALS (for Props.Texture.BaseColorPath) ===\n"
         "Use these material base names (system auto-loads PBR textures):\n"
         "[\"%s\"]\n\n"
+        
         "=== AVAILABLE POST-PROCESS MATERIALS (for Environment.PostProcessingName) ===\n"
         "[\"%s\"]\n\n"
         "=== CRITICAL RULES ===\n"
-        "1. MESHES: Use ONLY names from AVAILABLE STATIC MESHES list\n"
-        "2. If mesh not available, set bSpawnActors to false\n"
+        "1. ASSETS: For 'SpawnRequest.AssetPath', you may use EITHER a Static Mesh name OR a Particle Effect name from the lists above.\n"
+        "2. If no suitable assets are available, set bSpawnActors to false.\n"
         "3. MATERIALS: Use ONLY base names (NOT full paths)\n"
         "   System handles loading: material_name_diff_2k, material_name_rough_2k, etc.\n"
         "4. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
-        "5. SPAWNING: Each spawned actor must have unique ObjectName\n"
+        "5a. SPAWNING: Each spawned actor must have unique ObjectName\n"
         "\n"
+        "5b. PARTICLES: If the theme implies weather/magic (Rain, Fire, Snow), you MUST pick a particle from the list.\n"
+		"   If no suitable particle exists, leave empty \"\".\n"
         "6. LOCATIONS: Use these semantic patterns for varied spatial distribution:\n"
         "   NAMED ZONES (use these for scene building):\n"
         "   - CENTER: Arena center (use for 1-3 key props)\n"
@@ -343,7 +360,7 @@ FString UGenAISystem::ConstructMasterPrompt(
         "  ],\n"
         "  \"SpawnRequest\": [\n"
         "    {\n"
-        "      \"AssetPath\": \"exact_mesh_name_from_list\",\n"
+        "      \"AssetPath\": \"exact_mesh_OR_particle_name\",\n"
         "      \"ObjectName\": \"unique_instance_name\",\n"
         "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
         "      \"LocationOffset\": [0, 0, 0],\n"
@@ -357,8 +374,8 @@ FString UGenAISystem::ConstructMasterPrompt(
         "Generate the JSON now:"
     ),
     *UserPrompt,
-    AvailableMeshes.Num(),
     *MeshListString,
+    *ParticleString,
     *TagString,
     *MaterialString,
     *PPMString);

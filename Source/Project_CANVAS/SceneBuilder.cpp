@@ -33,6 +33,7 @@
 #include "Engine/World.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
+#include "NiagaraActor.h"
 // --- Define your content paths ---
 // You MUST place your assets in these folders, or change these paths.
 // The parser gets "T_Brick_Normal", this path turns it into "/Game/Textures/Generative/T_Brick_Normal.T_Brick_Normal"
@@ -77,10 +78,13 @@ void USceneBuilder::BuildScene(const FEnhancedScenePlan& Plan, UWorld* WorldCont
     {
         UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawning %d new actors"), Plan.SpawnRequest.Num());
         SpawnNewActors(Plan.SpawnRequest, WorldContext,Plan.ThemeName);
+
+        SpawnParticles(Plan.SpawnRequest, WorldContext);
     }else
     {
         UE_LOG(LogTemp,Display,TEXT("SceneBuilder:Skiiping Spawn request no of spawns %d"),Plan.SpawnRequest.Num());
     }
+    
 }
 
 // --- Private: Main Build Functions ---
@@ -256,17 +260,17 @@ void USceneBuilder::SpawnNewActors(
         // ========================================
         FString FullPath = Request.AssetPath;
         
-        UE_LOG(LogTemp, Display, TEXT("🔄 Loading: %s"), *FullPath);
-        
+        // Try to load as StaticMesh
         UStaticMesh* LoadedMesh = Cast<UStaticMesh>(
             StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *FullPath)
         );
 
         if (!LoadedMesh)
         {
-            UE_LOG(LogTemp, Error, TEXT("❌ Failed to load mesh: %s"), *FullPath);
-            FailureCount++;
-            continue;
+            // Do NOT log Error here. It might be a particle system!
+            // Just skip silently (or verbose) and let SpawnParticles handle it.
+            UE_LOG(LogTemp, Verbose, TEXT("Skipping %s in Mesh Spawner (not a mesh)"), *FullPath);
+            continue; 
         }
 
         UE_LOG(LogTemp, Display, TEXT("   ✅ Mesh loaded: %s"), *LoadedMesh->GetName());
@@ -411,6 +415,75 @@ void USceneBuilder::SpawnNewActors(
     }
     
     UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+
+
+void USceneBuilder::SpawnParticles(const TArray<FSpawnRequest>& SpawnRequests, UWorld* WorldContext)
+{
+    if (!WorldContext) return;
+
+    int32 Count = 0;
+
+    for (const FSpawnRequest& Request : SpawnRequests)
+    {
+        if (Request.AssetPath.IsEmpty()) continue;
+
+        // 1. Try to load as Niagara System
+        // We use SoftObjectPath for async-friendly checking, though this loads synchronously here.
+        // If you have the Indexer fully working, these paths are already resolved.
+        UNiagaraSystem* System = Cast<UNiagaraSystem>(
+            StaticLoadObject(UNiagaraSystem::StaticClass(), nullptr, *Request.AssetPath)
+        );
+
+        // If it's not a particle system, SKIP IT. (It's probably a mesh handled by SpawnNewActors)
+        if (!System) continue;
+
+        // 2. Spawn the Niagara Actor
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+        ANiagaraActor* NewEffect = WorldContext->SpawnActor<ANiagaraActor>(
+            ANiagaraActor::StaticClass(),
+            Request.SpawnLocation,
+            Request.Rotation,
+            SpawnParams
+        );
+
+        if (NewEffect)
+        {
+            // 3. Configure Component
+            if (NewEffect->GetNiagaraComponent())
+            {
+                NewEffect->GetNiagaraComponent()->SetAsset(System);
+                NewEffect->GetNiagaraComponent()->SetForceSolo(true);
+                
+                // Apply Scale (Niagara doesn't always respect Actor Scale, depends on the asset)
+                NewEffect->SetActorScale3D(Request.Scale);
+            }
+
+            // 4. Identity & Cleanup Tags
+            FString ObjectLabel = FString::Printf(TEXT("GenAI_FX_%s"), *Request.ObjectName);
+            NewEffect->SetActorLabel(ObjectLabel);
+            
+            NewEffect->Tags.Add(FName("GenAI.Spawned")); // Critical for cleanup
+            NewEffect->Tags.Add(FName("GenAI.Particle")); 
+
+            // 5. Notify Tracker
+            if (StateTracker)
+            {
+                StateTracker->OnActorSpawned(NewEffect, Request.ObjectName);
+            }
+
+            UE_LOG(LogTemp, Log, TEXT("   ✨ Spawned Particle: %s at %s"), *ObjectLabel, *Request.SpawnLocation.ToString());
+            Count++;
+        }
+    }
+
+    if (Count > 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Spawned %d standalone particle effects."), Count);
+    }
 }
 
 // --- Private: Props Helpers ---

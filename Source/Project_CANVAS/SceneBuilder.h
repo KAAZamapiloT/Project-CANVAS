@@ -41,6 +41,7 @@ private:
 	UWorld* WorldContext, 
 	const FString& ThemeName    
 );
+	void SpawnParticles(const TArray<FSpawnRequest>& SpawnRequests, UWorld* WorldContext);
 	// Props helpers
 	void ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext);
 	void ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet);
