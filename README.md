@@ -3,10 +3,9 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Engine-Unreal_Engine_5.2+-black?logo=unrealengine" />
-  <img src="https://img.shields.io/badge/Language-C++17-blue?logo=cplusplus" />
-  <img src="https://img.shields.io/badge/AI-Generative_LLM-green?logo=openai" />
+  <img src="https://img.shields.io/badge/Language-C++-blue?logo=cplusplus" />
+  <img src="https://img.shields.io/badge/AI-Generative_LLM-green?logo=groq" />
   <img src="https://img.shields.io/badge/Status-Prototype-orange" />
-  <img src="https://img.shields.io/badge/License-MIT-purple" />
 </p>
 
 ---
