@@ -109,6 +109,15 @@ struct FMeshVariantGroup
     }
 };
 
+struct FParsedMeshInfo
+{
+    FString OriginalName;
+    FString CleanName;      // "Chair" (No SM_, no numbers)
+    FString UniqueName;     // "Chair_01" (No SM_, but keeps numbers)
+    int32 VariantNumber;    // 1 (if found) or -1
+    TArray<FString> Keywords;
+};
+
 // ========================================
 // DELEGATES
 // ========================================
@@ -213,6 +222,11 @@ public:
     FTextureSet ResolveBaseMaterialToTextureSet(const FString& BaseMaterialName);
 
     FParsedTextureInfo AnalyzeTexturePath(const FString& FullPath);
+
+
+    FParsedMeshInfo AnalyzeMeshName(const FString& MeshName);
+
+    
     /**
      * @brief Gets the names of all base materials found.
      * @return TArray of base material names.
@@ -322,7 +336,10 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Meshes")
     int32 GetVariantCount(const FString& SearchName);
-    
+
+    // Add to Public section
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Meshes")
+    TArray<FString> GetSmartMeshList() const;
     /** * @brief Resolves a short name (e.g. "Fire") to a full asset path (e.g. "/Game/VFX/NS_Fire.NS_Fire").
      * Uses substring matching.
      */

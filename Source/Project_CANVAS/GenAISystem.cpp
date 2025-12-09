@@ -324,7 +324,8 @@ FString UGenAISystem::ConstructMasterPrompt(
 		"   - NEVER use scale >4.0 - objects become too large\n"
 		"   - Default scale: [1, 1, 1] if unsure\n"
 		"\n"
-        
+        "10.ALWAYS set bModifyProps to true if the theme requires a material change (e.g. converting concrete walls to wood)."
+        "\n"
         "=== JSON SCHEMA ===\n"
         "{\n"
         "  \"ThemeName\": \"descriptive_name\",\n"

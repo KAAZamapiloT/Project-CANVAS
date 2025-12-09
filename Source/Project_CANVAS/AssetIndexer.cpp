@@ -81,59 +81,112 @@ void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
 
 void UAssetIndexer::ScanForTexturesAsync(FString ScanPath)
 {
-    AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
+    // [PHASE 1: GAME THREAD] Query Registry (Must be done here)
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UTexture2D::StaticClass()->GetClassPathName());
+    Filter.PackagePaths.Add(FName(*ScanPath));
+    Filter.bRecursivePaths = true;
+
+    TArray<FAssetData> AssetList;
+    AssetRegistryModule.Get().GetAssets(Filter, AssetList);
+
+    int32 AssetCount = AssetList.Num();
+
+    // [PHASE 2: BACKGROUND THREAD] Process Data (Heavy String Ops)
+    Async(EAsyncExecution::Thread, [this, ScanPath, AssetList = MoveTemp(AssetList), AssetCount]()
     {
-        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning textures in %s"), *ScanPath);
-        ScanAssetsOfType(UTexture2D::StaticClass(), ScanPath, DiscoveredTextureNames);
-        CheckAllScansComplete();
+        TArray<FString> LocalPaths;
+        LocalPaths.Reserve(AssetCount);
+
+        for (const FAssetData& AssetData : AssetList)
+        {
+            LocalPaths.Add(AssetData.GetSoftObjectPath().ToString());
+        }
+
+        // [PHASE 3: GAME THREAD] Commit Results (Safe)
+        AsyncTask(ENamedThreads::GameThread, [this, LocalPaths = MoveTemp(LocalPaths), AssetCount]()
+        {
+            DiscoveredTextureNames.Append(LocalPaths);
+            UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Found %d textures (Async)"), AssetCount);
+            CheckAllScansComplete();
+        });
     });
 }
+// AssetIndexer.cpp
 
 void UAssetIndexer::ScanForParticlesAsync(FString ScanPath)
 {
-    AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
+    // [PHASE 1: GAME THREAD]
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UNiagaraSystem::StaticClass()->GetClassPathName());
+    Filter.PackagePaths.Add(FName(*ScanPath));
+    Filter.bRecursivePaths = true;
+
+    TArray<FAssetData> AssetList;
+    AssetRegistryModule.Get().GetAssets(Filter, AssetList);
+    int32 AssetCount = AssetList.Num();
+
+    // [PHASE 2: BACKGROUND THREAD]
+    Async(EAsyncExecution::Thread, [this, AssetList = MoveTemp(AssetList), AssetCount]()
     {
-        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning Niagara particles in %s"), *ScanPath);
-        
-        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-        
-        FARFilter Filter;
-        // Specifically look for Niagara Systems
-        Filter.ClassPaths.Add(UNiagaraSystem::StaticClass()->GetClassPathName());
-        Filter.PackagePaths.Add(FName(*ScanPath));
-        Filter.bRecursivePaths = true;
+        TArray<FString> LocalPaths;
+        LocalPaths.Reserve(AssetCount);
 
-        TArray<FAssetData> AssetDataArray;
-        AssetRegistryModule.Get().GetAssets(Filter, AssetDataArray);
-
-        DiscoveredParticleNames.Empty();
-
-        for (const FAssetData& AssetData : AssetDataArray)
+        for (const FAssetData& AssetData : AssetList)
         {
-            // CRITICAL FIX: Get the FULL PATH, not just the name.
-            // Example: /Game/Particles/Fire/NS_Fire.NS_Fire
-            FString FullPath = AssetData.GetSoftObjectPath().ToString();
-            
-            DiscoveredParticleNames.Add(FullPath);
-            UE_LOG(LogTemp, Verbose, TEXT("   Found Particle: %s"), *FullPath);
+            LocalPaths.Add(AssetData.GetSoftObjectPath().ToString());
         }
-        
-        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Found %d Niagara systems"), DiscoveredParticleNames.Num());
 
-        CheckAllScansComplete();
+        // [PHASE 3: GAME THREAD]
+        AsyncTask(ENamedThreads::GameThread, [this, LocalPaths = MoveTemp(LocalPaths), AssetCount]()
+        {
+            DiscoveredParticleNames = LocalPaths;
+            UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Found %d Niagara systems (Async)"), AssetCount);
+            CheckAllScansComplete();
+        });
     });
 }
+
+// AssetIndexer.cpp
 
 void UAssetIndexer::ScanForPostProcessMaterialsAsync(FString ScanPath)
 {
-    AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
+    // [PHASE 1: GAME THREAD]
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UMaterialInterface::StaticClass()->GetClassPathName());
+    Filter.PackagePaths.Add(FName(*ScanPath));
+    Filter.bRecursivePaths = true;
+
+    TArray<FAssetData> AssetList;
+    AssetRegistryModule.Get().GetAssets(Filter, AssetList);
+    int32 AssetCount = AssetList.Num();
+
+    // [PHASE 2: BACKGROUND THREAD]
+    Async(EAsyncExecution::Thread, [this, AssetList = MoveTemp(AssetList), AssetCount]()
     {
-        UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Scanning post-process materials in %s"), *ScanPath);
-        ScanAssetsOfType(UMaterialInterface::StaticClass(), ScanPath, DiscoveredPostProcessNames);
-        CheckAllScansComplete();
+        TArray<FString> LocalPaths;
+        LocalPaths.Reserve(AssetCount);
+
+        for (const FAssetData& AssetData : AssetList)
+        {
+            LocalPaths.Add(AssetData.GetSoftObjectPath().ToString());
+        }
+
+        // [PHASE 3: GAME THREAD]
+        AsyncTask(ENamedThreads::GameThread, [this, LocalPaths = MoveTemp(LocalPaths), AssetCount]()
+        {
+            DiscoveredPostProcessNames = LocalPaths;
+            UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Found %d PP Materials (Async)"), AssetCount);
+            CheckAllScansComplete();
+        });
     });
 }
-
 void UAssetIndexer::ScanActorTagsInLevel(UWorld* WorldContext)
 {
     if (!WorldContext)
@@ -418,107 +471,164 @@ FTextureSet UAssetIndexer::ResolveTextureFromName(const FString& SearchName)
     FTextureSet Result;
     if (SearchName.IsEmpty()) return Result;
 
-    // 1. Exact Match
-    if (MaterialDatabase.Contains(SearchName))
-    {
-        return MaterialDatabase[SearchName];
-    }
+    // 1. Analyze the Search Query
+    // Use AnalyzeTexturePath to strip "T_" prefixes and "Diff/Norm" suffixes
+    FParsedTextureInfo SearchInfo = AnalyzeTexturePath(SearchName);
+    FString SearchBase = SearchInfo.BaseName.ToLower();
+    
+    // Extra safety: Normalize spaces to underscores (LLM might say "Wood Floor")
+    SearchBase.ReplaceInline(TEXT(" "), TEXT("_"));
 
-    // 2. Fuzzy Search
-    FString CleanSearch = SearchName.ToLower().Replace(TEXT("_"), TEXT("")).Replace(TEXT(" "), TEXT(""));
+    UE_LOG(LogTemp, Display, TEXT("🔍 ResolveTexture: Query='%s' -> Base='%s'"), *SearchName, *SearchBase);
 
+    // ========================================================
+    // STRATEGY 1: EXACT MATCH (Highest Priority)
+    // ========================================================
+    // Check if we have a direct key in the map (faster than loop)
+    // We loop here because map keys might be Case Sensitive depending on creation
     for (const auto& Pair : MaterialDatabase)
     {
-        FString CleanKey = Pair.Key.ToLower().Replace(TEXT("_"), TEXT(""));
-        
-        if (CleanKey.Equals(CleanSearch) || CleanKey.Contains(CleanSearch) || CleanSearch.Contains(CleanKey))
+        if (Pair.Key.ToLower().Equals(SearchBase))
         {
-            UE_LOG(LogTemp, Display, TEXT("ResolveTextureFromName: Fuzzy match '%s' -> '%s'"), *SearchName, *Pair.Key);
+            UE_LOG(LogTemp, Display, TEXT("   ✅ [EXACT] Found Material Set: %s"), *Pair.Key);
             return Pair.Value;
         }
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("ResolveTextureFromName: No match for '%s'"), *SearchName);
+    // ========================================================
+    // STRATEGY 2: SUBSTRING MATCH
+    // ========================================================
+    // "Wood" should match "Old_Wood_Floor"
+    for (const auto& Pair : MaterialDatabase)
+    {
+        FString DbKey = Pair.Key.ToLower();
+        
+        if (DbKey.Contains(SearchBase) || SearchBase.Contains(DbKey))
+        {
+            UE_LOG(LogTemp, Display, TEXT("   ⚠️ [SUBSTRING] '%s' matched '%s'"), *SearchName, *Pair.Key);
+            return Pair.Value;
+        }
+    }
+
+    // ========================================================
+    // STRATEGY 3: FUZZY SIMILARITY (Robust Fallback)
+    // ========================================================
+    // Uses CalculateSimilarity to catch typos ("WoodPlank" vs "WoodenPlank")
+    FString BestMatchKey;
+    int32 BestScore = 0;
+
+    for (const auto& Pair : MaterialDatabase)
+    {
+        FString DbKey = Pair.Key.ToLower();
+        
+        // Use your existing helper function
+        int32 Score = CalculateSimilarity(SearchBase, DbKey);
+        
+        // Threshold: 50% similarity (slightly looser for textures than meshes)
+        if (Score > BestScore && Score > 50) 
+        {
+            BestScore = Score;
+            BestMatchKey = Pair.Key;
+        }
+    }
+
+    if (!BestMatchKey.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("   ⚠️ [FUZZY %d%%] '%s' matched '%s'"), BestScore, *SearchName, *BestMatchKey);
+        return MaterialDatabase[BestMatchKey];
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("❌ Texture set not found for: %s"), *SearchName);
     return Result;
 }
 
 void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
 {
-    AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
+    // [PHASE 1: GAME THREAD] Query Registry
+    UE_LOG(LogTemp, Display, TEXT("🔍 Scanning static meshes in: %s"), *ScanPath);
+    
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
+    Filter.PackagePaths.Add(FName(*ScanPath));
+    Filter.bRecursivePaths = true;
+    
+    TArray<FAssetData> AssetList;
+    AssetRegistryModule.Get().GetAssets(Filter, AssetList);
+    int32 AssetCount = AssetList.Num();
+
+    UE_LOG(LogTemp, Display, TEXT("   Found %d static meshes"), AssetCount);
+
+    // [PHASE 2: BACKGROUND THREAD] Heavy Processing & Tokenizing
+    Async(EAsyncExecution::Thread, [this, ScanPath, AssetList = MoveTemp(AssetList)]()
     {
-        UE_LOG(LogTemp, Display, TEXT("🔍 Scanning static meshes in: %s"), *ScanPath);
-        
-        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-        FARFilter Filter;
-        Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
-        Filter.PackagePaths.Add(FName(*ScanPath));
-        Filter.bRecursivePaths = true;
-        
-        TArray<FAssetData> AssetDataArray;
-        AssetRegistryModule.Get().GetAssets(Filter, AssetDataArray);
-        
-        UE_LOG(LogTemp, Display, TEXT("   Found %d static meshes"), AssetDataArray.Num());
-        
-        for (const FAssetData& AssetData : AssetDataArray)
+        // Thread-Local Storage to avoid locking
+        TMap<FString, FMeshAssetInfo> LocalMeshes;
+        TMap<FString, FMeshVariantGroup> LocalGroups;
+        TArray<FString> LocalNames;
+
+        for (const FAssetData& AssetData : AssetList)
         {
             FString MeshName = AssetData.AssetName.ToString();
-            
-            // ✅ CRITICAL FIX: Use GetSoftObjectPath() which gives CORRECT path
             FString FullPath = AssetData.GetSoftObjectPath().ToString();
             
-            // Verify path doesn't have double slashes
-            if (FullPath.Contains(TEXT("//")))
-            {
-                UE_LOG(LogTemp, Error, TEXT("❌ Invalid path detected: %s"), *FullPath);
-                continue; // Skip this asset
-            }
-            
+            // Validation
+            if (FullPath.Contains(TEXT("//"))) continue; 
             FString Directory = FPaths::GetPath(FullPath);
             
+            // --- SMART ANALYSIS ---
+            FParsedMeshInfo Analysis = AnalyzeMeshName(MeshName);
+
+            // --- BUILD STRUCT ---
             FMeshAssetInfo MeshInfo;
             MeshInfo.MeshName = MeshName;
             MeshInfo.MeshAsset = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(FullPath));
-            MeshInfo.FullPath = FullPath; // Store clean path
+            MeshInfo.FullPath = FullPath;
             MeshInfo.Directory = Directory;
-            MeshInfo.Keywords = ExtractKeywordsFromMesh(MeshName);
+            MeshInfo.Keywords = Analysis.Keywords;
             
-            FString NormalizedName = NormalizeName(MeshName);
-            DiscoveredMeshes.Add(NormalizedName, MeshInfo);
-            DiscoveredStaticMeshNames.AddUnique(MeshName);
+            // --- INDEXING ---
+            FString UniqueKey = Analysis.UniqueName.ToLower(); 
+            if (!LocalMeshes.Contains(UniqueKey))
+            {
+                LocalMeshes.Add(UniqueKey, MeshInfo);
+            }
+            LocalNames.AddUnique(MeshName);
             
-            UE_LOG(LogTemp, Verbose, TEXT("   ✓ %s -> %s"), *MeshName, *FullPath);
-        }
-        
-        // Build variant groups
-        for (const auto& MeshPair : DiscoveredMeshes)
-        {
-            FString BaseName = ExtractBaseName(MeshPair.Value.MeshName);
-            FString NormalizedBase = NormalizeName(BaseName);
+            // --- GROUPING ---
+            FString BaseKey = Analysis.CleanName.ToLower();
             
-            if (!VariantGroups.Contains(NormalizedBase))
+            if (!LocalGroups.Contains(BaseKey))
             {
                 FMeshVariantGroup Group;
-                Group.BaseName = BaseName;
-                VariantGroups.Add(NormalizedBase, Group);
+                Group.BaseName = Analysis.CleanName;
+                LocalGroups.Add(BaseKey, Group);
             }
             
-            VariantGroups[NormalizedBase].Variants.AddUnique(MeshPair.Value.MeshName);
-            VariantGroups[NormalizedBase].VariantPaths.AddUnique(MeshPair.Value.FullPath);
+            LocalGroups[BaseKey].Variants.AddUnique(MeshName);
+            LocalGroups[BaseKey].VariantPaths.AddUnique(FullPath);
         }
-        
-        int32 VariantGroupCount = 0;
-        for (const auto& Group : VariantGroups)
+
+        // [PHASE 3: GAME THREAD] Commit to Main Variables
+        AsyncTask(ENamedThreads::GameThread, [this, LocalMeshes = MoveTemp(LocalMeshes), LocalGroups = MoveTemp(LocalGroups), LocalNames = MoveTemp(LocalNames)]()
         {
-            if (Group.Value.Variants.Num() > 1) VariantGroupCount++;
-        }
-        
-        UE_LOG(LogTemp, Warning, TEXT("✅ Mesh scan: %d meshes, %d variant groups"), 
-            DiscoveredMeshes.Num(), VariantGroupCount);
-        
-        CheckAllScansComplete();
+            DiscoveredMeshes.Append(LocalMeshes);
+            VariantGroups.Append(LocalGroups);
+            DiscoveredStaticMeshNames.Append(LocalNames);
+            
+            int32 VariantGroupCount = 0;
+            for (const auto& Group : VariantGroups)
+            {
+                if (Group.Value.Variants.Num() > 1) VariantGroupCount++;
+            }
+            
+            UE_LOG(LogTemp, Warning, TEXT("✅ Mesh scan: %d meshes, %d variant groups"), 
+                DiscoveredMeshes.Num(), VariantGroupCount);
+            
+            CheckAllScansComplete();
+        });
     });
 }
-
 
 FParsedTextureInfo UAssetIndexer::AnalyzeTexturePath(const FString& FullPath)
 {
@@ -527,14 +637,19 @@ FParsedTextureInfo UAssetIndexer::AnalyzeTexturePath(const FString& FullPath)
     Info.Type = ETextureMapType::Unknown;
 
     FString Filename = FPaths::GetBaseFilename(FullPath);
+    
+    // Normalize: Remove 'T_' prefix if present (Case Insensitive)
+    if (Filename.StartsWith(TEXT("T_"), ESearchCase::IgnoreCase))
+    {
+        Filename.RemoveFromStart(TEXT("T_"));
+    }
+
     FString ProcessedName = Filename.Replace(TEXT("-"), TEXT("_")); 
 
     TArray<FString> Tokens;
     ProcessedName.ParseIntoArray(Tokens, TEXT("_"), true);
 
-    // Dictionaries
-    const TSet<FString> IgnorePrefixes = { TEXT("T"), TEXT("Tex"), TEXT("M"), TEXT("Mat"), TEXT("SM") };
-    
+    // Dictionaries (Refined)
     const TMap<FString, ETextureMapType> TypeMap = {
         // Diffuse
         {TEXT("BC"), ETextureMapType::Diffuse}, {TEXT("D"), ETextureMapType::Diffuse}, 
@@ -560,11 +675,11 @@ FParsedTextureInfo UAssetIndexer::AnalyzeTexturePath(const FString& FullPath)
         {TEXT("AO"), ETextureMapType::AO}, {TEXT("Amb"), ETextureMapType::AO},
         {TEXT("Occlusion"), ETextureMapType::AO}, {TEXT("OCC"), ETextureMapType::AO},
         
-        // ✅ NEW: Displacement
+        // Displacement
         {TEXT("Disp"), ETextureMapType::Displacement}, {TEXT("Displacement"), ETextureMapType::Displacement},
         {TEXT("Height"), ETextureMapType::Displacement}, {TEXT("H"), ETextureMapType::Displacement},
 
-        // ✅ NEW: Opacity
+        // Opacity
         {TEXT("Opacity"), ETextureMapType::Opacity}, {TEXT("Alpha"), ETextureMapType::Opacity},
         {TEXT("Mask"), ETextureMapType::Opacity}, {TEXT("Trans"), ETextureMapType::Opacity},
         
@@ -581,7 +696,10 @@ FParsedTextureInfo UAssetIndexer::AnalyzeTexturePath(const FString& FullPath)
     {
         FString Token = Tokens[i];
         
-        if (i == 0 && IgnorePrefixes.Contains(Token)) continue;
+        // Skip resolution tags
+        if (Token.Equals("2k", ESearchCase::IgnoreCase) || 
+            Token.Equals("4k", ESearchCase::IgnoreCase) ||
+            Token.Equals("8k", ESearchCase::IgnoreCase)) continue;
 
         // Check Type
         bool bIsType = false;
@@ -596,10 +714,6 @@ FParsedTextureInfo UAssetIndexer::AnalyzeTexturePath(const FString& FullPath)
         }
         if (bIsType) continue;
 
-        if (Token.Equals("2k", ESearchCase::IgnoreCase) || 
-            Token.Equals("4k", ESearchCase::IgnoreCase) ||
-            Token.Equals("8k", ESearchCase::IgnoreCase)) continue;
-
         ContentTokens.Add(Token);
     }
 
@@ -608,7 +722,6 @@ FParsedTextureInfo UAssetIndexer::AnalyzeTexturePath(const FString& FullPath)
 
     return Info;
 }
-// In AssetIndexer.cpp
 
 TSharedPtr<FStreamableHandle> UAssetIndexer::RequestAsyncLoad(
     const TArray<FSoftObjectPath>& AssetsToLoad, 
@@ -632,7 +745,77 @@ TSharedPtr<FStreamableHandle> UAssetIndexer::RequestAsyncLoad(
 }
 
 
+// AssetIndexer.cpp
 
+FParsedMeshInfo UAssetIndexer::AnalyzeMeshName(const FString& MeshName)
+{
+    FParsedMeshInfo Info;
+    Info.OriginalName = MeshName;
+    Info.VariantNumber = -1;
+
+    // 1. Normalize separators (Chair-01 -> Chair_01)
+    FString TempName = MeshName;
+    TempName.ReplaceInline(TEXT("-"), TEXT("_"));
+    TempName.ReplaceInline(TEXT(" "), TEXT("_"));
+
+    // 2. Tokenize
+    TArray<FString> Tokens;
+    TempName.ParseIntoArray(Tokens, TEXT("_"), true);
+
+    // 3. Define Noise to Ignore
+    const TSet<FString> IgnoredTokens = { 
+        TEXT("SM"), TEXT("S"), TEXT("T"), TEXT("M"), TEXT("StaticMesh"), 
+        TEXT("Mesh"), TEXT("Props"), TEXT("Env"), TEXT("Environment"),
+        TEXT("2k"), TEXT("4k"), TEXT("8k"), TEXT("LOD0"), TEXT("LOD1"),
+        TEXT("Low"), TEXT("High"), TEXT("Poly")
+    };
+
+    TArray<FString> UniqueTokens; // Keeps numbers: "Chair", "01"
+    TArray<FString> BaseTokens;   // Removes numbers: "Chair"
+
+    for (int32 i = 0; i < Tokens.Num(); i++)
+    {
+        FString Token = Tokens[i];
+        
+        // Skip Prefixes/Noise
+        if (IgnoredTokens.Contains(Token)) continue;
+
+        // Check if this token is a Variant Number (e.g. "01", "02", "v1")
+        bool bIsNumber = Token.IsNumeric();
+        if (!bIsNumber && Token.Len() <= 3 && FChar::IsDigit(Token[Token.Len()-1]))
+        {
+            // Handles cases like "v1", "A1", "B2"
+            bIsNumber = true;
+        }
+
+        // ALWAYS add to Unique Name (so we can find specific assets)
+        UniqueTokens.Add(Token);
+        
+        // ONLY add to Base Name if it's NOT a number (This creates the Group)
+        if (!bIsNumber)
+        {
+            BaseTokens.Add(Token);
+            // Add to keywords for fuzzy search
+            if (Token.Len() > 2) Info.Keywords.AddUnique(Token.ToLower());
+        }
+        else
+        {
+            // It's a number, save it
+            Info.VariantNumber = FCString::Atoi(*Token);
+        }
+    }
+
+    // 4. Reconstruct
+    // Example Input: "SM_Chair_01"
+    Info.UniqueName = FString::Join(UniqueTokens, TEXT("_")); // Result: "Chair_01"
+    Info.CleanName = FString::Join(BaseTokens, TEXT("_"));    // Result: "Chair" (THE GROUP NAME)
+    
+    // Fallback: If name was just "01", keep original
+    if (Info.CleanName.IsEmpty()) Info.CleanName = MeshName;
+    if (Info.UniqueName.IsEmpty()) Info.UniqueName = MeshName;
+
+    return Info;
+}
 FString UAssetIndexer::ResolveMeshToFullPathWithVariants(const FString& SearchName)
 {
     if (SearchName.IsEmpty())
@@ -690,107 +873,126 @@ FString UAssetIndexer::ResolveMeshToFullPathWithVariants(const FString& SearchNa
 
 FString UAssetIndexer::ResolveMeshToFullPath(const FString& SearchName)
 {
-    if (SearchName.IsEmpty())
+    if (SearchName.IsEmpty()) return TEXT("");
+
+    // --- STEP 1: SMART ANALYSIS ---
+    // Normalize the input so "SM_Chair_01" becomes Base:"chair", Unique:"chair_01"
+    FParsedMeshInfo SearchInfo = AnalyzeMeshName(SearchName);
+    
+    FString UniqueKey = SearchInfo.UniqueName.ToLower();
+    FString BaseKey = SearchInfo.CleanName.ToLower();
+
+    UE_LOG(LogTemp, Display, TEXT("🔎 ResolveMesh: '%s' -> (Base: '%s', Unique: '%s')"), 
+        *SearchName, *BaseKey, *UniqueKey);
+
+    // --- STRATEGY 1: EXACT VARIANT MATCH (Highest Priority) ---
+    // If the LLM asked for "Chair_01" and we have it, give exactly that.
+    if (DiscoveredMeshes.Contains(UniqueKey))
     {
-        UE_LOG(LogTemp, Warning, TEXT("ResolveMesh: Empty search name"));
-        return TEXT("");
-    }
-    
-    FString NormalizedSearch = NormalizeName(SearchName);
-    
-    UE_LOG(LogTemp, Display, TEXT("🔎 ResolveMesh: Searching for '%s'"), *SearchName);
-    
-    // ========================================
-    // STRATEGY 1: Exact normalized match
-    // ========================================
-    if (DiscoveredMeshes.Contains(NormalizedSearch))
-    {
-        FString Result = DiscoveredMeshes[NormalizedSearch].FullPath;
+        FString Result = DiscoveredMeshes[UniqueKey].FullPath;
         UE_LOG(LogTemp, Display, TEXT("   ✅ [EXACT] Found: %s"), *Result);
         return Result;
     }
-    
-    // ========================================
-    // STRATEGY 2: Substring match (case insensitive)
-    // ========================================
-    for (const auto& Pair : DiscoveredMeshes)
+
+    // --- STRATEGY 2: VARIANT GROUP MATCH (Best for Variety) ---
+    // If LLM asked for "Chair", pick a RANDOM valid variant from the group.
+    if (VariantGroups.Contains(BaseKey))
     {
-        if (Pair.Value.MeshName.Contains(SearchName, ESearchCase::IgnoreCase) ||
-            NormalizedSearch.Contains(Pair.Key))
-        {
-            FString Result = Pair.Value.FullPath;
-            UE_LOG(LogTemp, Display, TEXT("   ✅ [SUBSTRING] '%s' in '%s' -> %s"), 
-                *SearchName, *Pair.Value.MeshName, *Result);
-            return Result;
-        }
+        FString Result = VariantGroups[BaseKey].GetRandomVariantPath();
+        UE_LOG(LogTemp, Display, TEXT("   🎲 [VARIANT] Group '%s' -> Selected: %s"), *BaseKey, *Result);
+        return Result;
     }
-    
-    // ========================================
-    // STRATEGY 3: Keyword matching
-    // ========================================
-    TArray<FString> SearchKeywords = ExtractKeywordsFromMesh(SearchName);
-    
+
+    // --- STRATEGY 3: KEYWORD / SUBSTRING SCAN ---
+    // Handles cases like "WoodenChair" matching "Chair" or vice versa.
     for (const auto& Pair : DiscoveredMeshes)
     {
-        for (const FString& SearchKeyword : SearchKeywords)
+        // Check 1: Does the asset name contain our search term?
+        if (Pair.Key.Contains(BaseKey))
         {
-            for (const FString& AssetKeyword : Pair.Value.Keywords)
+            UE_LOG(LogTemp, Display, TEXT("   ✅ [SUBSTRING] Found: %s (Matched '%s')"), *Pair.Value.MeshName, *BaseKey);
+            return Pair.Value.FullPath;
+        }
+
+        // Check 2: Do any keywords match? (e.g. "Wood" in "Chair_Wood")
+        for (const FString& SearchKW : SearchInfo.Keywords)
+        {
+            if (Pair.Value.Keywords.Contains(SearchKW))
             {
-                if (SearchKeyword.Equals(AssetKeyword, ESearchCase::IgnoreCase))
-                {
-                    FString Result = Pair.Value.FullPath;
-                    UE_LOG(LogTemp, Display, TEXT("   ✅ [KEYWORD] '%s' matches '%s' (keyword: %s)"), 
-                        *SearchName, *Pair.Value.MeshName, *AssetKeyword);
-                    return Result;
-                }
+                UE_LOG(LogTemp, Display, TEXT("   ✅ [KEYWORD] Found: %s (Matched '%s')"), *Pair.Value.MeshName, *SearchKW);
+                return Pair.Value.FullPath;
             }
         }
     }
-    
-    // ========================================
-    // STRATEGY 4: Similarity-based fuzzy match (60%+)
-    // ========================================
-    FString BestMatch;
+
+    // --- STRATEGY 4: FUZZY MATCH (For Typos) ---
+    // Catches "Chiar" -> "Chair"
+    FString BestMatchPath;
     int32 BestScore = 0;
-    
+
     for (const auto& Pair : DiscoveredMeshes)
     {
-        int32 Score = CalculateSimilarity(NormalizedSearch, Pair.Key);
-        if (Score > BestScore && Score > 60)
+        // Compare the Base Key ("chair") against the asset's cleaned name
+        // We use your existing CalculateSimilarity function
+        int32 Score = CalculateSimilarity(BaseKey, Pair.Key);
+        
+        if (Score > BestScore && Score > 60) // Threshold of 60% similarity
         {
             BestScore = Score;
-            BestMatch = Pair.Value.FullPath;
+            BestMatchPath = Pair.Value.FullPath;
         }
     }
-    
-    if (!BestMatch.IsEmpty())
+
+    if (!BestMatchPath.IsEmpty())
     {
-        UE_LOG(LogTemp, Display, TEXT("   ⚠️  [FUZZY %d%%] %s -> %s"), 
-            BestScore, *SearchName, *BestMatch);
-        return BestMatch;
+        UE_LOG(LogTemp, Display, TEXT("   ⚠️  [FUZZY %d%%] '%s' -> '%s'"), BestScore, *SearchName, *BestMatchPath);
+        return BestMatchPath;
     }
-    
-    // ========================================
-    // STRATEGY 5: Random from category/prefix
-    // ========================================
-    TArray<FString> CandidatePaths;
-    for (const auto& Pair : DiscoveredMeshes)
+
+    // --- STRATEGY 5: LAST RESORT (Random Mesh) ---
+    // Prevents "invisible" actors if absolutely nothing matches. 
+    if (DiscoveredMeshes.Num() > 0)
     {
-        if (Pair.Value.MeshName.StartsWith(TEXT("SM_")))
+        TArray<FString> AllKeys;
+        DiscoveredMeshes.GetKeys(AllKeys);
+        
+        // Try to pick something generic (starts with SM_)
+        TArray<FString> Candidates;
+        for (const FString& Key : AllKeys)
         {
-            CandidatePaths.Add(Pair.Value.FullPath);
+            if (DiscoveredMeshes[Key].MeshName.StartsWith("SM_")) Candidates.Add(Key);
+        }
+
+        if (Candidates.Num() > 0)
+        {
+            FString RandomKey = Candidates[FMath::RandRange(0, Candidates.Num() - 1)];
+            UE_LOG(LogTemp, Warning, TEXT("   ❌ NO MATCH. Using Random Fallback: %s"), *RandomKey);
+            return DiscoveredMeshes[RandomKey].FullPath;
         }
     }
-    
-    if (CandidatePaths.Num() > 0)
-    {
-        int32 RandomIdx = FMath::RandRange(0, CandidatePaths.Num() - 1);
-        UE_LOG(LogTemp, Warning, TEXT("   ⚠️  [FALLBACK RANDOM] Using random SM_* mesh"));
-        return CandidatePaths[RandomIdx];
-    }
-    
-    UE_LOG(LogTemp, Error, TEXT("❌ ResolveMesh: Could not find mesh for '%s'"), *SearchName);
+
+    UE_LOG(LogTemp, Error, TEXT("❌ CRITICAL: No meshes found in database!"));
     return TEXT("");
+}
+
+
+TArray<FString> UAssetIndexer::GetSmartMeshList() const
+{
+    TArray<FString> SmartList;
+    
+    // 1. Add all Variant Group Base Names (e.g., "Chair")
+    // This covers 90% of your assets if they are well-named
+    VariantGroups.GetKeys(SmartList);
+    
+    // 2. Add "Orphan" meshes (Unique items that didn't form a group)
+    // If "Statue_Dragon" exists but has no variants, it might not be in a group depending on your scanner logic.
+    // However, your current scanner puts EVERYTHING into a group (even size 1 groups).
+    // So iterating VariantGroups.GetKeys is sufficient and safe!
+    
+    // Optional: Sort for cleaner prompts
+    SmartList.Sort();
+    
+    return SmartList;
 }
 
 FMeshVariantGroup UAssetIndexer::GetMeshVariants(const FString& SearchName)
