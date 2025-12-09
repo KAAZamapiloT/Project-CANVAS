@@ -18,15 +18,16 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 	
 
 	// 1. Get the GameInstance and AssetIndexer
-    USceneStateTracker* GameInstance = Cast<USceneStateTracker>(UGameplayStatics::GetGameInstance(WorldContext));
-    if (!GameInstance || !GameInstance->AssetIndexer)
+	UGameInstance* GameInstance = UGameplayStatics::GetGameInstance(WorldContext);
+	USceneStateTracker* Tracker = GameInstance->GetSubsystem<USceneStateTracker>();
+    if (!GameInstance || !Tracker->AssetIndexer)
     {
         UE_LOG(LogTemp, Error, TEXT("GenAISystem: Cannot find GameInstance or AssetIndexer!"));
         return;
     }
 
     // 2. Check if the asset list is ready
-    if (!GameInstance->AssetIndexer->IsScanComplete())
+    if (!Tracker->AssetIndexer->IsScanComplete())
     {
         UE_LOG(LogTemp, Warning, TEXT("GenAISystem: Asset scan is not complete. Please wait."));
         return;
@@ -40,7 +41,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 	// Inside RequestSceneChange()
 	FString MasterPrompt = ConstructMasterPrompt(
 		UserPrompt,
-		GameInstance->AssetIndexer  // Pass directly
+		Tracker->AssetIndexer  // Pass directly
 	);
 
     // === CHANGES START HERE ===
@@ -235,7 +236,7 @@ FString UGenAISystem::ConstructMasterPrompt(
     FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
 	FString ParticleString = FString::Join(CleanParticleNames, TEXT("\", \""));
     // === STEP 5: BUILD COMPREHENSIVE PROMPT ===
-    return FString::Printf(TEXT(
+   FString Payload = FString::Printf(TEXT(
         "You are an expert game environment designer specializing in Unreal Engine scenes.\n"
         "Generate a JSON scene plan based on the user request.\n\n"
         "USER REQUEST: \"%s\"\n\n"
@@ -379,41 +380,9 @@ FString UGenAISystem::ConstructMasterPrompt(
     *TagString,
     *MaterialString,
     *PPMString);
+
+	return Payload;
 }
 
-FString UGenAISystem::ExtractMaterialBaseName(const FString& TextureName)
-{
-	FString BaseName = TextureName;
-    
-	// Remove all known PBR suffixes
-	TArray<FString> Suffixes = {
-		TEXT("_diff_2k"), TEXT("_diff_4k"), TEXT("_diff_1k"),
-		TEXT("_rough_2k"), TEXT("_rough_4k"), TEXT("_rough_1k"),
-		TEXT("_nor_gl_2k"), TEXT("_nor_gl_4k"), TEXT("_nor_gl_1k"),
-		TEXT("_nor_dx_2k"), TEXT("_nor_dx_4k"), TEXT("_nor_dx_1k"),
-		TEXT("_metal_2k"), TEXT("_metal_4k"), TEXT("_metal_1k"),
-		TEXT("_arm_2k"), TEXT("_arm_4k"), TEXT("_arm_1k"),
-		TEXT("_ao_2k"), TEXT("_ao_4k"), TEXT("_ao_1k"),
-		TEXT("_disp_2k"), TEXT("_disp_4k"), TEXT("_disp_1k"),
-		TEXT("_spec_ior_2k"), TEXT("_spec_ior_4k"), TEXT("_spec_ior_1k"),
-		TEXT("_anisotropy_strength_2k"), TEXT("_anisotropy_strength_4k"),
-		TEXT("_anisotropy_rotation_2k"), TEXT("_anisotropy_rotation_4k"),
-		TEXT("_mask_2k"), TEXT("_mask_4k"), TEXT("_mask_1k"),
-		TEXT("_N1"), TEXT("_N"), TEXT("_D1"), TEXT("_D"),  // For character textures like T_Manny
-		TEXT("_MRA1"), TEXT("_MRA"), TEXT("_BN")
-	};
-    
-	for (const FString& Suffix : Suffixes)
-	{
-		if (BaseName.EndsWith(Suffix))
-		{
-			BaseName.RemoveFromEnd(Suffix);
-			return BaseName;  // Return immediately after first match
-		}
-	}
-    
-	// If no suffix matched, return original name
-	return BaseName;
-}
 
 

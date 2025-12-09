@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
+#include "Subsystems/GameInstanceSubsystem.h"
 #include "AssetIndexer.h"
 #include "LocationQueryEngine.h"
 #include "SceneStateTracker.generated.h"
@@ -21,7 +22,7 @@ class USceneHistoryManager;
  * actors spawned by the AI.
  */
 UCLASS()
-class PROJECT_CANVAS_API USceneStateTracker : public UGameInstance
+class PROJECT_CANVAS_API USceneStateTracker : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 
@@ -86,8 +87,9 @@ public:
 	 * Initializes all subsystems and starts asynchronous asset/location scans.
 	 * Called automatically when the game instance is created.
 	 */
-	virtual void Init() override;
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 
+	virtual void Deinitialize() override;
 	// ========================================================================
 	// CALLBACKS - Async Completion Handlers
 	// ========================================================================
@@ -189,6 +191,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Scene Generation|Actor Management")
 	bool RemoveSpawnedActorByActor(AActor* Actor);
 
+	UFUNCTION()
+	void ResolveEnvironmentAssets(FEnhancedScenePlan& Plan);
 	/**
 	 * Removes and destroys multiple actors in a batch from an array of names.
 	 * @param ObjectNames Array of names to remove.
@@ -286,6 +290,11 @@ private:
 	FTimerHandle InitTimerHandle;
 	
 	void DelayedInit();
+
+	/** * NEW: Called by the AssetIndexer when all requested assets 
+	 * have finished loading into memory. 
+	 */
+	void OnAssetsLoaded();
 public:
 	/**
  * Visualizes the playable area bounds with debug geometry.
@@ -294,6 +303,6 @@ public:
 	UFUNCTION(Exec, BlueprintCallable, Category = "LocationEngine|Debug")
 	void VisualizeBounds(float Duration=10.f);
 
-	void OnStart() override;;
+	void OnWorldInit(UWorld* World, const UWorld::InitializationValues IVS);
 
 };

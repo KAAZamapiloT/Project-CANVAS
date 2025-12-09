@@ -21,6 +21,7 @@
 
 void ULocationQueryEngine::ScanWorldLocationsAsync(UWorld* InWorldContext)
 {
+    
     if (!InWorldContext)
     {
         UE_LOG(LogTemp, Error, TEXT("LocationEngine: WorldContext is null!"));
@@ -40,7 +41,7 @@ void ULocationQueryEngine::ScanWorldLocationsAsync(UWorld* InWorldContext)
     
     // Scan for tagged spawn points in level
     ScanForNamedLocations(WorldContext);
-    
+   
     // Register default locations
     FSpawnLocation CenterLocation;
     CenterLocation.LocationName = TEXT("CENTER");
@@ -48,6 +49,13 @@ void ULocationQueryEngine::ScanWorldLocationsAsync(UWorld* InWorldContext)
     CenterLocation.Description = TEXT("World origin");
     CenterLocation.Tags.Add(TEXT("Default"));
     AddLocation(CenterLocation);
+
+
+    SpatialGrid = MakeShared<UE::Geometry::TPointHashGrid3<AActor*, double>>(500.0, nullptr);
+    OccupiedActorRegistry.Empty();
+    bGridInitialized = true;
+
+    UE_LOG(LogTemp, Display, TEXT("✅ LocationEngine: Spatial Hash Grid Initialized"));
     
     bIsScanning = false;
     bIsScanComplete = true;
@@ -688,13 +696,20 @@ FVector ULocationQueryEngine::ResolveLocationName(const FString& LocationName)
     
     if (UpperName.Contains(TEXT("LEFT")))
     {
-        return GetRandomLeftSidePosition();
+        FVector Anchor = GetBestAnchorFor("LEFT");
+        if (!Anchor.IsZero()) return Anchor; // Found a smart point!
+        
+        // Fallback to dumb math if no anchors exist
+        return GetRandomLeftSidePosition(); 
     }
+
     if (UpperName.Contains(TEXT("RIGHT")))
     {
+        FVector Anchor = GetBestAnchorFor("RIGHT");
+        if (!Anchor.IsZero()) return Anchor;
+        
         return GetRandomRightSidePosition();
     }
-    
     if (UpperName.Contains(TEXT("CENTER")) || UpperName.Contains(TEXT("MIDDLE")))
     {
         return GetRandomCenterPosition();
@@ -896,9 +911,11 @@ void ULocationQueryEngine::SetLocationOccupied(const FString& LocationName, bool
     
     if (LocationDatabase.Contains(UpperName))
     {
+        // 1. Update Database
         LocationDatabase[UpperName].bIsOccupied = bOccupied;
         LocationDatabase[UpperName].OccupyingActor = OccupyingActor;
         
+        // Update the array copy
         for (FSpawnLocation& Loc : DiscoveredLocations)
         {
             if (Loc.LocationName.Equals(LocationName, ESearchCase::IgnoreCase))
@@ -908,19 +925,104 @@ void ULocationQueryEngine::SetLocationOccupied(const FString& LocationName, bool
                 break;
             }
         }
+
+        // ✅ 2. UPDATE SPATIAL GRID
+        if (bGridInitialized)
+        {
+            // CASE A: MARKING OCCUPIED
+            if (bOccupied && IsValid(OccupyingActor))
+            {
+                // If this actor is already in the grid, remove it first (handle moving actors)
+                if (OccupiedActorRegistry.Contains(OccupyingActor))
+                {
+                    FVector OldPos = OccupiedActorRegistry[OccupyingActor];
+                    SpatialGrid.Get()->RemovePoint(OccupyingActor, (FVector3d)OldPos);
+                }
+
+                // Insert into Grid
+                FVector NewPos = OccupyingActor->GetActorLocation();
+                SpatialGrid.Get()->InsertPoint(OccupyingActor, (FVector3d)NewPos);
+                OccupiedActorRegistry.Add(OccupyingActor, NewPos);
+            }
+            // CASE B: MARKING FREE (Removal)
+            else if (!bOccupied && IsValid(OccupyingActor))
+            {
+                if (OccupiedActorRegistry.Contains(OccupyingActor))
+                {
+                    FVector OldPos = OccupiedActorRegistry[OccupyingActor];
+                    SpatialGrid.Get()->RemovePoint(OccupyingActor, (FVector3d)OldPos);
+                    OccupiedActorRegistry.Remove(OccupyingActor);
+                }
+            }
+        }
     }
 }
 
-bool ULocationQueryEngine::IsLocationOccupied(const FString& LocationName) const
+bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
 {
-    FString UpperName = LocationName.ToUpper();
-    
-    if (LocationDatabase.Contains(UpperName))
+    if (!WorldContext) return false;
+
+    // 1. LIFT CHECK ORIGIN (Your existing fix)
+    float LiftAmount = Radius * 1.0f; 
+    FVector CheckOrigin = Location + FVector(0, 0, LiftAmount);
+    float CheckRadiusSq = FMath::Square(Radius); // Squared for fast math
+
+    // =================================================================
+    // ✅ CHECK 1: SPATIAL GRID (O(1) - SUPER FAST)
+    // =================================================================
+    if (bGridInitialized)
     {
-        return LocationDatabase[UpperName].bIsOccupied;
+        // We need to cast away const because FindAnyInRadius isn't const in UE5.0/5.1 in some versions
+        auto& MutableGrid = const_cast<UE::Geometry::TPointHashGrid3<AActor*, double>&>(*SpatialGrid);
+
+        bool bFoundBlocking = false;
+
+        // FindAnyInRadius stops immediately upon finding ONE result
+        MutableGrid.FindAnyInRadius(
+            (FVector3d)Location, // Search center
+            (double)Radius,      // Search radius
+            
+            // Distance Check Function
+            [&](const AActor* Actor) { 
+                if (!IsValid(Actor)) return 999999.0;
+                return FVector::DistSquared(Location, Actor->GetActorLocation()); 
+            },
+
+            // Filter Function
+            [&](const AActor* Actor) {
+                // If we found a valid actor that isn't the player, it's a block!
+                if (IsValid(Actor) && !Actor->ActorHasTag("Player.Character")) 
+                {
+                    bFoundBlocking = true;
+                    return false; // Stop searching, we found a block
+                }
+                return true; // Continue searching
+            }
+        );
+
+        if (bFoundBlocking) return false;
     }
+
+    // =================================================================
+    // CHECK 2: GEOMETRY (Walls/Floor - Keep this!)
+    // =================================================================
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(Radius * 0.8f); 
+    FCollisionQueryParams QueryParams;
+    QueryParams.bTraceComplex = false;
+    QueryParams.AddIgnoredActor(GetPlayerPawn()); 
+
+    FHitResult Hit;
+    bool bHit = WorldContext->SweepSingleByChannel(
+        Hit, CheckOrigin, CheckOrigin, FQuat::Identity,
+        ECC_WorldStatic, SphereShape, QueryParams
+    );
     
-    return false;
+    if (bHit && Hit.bBlockingHit)
+    {
+        if (Hit.PenetrationDepth > 10.0f) return false;
+    }
+
+    return true;
 }
 
 TArray<FSpawnLocation> ULocationQueryEngine::GetFreeLocations() const
@@ -1001,105 +1103,7 @@ FSpawnLocation ULocationQueryEngine::FindNearestFreeLocation(FVector PreferredLo
     Result.ClearanceRadius = MinClearance;
     return Result;
 }
-bool ULocationQueryEngine::IsLocationClear(FVector Location, float Radius) const
-{
-    if (!WorldContext) return false;
 
-    // 1. DEFINE STATIC TAGS (Optimization: Created once, not every call)
-    static const FName TagEnemy(TEXT("Enemy.Character"));
-    static const FName TagPlayer(TEXT("Player.Character"));
-
-    // =================================================================
-    // ✅ FIX #1: LIFT THE CHECK
-    // Don't check centered at 0 (Floor). Check centered at Radius (Air).
-    // This prevents the floor itself from triggering a collision.
-    // =================================================================
-    float LiftAmount = Radius * 1.0f; 
-    FVector CheckOrigin = Location + FVector(0, 0, LiftAmount);
-
-    FCollisionShape SphereShape = FCollisionShape::MakeSphere(Radius * 0.8f); // 80% size for tolerance
-    FCollisionQueryParams QueryParams;
-    QueryParams.bTraceComplex = false;
-    QueryParams.AddIgnoredActor(GetPlayerPawn()); // Don't let player block spawns (optional)
-
-    // =================================================================
-    // CHECK 1: GEOMETRY (Walls, Ceiling, Static Meshes)
-    // =================================================================
-    FHitResult Hit;
-    bool bHit = WorldContext->SweepSingleByChannel(
-        Hit,
-        CheckOrigin,
-        CheckOrigin, // Stationary sweep
-        FQuat::Identity,
-        ECC_WorldStatic,
-        SphereShape,
-        QueryParams
-    );
-    
-    if (bHit && Hit.bBlockingHit)
-    {
-        // Allow small overlaps (e.g. touching a wall slightly)
-        // But reject if we are deep inside geometry
-        if (Hit.PenetrationDepth > 10.0f) 
-        {
-            // UE_LOG(LogTemp, Verbose, TEXT("❌ Blocked by geometry: %s"), *Hit.GetActor()->GetName());
-            return false;
-        }
-    }
-
-    // =================================================================
-    // CHECK 2: IMPORTANT ACTORS (Enemies, Player)
-    // =================================================================
-    TArray<FOverlapResult> Overlaps;
-    WorldContext->OverlapMultiByChannel(
-        Overlaps,
-        CheckOrigin, // Use lifted origin
-        FQuat::Identity,
-        ECC_Pawn,
-        SphereShape,
-        QueryParams
-    );
-
-    for (const FOverlapResult& Overlap : Overlaps)
-    {
-        AActor* OverlapActor = Overlap.GetActor();
-        if (IsValid(OverlapActor) && OverlapActor->Tags.Num() > 0)
-        {
-            if (OverlapActor->ActorHasTag(TagEnemy) || OverlapActor->ActorHasTag(TagPlayer))
-            {
-                return false;
-            }
-        }
-    }
-
-    // =================================================================
-    // CHECK 3: LOGICAL OCCUPANCY (Other Spawns)
-    // =================================================================
-    
-    // Optimization: Pre-calculate squared distance to avoid Sqrt() calls
-    const float MinSpacingSq = FMath::Square(80.0f); 
-    
-    for (const FSpawnLocation& Loc : DiscoveredLocations)
-    {
-        // Auto-release ghost occupancy
-        if (Loc.bIsOccupied && !Loc.OccupyingActor.IsValid())
-        {
-            const_cast<FSpawnLocation&>(Loc).bIsOccupied = false;
-            continue; 
-        }
-
-        if (Loc.bIsOccupied)
-        {
-            // Use DistSquared for performance
-            if (FVector::DistSquared(Location, Loc.WorldPosition) < MinSpacingSq)
-            {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
 
 
 FVector ULocationQueryEngine::SnapToGround(FVector Location, float MaxTraceDistance)
@@ -1125,18 +1129,28 @@ FVector ULocationQueryEngine::SnapToGround(FVector Location, float MaxTraceDista
 // DYNAMIC ACTOR TAG
 // ========================================
 
+// LocationQueryEngine.cpp
+
 TArray<AActor*> ULocationQueryEngine::GetActorsWithTag(const FString& Tag) const
 {
-    TArray<AActor*> FoundActors;
-    if (!WorldContext || Tag.IsEmpty())
+    // 1. Check Cache
+    // Note: Since this is a 'const' function, we must use const_cast to update the cache
+    // or make the cache 'mutable' in the header.
+    // For now, let's just cast away const for the cache update.
+    auto* MutableThis = const_cast<ULocationQueryEngine*>(this);
+
+    if (ActorTagCache.Contains(Tag))
     {
-        UE_LOG(LogTemp, Warning, TEXT("⚠️ GetActorsWithTag: Invalid params"));
-        return FoundActors;
+        return ActorTagCache[Tag].Actors; 
     }
 
+    // 2. Fallback (Expensive Look up)
+    TArray<AActor*> FoundActors;
     UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*Tag), FoundActors);
-    UE_LOG(LogTemp, Display, TEXT("✅ GetActorsWithTag: Found %d actors with tag '%s'"),
-        FoundActors.Num(), *Tag);
+    
+    // ✅ MISSING LINE WAS HERE: Save to cache!
+    MutableThis->ActorTagCache.Add(Tag).Actors = FoundActors; 
+
     return FoundActors;
 }
 
@@ -2229,4 +2243,55 @@ FString ULocationQueryEngine::BuildSceneContext() const
         GroundHeightRange.X, GroundHeightRange.Y,
         AerialHeightRange.X, AerialHeightRange.Y
     );
+}
+
+
+FVector ULocationQueryEngine::GetBestAnchorFor(const FString& Tag, float MinClearance)
+{
+    // 1. Get all pre-scanned locations that match this tag
+    // (You already have GetLocationsByTag implemented!)
+    TArray<FSpawnLocation> Candidates = GetLocationsByTag(Tag);
+
+    FSpawnLocation BestAnchor;
+    float BestScore = -1.0f;
+    bool bFoundValid = false;
+
+    FVector PlayerPos = GetPlayerPosition();
+
+    for (const FSpawnLocation& Loc : Candidates)
+    {
+        // --- CRITERIA 1: MUST BE FREE ---
+        if (Loc.bIsOccupied) continue;
+        
+        // --- CRITERIA 2: MUST BE CLEAR (Physics) ---
+        // Uses your Spatial Grid + Sweep check
+        if (!IsLocationClear(Loc.WorldPosition, MinClearance)) continue;
+
+        // --- CRITERIA 3: SCORING (Simple Heuristic) ---
+        float Score = 100.0f;
+        
+        // Penalty: Too close to player (don't spawn on top of user)
+        float Dist = FVector::Dist(Loc.WorldPosition, PlayerPos);
+        if (Dist < 300.0f) Score -= 50.0f;
+        
+        // Bonus: "Anchor" tag implies it was manually placed for a good reason
+        if (Loc.Tags.Contains("Anchor")) Score += 10.0f;
+
+        // Keep the best one
+        if (Score > BestScore)
+        {
+            BestScore = Score;
+            BestAnchor = Loc;
+            bFoundValid = true;
+        }
+    }
+
+    if (bFoundValid)
+    {
+        UE_LOG(LogTemp, Display, TEXT("✅ Anchor Found: '%s' (Tag: %s)"), *BestAnchor.LocationName, *Tag);
+        return BestAnchor.WorldPosition;
+    }
+
+    // Return ZeroVector to signal "Use Procedural Fallback"
+    return FVector::ZeroVector;
 }

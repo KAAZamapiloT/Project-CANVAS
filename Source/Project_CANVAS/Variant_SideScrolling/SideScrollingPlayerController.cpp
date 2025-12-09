@@ -245,15 +245,15 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
 	UE_LOG(LogTemp, Warning, TEXT("PlayerController: Prompt submitted: %s"), *UserPrompt);
     
 	// Get the Game Instance
-	USceneStateTracker* GameInstance = Cast<USceneStateTracker>(GetGameInstance());
+	UGameInstance* GameInstance = GetGameInstance();
     
 	if (!GameInstance)
 	{
 		UE_LOG(LogTemp, Error, TEXT("PlayerController: GameInstance is NOT SceneStateTracker!"));
 		return;
 	}
-    
-	if (!GameInstance->GenAISystem)
+    USceneStateTracker* Tracker=GameInstance->GetSubsystem<USceneStateTracker>();
+	if (!Tracker&&!Tracker->GenAISystem)
 	{
 		UE_LOG(LogTemp, Error, TEXT("PlayerController: GenAISystem is NULL!"));
 		return;
@@ -261,7 +261,7 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
     
 	// Call GenAI to process the prompt
 	UE_LOG(LogTemp, Warning, TEXT("PlayerController: Calling GenAISystem->RequestSceneChange()"));
-	GameInstance->GenAISystem->RequestSceneChange(UserPrompt, GetWorld(),GameInstance->HistoryManager);
+	Tracker->GenAISystem->RequestSceneChange(UserPrompt, GetWorld(),Tracker->HistoryManager);
 
 	// Automatically close the UI after submitting
 	TogglePromptUI();
@@ -269,7 +269,7 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
 
 void ASideScrollingPlayerController::ShowBounds(float Duration)
 {
-	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+	USceneStateTracker* StateTracker = GetGameInstance()->GetSubsystem<USceneStateTracker>();
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->VisualizePlayableAreaBounds(Duration);
@@ -283,7 +283,7 @@ void ASideScrollingPlayerController::ShowBounds(float Duration)
 
 void ASideScrollingPlayerController::ShowLocations(float Duration)
 {
-	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance()->GetSubsystem<USceneStateTracker>());
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->VisualizeAllLocations(Duration);
@@ -298,7 +298,7 @@ void ASideScrollingPlayerController::ShowLocations(float Duration)
 
 void ASideScrollingPlayerController::ListLocations()
 {
-	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance()->GetSubsystem<USceneStateTracker>());
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->PrintAllLocationData();
@@ -313,7 +313,7 @@ void ASideScrollingPlayerController::ListLocations()
 
 void ASideScrollingPlayerController::ShowOccupancy()
 {
-	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance());
+	USceneStateTracker* StateTracker = Cast<USceneStateTracker>(GetGameInstance()->GetSubsystem<USceneStateTracker>());
 	if (StateTracker && StateTracker->LocationEngine)
 	{
 		StateTracker->LocationEngine->PrintLocationsByStatus();

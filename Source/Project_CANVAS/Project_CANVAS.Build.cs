@@ -29,7 +29,8 @@ public class Project_CANVAS : ModuleRules
 			"AssetRegistry",
 			"NavigationSystem",
 			"Niagara",
-			"NiagaraBlueprintNodes"
+			"NiagaraBlueprintNodes",
+			"GeometryCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

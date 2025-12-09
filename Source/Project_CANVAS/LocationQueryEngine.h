@@ -6,8 +6,29 @@
 #include "UObject/Object.h"
 #include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
-#include "LocationResolverLLM.h" 
+#include "Spatial/PointHashGrid3.h"
+#include "LocationResolverLLM.h"
+
+
 #include "LocationQueryEngine.generated.h"
+
+
+
+
+
+USTRUCT()
+struct FActorArrayWrapper
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<AActor*> Actors;
+    
+    // Optional: Helpers to make code cleaner
+    void Add(AActor* Actor) { Actors.AddUnique(Actor); }
+    void Empty() { Actors.Empty(); }
+    int32 Num() const { return Actors.Num(); }
+};
 
 /**
  * Represents a semantic spawn location in the world with full metadata.
@@ -311,8 +332,8 @@ public:
      * @param LocationName Location to check.
      * @return true if occupied, false if free or not found.
      */
-    UFUNCTION(BlueprintCallable, Category = "LocationEngine|Occupancy")
-    bool IsLocationOccupied(const FString& LocationName) const;
+   // UFUNCTION(BlueprintCallable, Category = "LocationEngine|Occupancy")
+    //bool IsLocationOccupied(const FString& LocationName) const;
 
     /**
      * Gets all locations currently marked as unoccupied.
@@ -582,6 +603,10 @@ private:
     UPROPERTY()
     bool bIsScanning = false;
 
+    UPROPERTY()
+    TMap<FString, FActorArrayWrapper> ActorTagCache; // Need a wrapper struct for TArray in TMap
+    
+    bool bCacheDirty = true;
 public: 
     // ========================================
     // 2.5D FIGHTING GAME FALLBACK SYSTEM
@@ -869,7 +894,23 @@ public:
     }
 
     // In LocationQueryEngine.h
+private:
+    // ========================================
+    // ✅ 2. SPATIAL HASH GRID VARIABLES
+    // ========================================
+    
+    // The optimized grid. 
+    // Key = AActor*, Precision = double
+    TSharedPtr<UE::Geometry::TPointHashGrid3<AActor*, double>> SpatialGrid;
 
+    // Helper map to track where actors were inserted (needed for fast removal)
+    UPROPERTY()
+    TMap<AActor*, FVector> OccupiedActorRegistry;
+
+    // Flag to ensure grid is ready
+    bool bGridInitialized = false;
+
+    
 public:
     /**
      * Configure LLM fallback.
@@ -898,6 +939,15 @@ private:
 
     /** Build scene context string for LLM */
     FString BuildSceneContext() const;
+public:
+        /**
+         * Finds the best manually placed anchor for a specific tag.
+         * @param Tag           The semantic tag (e.g., "Left", "HighGround", "Sniper").
+         * @param MinClearance  Radius to check for collision.
+         * @return Best anchor location, or FVector::ZeroVector if none found.
+         */
+        UFUNCTION(BlueprintCallable, Category = "LocationEngine|Anchors")
+        FVector GetBestAnchorFor(const FString& Tag, float MinClearance = 150.0f);
 public:
     // Add this Getter
     UFUNCTION(BlueprintCallable, Category = "LocationEngine")

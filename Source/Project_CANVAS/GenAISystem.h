@@ -48,5 +48,4 @@ public:
 
 private:
 	FString LastUserPrompt ;
-	FString ExtractMaterialBaseName(const FString& TextureName); 
 };

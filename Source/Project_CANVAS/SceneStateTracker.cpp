@@ -8,9 +8,9 @@
 #include"LocationQueryEngine.h"
 #include "API_KEY.h"
 #include "NiagaraComponent.h"
-void USceneStateTracker::Init()
+void USceneStateTracker::Initialize(FSubsystemCollectionBase& Collection)
 {
-    Super::Init();
+    Super::Initialize( Collection);
 
     UE_LOG(LogTemp, Warning, TEXT(""));
     UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
@@ -110,24 +110,26 @@ void USceneStateTracker::Init()
         UE_LOG(LogTemp, Warning, TEXT("⚠️  World unavailable - asset-only scan"));
     }
 
+  
     ActorNameCounter = 0;
     bAssetScanComplete = false;
     bLocationScanComplete = false;
 
     UE_LOG(LogTemp, Warning, TEXT("✅ Init complete - waiting for scans"));
     UE_LOG(LogTemp, Warning, TEXT(""));
+
+    FWorldDelegates::OnPostWorldInitialization.AddUObject(this, &USceneStateTracker::OnWorldInit);
 }
 
-void USceneStateTracker::OnStart()
+void USceneStateTracker::OnWorldInit(UWorld* World, const UWorld::InitializationValues IVS)
 {
-    Super::OnStart();
+  //  Super::OnStart();
     
     UE_LOG(LogTemp, Display, TEXT("========================================"));
     UE_LOG(LogTemp, Display, TEXT("🚀 SceneStateTracker::OnStart"));
     UE_LOG(LogTemp, Display, TEXT("========================================"));
     
     // ✅ World is now GUARANTEED to be available
-    UWorld* World = GetWorld();
     if (!World)
     {
         UE_LOG(LogTemp, Error, TEXT("❌ CRITICAL: World is STILL null in OnStart()!"));
@@ -173,6 +175,12 @@ void USceneStateTracker::OnStart()
     );
 }
 
+void USceneStateTracker::Deinitialize()
+{
+   
+    Super::Deinitialize();
+    FWorldDelegates::OnPostWorldInitialization.RemoveAll(this);
+}
 void USceneStateTracker::OnAssetScanFinished()
 {
     bAssetScanComplete = true;
@@ -216,6 +224,59 @@ void USceneStateTracker::CheckSystemsReady()
     }
 }
 
+void USceneStateTracker::OnAssetsLoaded()
+{
+    UE_LOG(LogTemp, Display, TEXT("🔄 Phase 3: Assets Loaded! Finalizing Build..."));
+
+    // ---------------------------------------------------------
+    // STEP 4: CLAMPING (REQUIRES LOADED ASSETS)
+    // ---------------------------------------------------------
+    // We moved this here because we can't check bounds until the mesh is in memory.
+    for (FSpawnRequest& Req : PendingPlan.SpawnRequest)
+    {
+        if (Req.AssetPath.IsEmpty()) continue;
+
+        // StaticLoadObject is now instant/safe because the asset is already in RAM.
+        UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *Req.AssetPath));
+        
+        if (Mesh)
+        {
+            FBoxSphereBounds Bounds = Mesh->GetBounds();
+            float RealSize = Bounds.BoxExtent.GetMax() * 2.0f;
+            
+            // Your original clamping logic
+            if (RealSize > 2000.0f && Req.Scale.X >= 1.0f)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("📉 Clamping giant mesh '%s' (Size: %.0f). Scale Reset to 1.0"), 
+                    *Req.ObjectName, RealSize);
+                Req.Scale = FVector::OneVector;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------
+    // STEP 5: EXECUTE BUILD
+    // ---------------------------------------------------------
+    if (SceneBuilder)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("🎬 Triggering SceneBuilder with %d actors"), PendingPlan.SpawnRequest.Num());
+        SceneBuilder->BuildScene(PendingPlan, GetWorld());
+    }
+    
+    // ---------------------------------------------------------
+    // STEP 6: HISTORY & CLEANUP
+    // ---------------------------------------------------------
+    if (HistoryManager)
+    {
+        HistoryManager->SavePlan(PendingPlan, "Finalized Build");
+    }
+    
+    PendingPlan = FEnhancedScenePlan();
+    UE_LOG(LogTemp, Warning, TEXT("✅ Plan execution complete"));
+    UE_LOG(LogTemp, Warning, TEXT(""));
+}
+
+
 void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FString& UserPrompt)
 {
     if (!GetWorld())
@@ -250,6 +311,7 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
     
     FEnhancedScenePlan EnrichedPlan = Plan;
 
+    
     // 3. Synchronous Resolution (Assets)
     UE_LOG(LogTemp, Display, TEXT("🔄 [1/3] ResolveTexturesFromNames..."));
     ResolveTexturesFromNames(EnrichedPlan);
@@ -259,6 +321,7 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
     ResolveMeshesFromNames(EnrichedPlan);
     UE_LOG(LogTemp, Display, TEXT("✅ Mesh resolution done"));
 
+    ResolveEnvironmentAssets(EnrichedPlan);
     // 4. Spatial Resolution (The Fork)
     if (EnrichedPlan.bSpawnActors && EnrichedPlan.SpawnRequest.Num() > 0)
     {
@@ -294,13 +357,7 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
 
 void USceneStateTracker::ResolveTexturesFromNames(FEnhancedScenePlan& Plan)
 {
-    if (!AssetIndexer)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ ResolveTexturesFromNames FAILED: AssetIndexer is null"));
-        return;
-    }
-
-    int32 Resolved = 0, Failed = 0;
+    if (!AssetIndexer) return;
 
     for (FPropsModification& Prop : Plan.Props)
     {
@@ -309,27 +366,27 @@ void USceneStateTracker::ResolveTexturesFromNames(FEnhancedScenePlan& Plan)
 
         FTextureSet ResolvedSet = AssetIndexer->ResolveTextureFromName(TextureKey);
 
-        if (ResolvedSet.BaseColorPath.IsEmpty())
-        {
-            ResolvedSet = AssetIndexer->ResolveBaseMaterialToTextureSet(TextureKey);
-        }
+        // If BaseColor is missing but we found other maps (e.g. only Normal map exists for 'Grass')
+        bool bHasAnyMap = !ResolvedSet.BaseColorPath.IsEmpty() || 
+                          !ResolvedSet.NormalPath.IsEmpty() || 
+                          !ResolvedSet.RoughnessPath.IsEmpty();
 
-        if (!ResolvedSet.BaseColorPath.IsEmpty())
+        if (bHasAnyMap)
         {
-            Prop.Texture = ResolvedSet;
-            Resolved++;
+            // Apply the set. 
+            // IMPORTANT: This overwrites the "Grass" string with "" if BaseColor was missing in the set.
+            Prop.Texture = ResolvedSet; 
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Texture '%s' not found"), *TextureKey);
-            Failed++;
+            // Nothing found at all. Clear the invalid string so we don't try to load "Grass".
+            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Texture '%s' not found - Clearing property"), *TextureKey);
+            Prop.Texture.BaseColorPath.Empty(); 
+            Prop.Texture.NormalPath.Empty();
+            Prop.Texture.RoughnessPath.Empty();
+            Prop.Texture.MetallicPath.Empty();
+            Prop.Texture.AOPath.Empty();
         }
-    }
-
-    if (Failed > 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("  ⚠️  ResolveTexturesFromNames: %d/%d resolved"), 
-            Resolved, Resolved + Failed);
     }
 }
 
@@ -424,17 +481,33 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
     }
 }
 
+
+void USceneStateTracker::ResolveEnvironmentAssets(FEnhancedScenePlan& Plan)
+{
+    if (!AssetIndexer || Plan.Environment.PostProcessingName.IsEmpty()) return;
+
+    FString FullPath = AssetIndexer->ResolvePostProcessPath(Plan.Environment.PostProcessingName);
+    
+    if (!FullPath.IsEmpty())
+    {
+        Plan.Environment.PostProcessingName = FullPath;
+    }
+}
+
 void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResult>& AsyncResults)
 {
-    UE_LOG(LogTemp, Display, TEXT("🔄 Phase 2: Finalizing Scene Plan..."));
+    UE_LOG(LogTemp, Display, TEXT("🔄 Phase 2: Finalizing Scene Plan & Starting Load..."));
 
+    // ---------------------------------------------------------
+    // STEP 1: APPLY AI RESULTS & FALLBACKS (MATH ONLY)
+    // ---------------------------------------------------------
     bool bApiFailed = (AsyncResults.Num() == 0);
     if (bApiFailed && PendingPlan.SpawnRequest.Num() > 0)
     {
-        UE_LOG(LogTemp, Error, TEXT("⚠️ Async Results Empty (API Failure or Rate Limit). Running Fallback Logic."));
+        UE_LOG(LogTemp, Error, TEXT("⚠️ Async Results Empty. Running Fallback Logic."));
     }
 
-    // Process Results
+    // Iterate through requests to set locations (Pure Logic, No Loading)
     for (FSpawnRequest& Req : PendingPlan.SpawnRequest)
     {
         // A. Apply AI Result
@@ -444,65 +517,74 @@ void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResul
             Req.SpawnLocation = Res.Location;
             Req.Rotation = FRotator(0, Res.RotationYaw, 0);
             if (Res.Scale > 0.1f) Req.Scale = FVector(Res.Scale);
-            
-            UE_LOG(LogTemp, Display, TEXT("   🧠 AI Placed: %s at %s"), *Req.ObjectName, *Req.SpawnLocation.ToString());
         }
         
-        // B. Emergency Fallback (for 429s or Hallucinations)
+        // B. Emergency Fallback
         if (Req.SpawnLocation.IsNearlyZero())
         {
-            UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Triggering Fallback for '%s'"), *Req.ObjectName);
-            
             FSpawnLocation FallbackLoc = LocationEngine->FindValidSpawnLocation(
                 Req.LocationName, 
                 Req.ClearanceRadius
             );
             
             Req.SpawnLocation = FallbackLoc.WorldPosition;
-            
-            // Jitter to prevent stacking
+            // Jitter
             Req.SpawnLocation.X += FMath::RandRange(-50.0f, 50.0f);
             Req.SpawnLocation.Y += FMath::RandRange(-50.0f, 50.0f);
         }
 
-        // C. World-Relative Scale Check (Prevent Giant Meshes)
-        if (!Req.AssetPath.IsEmpty())
-        {
-            UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *Req.AssetPath));
-            if (Mesh)
-            {
-                FBoxSphereBounds Bounds = Mesh->GetBounds();
-                float RealSize = Bounds.BoxExtent.GetMax() * 2.0f;
-                
-                if (RealSize > 2000.0f && Req.Scale.X >= 1.0f)
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("📉 Clamping giant mesh '%s' (Size: %.0f). Scale Reset to 1.0"), 
-                        *Req.ObjectName, RealSize);
-                    Req.Scale = FVector::OneVector;
-                }
-            }
-        }
-        
+        // Mark location as used
         LocationEngine->SetLocationOccupied(Req.LocationName, true);
     }
 
-    // Execute Build
-    if (SceneBuilder)
+    // ---------------------------------------------------------
+    // STEP 2: GATHER ASSETS (SOFT REFERENCES)
+    // ---------------------------------------------------------
+    TArray<FSoftObjectPath> AssetsToLoad;
+    for (const FSpawnRequest& Req : PendingPlan.SpawnRequest)
     {
-        UE_LOG(LogTemp, Warning, TEXT("🎬 Triggering SceneBuilder with %d actors"), PendingPlan.SpawnRequest.Num());
-        SceneBuilder->BuildScene(PendingPlan, GetWorld());
+        if (!Req.AssetPath.IsEmpty())
+        {
+            // Convert string path to Soft Object Path
+            AssetsToLoad.Add(FSoftObjectPath(Req.AssetPath));
+        }
     }
-    
-    // Save History
-    if (HistoryManager)
+    if (!PendingPlan.Environment.PostProcessingName.IsEmpty())
     {
-        HistoryManager->SavePlan(PendingPlan, "Finalized Build");
+        AssetsToLoad.Add(FSoftObjectPath(PendingPlan.Environment.PostProcessingName));
     }
-    
-    // Cleanup
-    PendingPlan = FEnhancedScenePlan();
-    UE_LOG(LogTemp, Warning, TEXT("✅ Plan execution complete"));
-    UE_LOG(LogTemp, Warning, TEXT(""));
+
+    for (const FPropsModification& Prop : PendingPlan.Props)
+    {
+        auto AddIfValid = [&](const FString& Path) {
+            if (!Path.IsEmpty()) AssetsToLoad.Add(FSoftObjectPath(Path));
+        };
+
+        AddIfValid(Prop.Texture.BaseColorPath);
+        AddIfValid(Prop.Texture.NormalPath);
+        AddIfValid(Prop.Texture.RoughnessPath);
+        AddIfValid(Prop.Texture.MetallicPath);
+        AddIfValid(Prop.Texture.AOPath);
+    }
+    // ---------------------------------------------------------
+    // STEP 3: REQUEST ASYNC LOAD
+    // ---------------------------------------------------------
+    if (AssetsToLoad.Num() > 0 && AssetIndexer)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⏳ Requesting Async Load for %d Assets..."), AssetsToLoad.Num());
+        
+        // This is non-blocking. The game continues running.
+        // When finished, it calls OnAssetsLoaded().
+        AssetIndexer->RequestAsyncLoad(
+            AssetsToLoad, 
+            FStreamableDelegate::CreateUObject(this, &USceneStateTracker::OnAssetsLoaded)
+        );
+    }
+    else
+    {
+        // If there's nothing to load (or Indexer is missing), build immediately
+        OnAssetsLoaded();
+    }
 }
 
 

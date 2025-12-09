@@ -16,6 +16,8 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Async/Async.h"
 #include"NiagaraSystem.h"
+#include "Engine/StreamableManager.h"
+#include "Engine/AssetManager.h"
 void UAssetIndexer::ScanAllAssetsAsync(UWorld* WorldContext)
 {
     if (bIsScanning)
@@ -180,6 +182,8 @@ TWeakObjectPtr<UWorld> WeakWorld(WorldContext);
     });
 }
 
+// In AssetIndexer.cpp
+
 void UAssetIndexer::ScanAssetsOfType(const UClass* AssetClass, FString ScanPath, TArray<FString>& OutArray)
 {
     if (!AssetClass)
@@ -201,13 +205,15 @@ void UAssetIndexer::ScanAssetsOfType(const UClass* AssetClass, FString ScanPath,
     OutArray.Empty();
     for (const FAssetData& AssetData : AssetDataArray)
     {
-        OutArray.Add(AssetData.AssetName.ToString());
+        // ✅ CRITICAL FIX: Store the Full Soft Object Path string
+        // The Async Loader needs the full path (e.g. "/Game/Textures/T_Wood.T_Wood")
+        // The old code used AssetName.ToString() which is just "T_Wood" -> Fails loading.
+        OutArray.Add(AssetData.GetSoftObjectPath().ToString());
     }
 
     UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Found %d assets of type %s"), 
            OutArray.Num(), *AssetClass->GetName());
 }
-
 void UAssetIndexer::CheckAllScansComplete()
 {
     FPlatformAtomics::InterlockedDecrement(&PendingScans);
@@ -261,58 +267,91 @@ void UAssetIndexer::CheckAllScansComplete()
     }
 }
 
+FString UAssetIndexer::ResolvePostProcessPath(const FString& SearchName)
+{
+    if (SearchName.IsEmpty()) return TEXT("");
+    FString NormalizedSearch = SearchName.ToLower();
 
+    UE_LOG(LogTemp, Display, TEXT("AssetIndexer: Resolving PP '%s'"), *SearchName);
+
+    // Search DiscoveredPostProcessNames
+    for (const FString& FullPath : DiscoveredPostProcessNames)
+    {
+        FString Filename = FPaths::GetBaseFilename(FullPath).ToLower();
+        
+        // Exact or Substring match
+        if (Filename.Equals(NormalizedSearch) || Filename.Contains(NormalizedSearch))
+        {
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Match: %s"), *FullPath);
+            return FullPath;
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("   ❌ PP Material not found: %s"), *SearchName);
+    return TEXT("");
+}
 
 TMap<FString, FTextureSet> UAssetIndexer::BuildMaterialDatabase()
 {
     TMap<FString, FTextureSet> Database;
 
-    // Define token lists for each texture type
-    const TArray<FString> DiffuseTokens     = { "_diff_", "_basecolor", "_albedo", "_color", "_d" };
-    const TArray<FString> RoughnessTokens   = { "_rough_", "_rgh", "_roughness", "_r","_ORM","_orm","ao_r_mt"  };
-    const TArray<FString> NormalTokens      = { "_nor_", "_normal", "_n" };
-    const TArray<FString> MetallicTokens    = { "_metal_", "_metallic", "_m","_ORM","_orm","AO_R_MT","ao_r_mt"  };
-    const TArray<FString> AOTokens          = { "_ao_", "_ambient", "_a","AO_R_MT","ao_r_mt" };
+    UE_LOG(LogTemp, Display, TEXT("AssetIndexer: Indexing %d textures via Smart Tokenizer..."), DiscoveredTextureNames.Num());
 
-    for (const FString& TextureName : DiscoveredTextureNames)
+    for (const FString& FullPath : DiscoveredTextureNames)
     {
-        FString BaseName = ExtractMaterialBaseName(TextureName);
-        if (BaseName.IsEmpty())
-            continue;
+        // 1. Analyze
+        FParsedTextureInfo Info = AnalyzeTexturePath(FullPath);
+        if (Info.BaseName.IsEmpty()) continue;
 
-        if (!Database.Contains(BaseName))
-            Database.Add(BaseName, FTextureSet());
-
-        FTextureSet& Set = Database[BaseName];
-        const FString Lower = TextureName.ToLower();
-
-        auto MatchAny = [&Lower](const TArray<FString>& Tokens) -> bool
+        // 2. Init Entry
+        if (!Database.Contains(Info.BaseName))
         {
-            for (const FString& Token : Tokens)
-            {
-                if (Lower.Contains(Token))
-                    return true;
-            }
-            return false;
-        };
+            Database.Add(Info.BaseName, FTextureSet());
+        }
 
-        if (MatchAny(DiffuseTokens))
-            Set.BaseColorPath = TextureName;
-        else if (MatchAny(RoughnessTokens))
-            Set.RoughnessPath = TextureName;
-        else if (MatchAny(NormalTokens))
-            Set.NormalPath = TextureName;
-        else if (MatchAny(MetallicTokens))
-            Set.MetallicPath = TextureName;
-        else if (MatchAny(AOTokens))
-            Set.AOPath = TextureName;
+        FTextureSet& Set = Database[Info.BaseName];
+
+        // 3. Map Path to Slot
+        switch (Info.Type)
+        {
+            case ETextureMapType::Diffuse:
+                Set.BaseColorPath = FullPath;
+                break;
+            case ETextureMapType::Normal:
+                Set.NormalPath = FullPath;
+                break;
+            case ETextureMapType::Roughness:
+                Set.RoughnessPath = FullPath;
+                break;
+            case ETextureMapType::Metallic:
+                Set.MetallicPath = FullPath;
+                break;
+            case ETextureMapType::AO:
+                Set.AOPath = FullPath;
+                break;
+            // ✅ NEW: Handle Displacement
+            case ETextureMapType::Displacement:
+                Set.DisplacementPath = FullPath;
+                break;
+            // ✅ NEW: Handle Opacity
+            case ETextureMapType::Opacity:
+                Set.OpacityPath = FullPath;
+                break;
+            case ETextureMapType::Packed:
+                Set.RoughnessPath = FullPath; 
+                Set.MetallicPath = FullPath;
+                Set.AOPath = FullPath;
+                break;
+            case ETextureMapType::Unknown:
+                // Fallback for weird files like "Street_Shaft_00"
+                if (Set.BaseColorPath.IsEmpty()) Set.BaseColorPath = FullPath;
+                break;
+        }
     }
 
-    UE_LOG(LogTemp, Log, TEXT("BuildMaterialDatabase completed. Indexed %d materials."), Database.Num());
+    UE_LOG(LogTemp, Warning, TEXT("✅ Smart Indexing Complete. Mapped %d unique materials."), Database.Num());
     return Database;
 }
-
-
 FTextureSet UAssetIndexer::ResolveBaseMaterialToTextureSet(const FString& BaseMaterialName)
 {
     if (MaterialDatabase.Contains(BaseMaterialName))
@@ -330,25 +369,29 @@ FString UAssetIndexer::ExtractMaterialBaseName(const FString& TextureName)
     // Remove all ureal specific prefix of fab textures 
     TArray<FString> Prefixes={TEXT("T_")};
     // Remove all known PBR suffixes , -> added FAB specific suffixes also
-    TArray<FString> Suffixes = {
-        TEXT("_diff_2k"), TEXT("_diff_4k"),
-        TEXT("_rough_2k"), TEXT("_rough_4k"),
-        TEXT("_nor_gl_2k"), TEXT("_nor_gl_4k"),
-        TEXT("_nor_dx_2k"), TEXT("_nor_dx_4k"),
-        TEXT("_metal_2k"), TEXT("_metal_4k"),
-        TEXT("_arm_2k"), TEXT("_arm_4k"),
-        TEXT("_ao_2k"), TEXT("_ao_4k"),
-        TEXT("_disp_2k"), TEXT("_disp_4k"),
-        TEXT("_spec_ior_2k"), TEXT("_spec_ior_4k"),
-        TEXT("_anisotropy_strength_2k"), TEXT("_anisotropy_strength_4k"),
-        TEXT("_anisotropy_rotation_2k"), TEXT("_anisotropy_rotation_4k"),
-        TEXT("_mask_2k"), TEXT("_mask_4k"),
-        TEXT("_Normal"), TEXT("_BaseColor"),
-        TEXT("_Occlusion"),TEXT("_Roughness"),
-        TEXT("_Metal"), TEXT("_Ao"), TEXT("_Displacement"),
-        TEXT("_Metallic"), TEXT("_AO"), TEXT("_Displacement_AO"),
-        TEXT("_Metallic_AO"), TEXT("_OcclusionRoughnessMetallic"),
-        TEXT("_BC"),TEXT("_ORM"),TEXT("_BC"),TEXT("AO_R_MT")
+    const TArray<FString> Suffixes = {
+        // Complex packed masks
+        TEXT("_AO_R_MT"), TEXT("_AO_R_TM"), TEXT("_MRA1"), TEXT("_MRA"), TEXT("_MRO"), 
+        TEXT("_RMA"), TEXT("_ORM"), TEXT("_ARM"),
+        
+        // PBR Standard 2K/4K
+        TEXT("_diff_2k"), TEXT("_diff_4k"), TEXT("_rough_2k"), TEXT("_rough_4k"),
+        TEXT("_nor_gl_2k"), TEXT("_nor_gl_4k"), TEXT("_nor_dx_2k"), TEXT("_nor_dx_4k"),
+        TEXT("_metal_2k"), TEXT("_metal_4k"), TEXT("_ao_2k"), TEXT("_ao_4k"),
+        TEXT("_disp_2k"), TEXT("_disp_4k"), TEXT("_arm_2k"), TEXT("_arm_4k"),
+        
+        // Simple Names
+        TEXT("_BaseColor"), TEXT("_Albedo"), TEXT("_Normal"), TEXT("_Roughness"), 
+        TEXT("_Metallic"), TEXT("_Metalness"), TEXT("_Metal"), TEXT("_Mask"), 
+        TEXT("_Height"), TEXT("_Occlusion"), TEXT("_Gloss"),
+        
+        // Short Codes
+        TEXT("_BC"), TEXT("_D"), TEXT("_N"), TEXT("_R"), TEXT("_M"), TEXT("_A"), 
+        TEXT("_H"), TEXT("_OCC"), TEXT("_nm"), TEXT("_alb"),
+        
+        // Numbered variations at end
+        TEXT("_00"), TEXT("_01"), TEXT("_02") , TEXT("_03"), TEXT("_04"), TEXT("_05"),
+        TEXT("_06")
     };
     
     for (const FString& Suffix : Suffixes)
@@ -370,41 +413,35 @@ FString UAssetIndexer::ExtractMaterialBaseName(const FString& TextureName)
     return BaseName;
 }
 
-
 FTextureSet UAssetIndexer::ResolveTextureFromName(const FString& SearchName)
 {
     FTextureSet Result;
+    if (SearchName.IsEmpty()) return Result;
 
-    FString CleanKey = SearchName.ToLower().Replace(TEXT("_"), TEXT(""));
+    // 1. Exact Match
+    if (MaterialDatabase.Contains(SearchName))
+    {
+        return MaterialDatabase[SearchName];
+    }
+
+    // 2. Fuzzy Search
+    FString CleanSearch = SearchName.ToLower().Replace(TEXT("_"), TEXT("")).Replace(TEXT(" "), TEXT(""));
+
     for (const auto& Pair : MaterialDatabase)
     {
-        FString CleanAsset = Pair.Key.ToLower().Replace(TEXT("_"), TEXT(""));
-        if (CleanAsset.Contains(CleanKey))
+        FString CleanKey = Pair.Key.ToLower().Replace(TEXT("_"), TEXT(""));
+        
+        if (CleanKey.Equals(CleanSearch) || CleanKey.Contains(CleanSearch) || CleanSearch.Contains(CleanKey))
         {
-            // Found partial match; copy this material set
-            Result = Pair.Value;
-            UE_LOG(LogTemp, Display, TEXT("ResolveTextureFromName: matched %s -> %s"), *SearchName, *Pair.Key);
-            return Result;
+            UE_LOG(LogTemp, Display, TEXT("ResolveTextureFromName: Fuzzy match '%s' -> '%s'"), *SearchName, *Pair.Key);
+            return Pair.Value;
         }
     }
 
-    // fallback: partial/fuzzy match by token
-    // ✅ NEW - Use substring match instead:
-    for (const auto& Pair : MaterialDatabase)
-    {
-        FString CleanAsset = Pair.Key.ToLower().Replace(TEXT("_"), TEXT(""));
-        if (CleanAsset.Contains(SearchName.ToLower()))
-        {
-            Result = Pair.Value;
-            UE_LOG(LogTemp, Display, TEXT("ResolveTextureFromName (fuzzy) %s -> %s"), *SearchName, *Pair.Key);
-            return Result;
-        }
-    }
-
-
-    UE_LOG(LogTemp, Warning, TEXT("No texture match found for %s"), *SearchName);
-    return Result; // Empty set
+    UE_LOG(LogTemp, Warning, TEXT("ResolveTextureFromName: No match for '%s'"), *SearchName);
+    return Result;
 }
+
 void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
 {
     AsyncTask(ENamedThreads::GameThread, [this, ScanPath]()
@@ -440,6 +477,7 @@ void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
             
             FMeshAssetInfo MeshInfo;
             MeshInfo.MeshName = MeshName;
+            MeshInfo.MeshAsset = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(FullPath));
             MeshInfo.FullPath = FullPath; // Store clean path
             MeshInfo.Directory = Directory;
             MeshInfo.Keywords = ExtractKeywordsFromMesh(MeshName);
@@ -481,6 +519,117 @@ void UAssetIndexer::ScanForStaticMeshesAsync(FString ScanPath)
     });
 }
 
+
+FParsedTextureInfo UAssetIndexer::AnalyzeTexturePath(const FString& FullPath)
+{
+    FParsedTextureInfo Info;
+    Info.OriginalPath = FullPath;
+    Info.Type = ETextureMapType::Unknown;
+
+    FString Filename = FPaths::GetBaseFilename(FullPath);
+    FString ProcessedName = Filename.Replace(TEXT("-"), TEXT("_")); 
+
+    TArray<FString> Tokens;
+    ProcessedName.ParseIntoArray(Tokens, TEXT("_"), true);
+
+    // Dictionaries
+    const TSet<FString> IgnorePrefixes = { TEXT("T"), TEXT("Tex"), TEXT("M"), TEXT("Mat"), TEXT("SM") };
+    
+    const TMap<FString, ETextureMapType> TypeMap = {
+        // Diffuse
+        {TEXT("BC"), ETextureMapType::Diffuse}, {TEXT("D"), ETextureMapType::Diffuse}, 
+        {TEXT("Diff"), ETextureMapType::Diffuse}, {TEXT("Diffuse"), ETextureMapType::Diffuse},
+        {TEXT("Albedo"), ETextureMapType::Diffuse}, {TEXT("BaseColor"), ETextureMapType::Diffuse},
+        {TEXT("Color"), ETextureMapType::Diffuse},
+        
+        // Normal
+        {TEXT("N"), ETextureMapType::Normal}, {TEXT("NM"), ETextureMapType::Normal},
+        {TEXT("Nor"), ETextureMapType::Normal}, {TEXT("Normal"), ETextureMapType::Normal},
+        {TEXT("Nor_Gl"), ETextureMapType::Normal}, {TEXT("Nor_Dx"), ETextureMapType::Normal},
+        
+        // Roughness
+        {TEXT("R"), ETextureMapType::Roughness}, {TEXT("Rough"), ETextureMapType::Roughness},
+        {TEXT("Roughness"), ETextureMapType::Roughness},
+        
+        // Metallic
+        {TEXT("M"), ETextureMapType::Metallic}, {TEXT("Met"), ETextureMapType::Metallic},
+        {TEXT("Metal"), ETextureMapType::Metallic}, {TEXT("Metallic"), ETextureMapType::Metallic},
+        {TEXT("Metalness"), ETextureMapType::Metallic}, {TEXT("MT"), ETextureMapType::Metallic},
+        
+        // AO
+        {TEXT("AO"), ETextureMapType::AO}, {TEXT("Amb"), ETextureMapType::AO},
+        {TEXT("Occlusion"), ETextureMapType::AO}, {TEXT("OCC"), ETextureMapType::AO},
+        
+        // ✅ NEW: Displacement
+        {TEXT("Disp"), ETextureMapType::Displacement}, {TEXT("Displacement"), ETextureMapType::Displacement},
+        {TEXT("Height"), ETextureMapType::Displacement}, {TEXT("H"), ETextureMapType::Displacement},
+
+        // ✅ NEW: Opacity
+        {TEXT("Opacity"), ETextureMapType::Opacity}, {TEXT("Alpha"), ETextureMapType::Opacity},
+        {TEXT("Mask"), ETextureMapType::Opacity}, {TEXT("Trans"), ETextureMapType::Opacity},
+        
+        // Packed
+        {TEXT("ORM"), ETextureMapType::Packed}, {TEXT("ARM"), ETextureMapType::Packed},
+        {TEXT("MRO"), ETextureMapType::Packed}, {TEXT("MRA"), ETextureMapType::Packed},
+        {TEXT("RMA"), ETextureMapType::Packed}, {TEXT("AO_R_MT"), ETextureMapType::Packed},
+        {TEXT("AO_R_TM"), ETextureMapType::Packed}
+    };
+
+    TArray<FString> ContentTokens;
+    
+    for (int32 i = 0; i < Tokens.Num(); i++)
+    {
+        FString Token = Tokens[i];
+        
+        if (i == 0 && IgnorePrefixes.Contains(Token)) continue;
+
+        // Check Type
+        bool bIsType = false;
+        for (const auto& Pair : TypeMap)
+        {
+            if (Token.Equals(Pair.Key, ESearchCase::IgnoreCase))
+            {
+                Info.Type = Pair.Value;
+                bIsType = true;
+                break;
+            }
+        }
+        if (bIsType) continue;
+
+        if (Token.Equals("2k", ESearchCase::IgnoreCase) || 
+            Token.Equals("4k", ESearchCase::IgnoreCase) ||
+            Token.Equals("8k", ESearchCase::IgnoreCase)) continue;
+
+        ContentTokens.Add(Token);
+    }
+
+    Info.BaseName = FString::Join(ContentTokens, TEXT("_"));
+    if (Info.BaseName.IsEmpty()) Info.BaseName = Filename;
+
+    return Info;
+}
+// In AssetIndexer.cpp
+
+TSharedPtr<FStreamableHandle> UAssetIndexer::RequestAsyncLoad(
+    const TArray<FSoftObjectPath>& AssetsToLoad, 
+    FStreamableDelegate DelegateToCall)
+{
+    // ✅ FIX: Use GetIfInitialized() instead of deprecated GetIfValid()
+    if (UAssetManager* Manager = UAssetManager::GetIfInitialized())
+    {
+        UE_LOG(LogTemp, Display, TEXT("AssetIndexer: Requesting Async Load for %d assets..."), AssetsToLoad.Num());
+        
+        // This puts the load operation on a background thread
+        return Manager->GetStreamableManager().RequestAsyncLoad(
+            AssetsToLoad, 
+            DelegateToCall, 
+            FStreamableManager::AsyncLoadHighPriority
+        );
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("AssetIndexer: AssetManager is invalid! Cannot async load."));
+    return nullptr;
+}
 
 
 

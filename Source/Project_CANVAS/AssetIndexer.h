@@ -9,7 +9,32 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "ScenePlan.h"
+#include "Engine/StreamableManager.h"
 #include "AssetIndexer.generated.h"
+
+// ========================================
+// ENUMS
+// ========================================
+
+enum class ETextureMapType : uint8
+{
+    Unknown,
+    Diffuse,    // BaseColor, Albedo
+    Normal,     // Normal, N
+    Roughness,  // Roughness, R
+    Metallic,   // Metallic, M
+    AO,         // Ambient Occlusion
+    Displacement, // Height, Disp
+    Opacity,    // Alpha, Mask, Opacity
+    Packed      // ORM, ARM, AO_R_MT
+};
+struct FParsedTextureInfo
+{
+    FString OriginalPath;
+    FString BaseName;
+    ETextureMapType Type;
+};
+
 
 // ========================================
 // STRUCTS
@@ -23,10 +48,11 @@ USTRUCT(BlueprintType)
 struct FMeshAssetInfo
 {
     GENERATED_BODY()
-    
-    /// @brief The simple name of the mesh (e.g., "SM_Chair").
     UPROPERTY()
     FString MeshName;
+    /// @brief The simple name of the mesh (e.g., "SM_Chair").
+    UPROPERTY()
+    TSoftObjectPtr<UStaticMesh> MeshAsset;
     
     /// @brief The full asset registry path (e.g., "/Game/DATABASE/meshes/SM_Chair.SM_Chair").
     UPROPERTY()
@@ -185,7 +211,8 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Textures")
     FTextureSet ResolveBaseMaterialToTextureSet(const FString& BaseMaterialName);
-    
+
+    FParsedTextureInfo AnalyzeTexturePath(const FString& FullPath);
     /**
      * @brief Gets the names of all base materials found.
      * @return TArray of base material names.
@@ -283,7 +310,11 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Meshes")
     FMeshVariantGroup GetMeshVariants(const FString& SearchName);
-    
+
+    TSharedPtr<struct FStreamableHandle> RequestAsyncLoad(
+        const TArray<FSoftObjectPath>& AssetsToLoad, 
+        FStreamableDelegate DelegateToCall
+    );
     /**
      * @brief Counts the number of variants for a given mesh base name.
      * @param SearchName The base name (e.g., "Chair").
@@ -297,6 +328,13 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Particles")
     FString ResolveParticlePath(const FString& SearchName);
+
+
+    /** * @brief Resolves a short name (e.g. "PP_Cyber") to a full asset path.
+     * Uses substring matching against DiscoveredPostProcessNames.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|PostProcess")
+    FString ResolvePostProcessPath(const FString& SearchName);
     // ========================================
     // MESH INFO QUERIES
     // ========================================
