@@ -60,7 +60,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
     // Build Groq JSON payload (OpenAI format)
     FString Payload = FString::Printf(TEXT(
         "{"
-        "\"model\":\"openai/gpt-oss-20b\","
+        "\"model\":\"openai/gpt-oss-120b\","
         "\"messages\":["
             "{\"role\":\"system\",\"content\":\"You are a JSON generator for a 3D scene builder. Only respond with valid JSON, no markdown, no code blocks.\"},"
             "{\"role\":\"user\",\"content\":\"%s\"}"
@@ -70,6 +70,15 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
         "}"
     ), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
 
+	// 1. Construct the path: Project/Saved/Logs/LastGenAIPrompt.json
+	FString DebugFilePath = FPaths::ProjectSavedDir() / TEXT("Logs/LastGenAIPrompt.json");
+
+	// 2. Save the full payload string to the file
+	if (FFileHelper::SaveStringToFile(Payload, *DebugFilePath))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("🔍 DEBUG: Full Prompt Dumped to: %s"), *DebugFilePath);
+		UE_LOG(LogTemp, Warning, TEXT("👉 Go open this file to see exactly what the LLM sees!"));
+	}
     // === CHANGES END HERE ===
 
     UE_LOG(LogTemp, Display, TEXT("GenAI: Payload length: %d chars"), Payload.Len());
@@ -260,9 +269,11 @@ FString UGenAISystem::ConstructMasterPrompt(
         
         "=== AVAILABLE POST-PROCESS MATERIALS (for Environment.PostProcessingName) ===\n"
         "[\"%s\"]\n\n"
-        "=== CRITICAL RULES ===\n"
-        "1. ASSETS: For 'SpawnRequest.AssetPath', you may use EITHER a Static Mesh name OR a Particle Effect name from the lists above.\n"
-        "2. If no suitable assets are available, set bSpawnActors to false.\n"
+        "== CRITICAL RULES ===\n"
+		"1. SPLIT ASSETS:\n"
+		"   - STATIC MESHES go into 'SpawnRequest' array.\n"
+		"   - PARTICLE EFFECTS go into 'ParticleSpawns' array.\n"
+		"2. If no suitable assets are available, set bSpawnActors to false.\n"
         "3. MATERIALS: Use ONLY base names (NOT full paths)\n"
         "   System handles loading: material_name_diff_2k, material_name_rough_2k, etc.\n"
         "4. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
@@ -362,7 +373,7 @@ FString UGenAISystem::ConstructMasterPrompt(
         "  ],\n"
         "  \"SpawnRequest\": [\n"
         "    {\n"
-        "      \"AssetPath\": \"exact_mesh_OR_particle_name\",\n"
+        "      \"AssetPath\": \"exact_mesh_name\",\n"
         "      \"ObjectName\": \"unique_instance_name\",\n"
         "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
         "      \"LocationOffset\": [0, 0, 0],\n"
@@ -372,6 +383,18 @@ FString UGenAISystem::ConstructMasterPrompt(
         "      \"ClearanceRadius\": 150\n"
         "    }\n"
         "  ]\n"
+        "  \"ParticleSpawn\": [\n"
+		"    {\n"
+		"      \"AssetPath\": \"exact_particle_name\",\n"
+		"      \"ObjectName\": \"unique_instance_name\",\n"
+		"      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
+		"      \"LocationOffset\": [0, 0, 0],\n"
+		"      \"Rotation\": [Pitch, Yaw, Roll],\n"
+		"      \"Scale\": [X, Y, Z],\n"
+		"      \"Tag\": \"optional_tag\",\n"
+		"      \"ClearanceRadius\": 150\n"
+		"    }\n"
+		"  ]\n"
         "}\n\n"
         "Generate the JSON now:"
     ),

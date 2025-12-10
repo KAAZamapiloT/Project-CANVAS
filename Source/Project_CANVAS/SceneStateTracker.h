@@ -137,6 +137,8 @@ public:
 	UFUNCTION()
 	void ResolveLocationsInPlan(FEnhancedScenePlan& Plan);
 
+    UFUNCTION()
+	void ResolveParticlesFromNames(FEnhancedScenePlan& Plan);
 	// ========================================================================
 	// ACTOR MANAGEMENT - Query & Removal Functions
 	// ========================================================================

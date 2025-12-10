@@ -479,6 +479,38 @@ private:
     
     /// @brief Counter for tracking pending asynchronous scan tasks.
     int32 PendingScans = 0;
+public:
+
+    // ========================================
+    // BATCH RESOLUTION (New Orchestration Helpers)
+    // ========================================
+
+    /**
+     * @brief Iterates through the plan and resolves all texture paths in place.
+     * Replaces the logic previously held in SceneStateTracker::ResolveTexturesFromNames.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Batch")
+    void BatchResolveTextures(UPARAM(ref) FEnhancedScenePlan& Plan);
+
+    /**
+     * @brief Iterates through the plan and resolves all mesh paths in place.
+     * Replaces SceneStateTracker::ResolveMeshesFromNames.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Batch")
+    void BatchResolveMeshes(UPARAM(ref) FEnhancedScenePlan& Plan);
+
+    /**
+     * @brief Iterates through the plan and resolves all particle paths in place.
+     * Replaces SceneStateTracker::ResolveParticlesFromNames.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Batch")
+    void BatchResolveParticles(UPARAM(ref) FEnhancedScenePlan& Plan);
+
+    /**
+     * @brief Resolves environment assets (PostProcess, etc.) in place.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Batch")
+    void ResolveEnvironmentAssets(UPARAM(ref) FEnhancedScenePlan& Plan);
     
     // ========================================
     // INTERNAL HELPERS
@@ -539,7 +571,10 @@ private:
      */
     FString ExtractMaterialBaseName(const FString& TextureName);
 
-
+public:
+    
+    UFUNCTION(Exec)
+    void AuditTexture(const FString& SearchTerm);
 
 
     

@@ -275,6 +275,8 @@ struct FEnhancedScenePlan
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     TArray<FSpawnRequest> SpawnRequest;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TArray<FSpawnRequest> ParticleSpawns;
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     bool bSpawnActors=false;

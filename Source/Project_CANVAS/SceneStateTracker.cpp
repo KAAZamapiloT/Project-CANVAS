@@ -305,43 +305,40 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
         LocationEngine->ScanWorldLocationsAsync(GetWorld());
     }
 
-    // 2. Reset Scene
+    UE_LOG(LogTemp, Warning, TEXT(""));
+    UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
+    UE_LOG(LogTemp, Warning, TEXT("║  📥 Plan Received - Orchestrating Build   ║"));
+    UE_LOG(LogTemp, Warning, TEXT("╚═══════════════════════════════════════════╝"));
+
+    // 1. Reset Scene
     ClearAllGeneratedContent();
-    UE_LOG(LogTemp, Warning, TEXT("<Clearing ALL ACTORS>"));
     
+    // Copy plan for modification
     FEnhancedScenePlan EnrichedPlan = Plan;
 
-    
-    // 3. Synchronous Resolution (Assets)
-    UE_LOG(LogTemp, Display, TEXT("🔄 [1/3] ResolveTexturesFromNames..."));
-    ResolveTexturesFromNames(EnrichedPlan);
-    UE_LOG(LogTemp, Display, TEXT("✅ Texture resolution done"));
+    // 2. DELEGATE ASSET RESOLUTION (The new clean part)
+    if (AssetIndexer)
+    {
+        AssetIndexer->BatchResolveTextures(EnrichedPlan);
+        AssetIndexer->BatchResolveMeshes(EnrichedPlan);
+        AssetIndexer->BatchResolveParticles(EnrichedPlan);
+        AssetIndexer->ResolveEnvironmentAssets(EnrichedPlan);
+    }
 
-    UE_LOG(LogTemp, Display, TEXT("🔄 [2/3] ResolveMeshesFromNames..."));
-    ResolveMeshesFromNames(EnrichedPlan);
-    UE_LOG(LogTemp, Display, TEXT("✅ Mesh resolution done"));
-
-    ResolveEnvironmentAssets(EnrichedPlan);
-    // 4. Spatial Resolution (The Fork)
+    // 3. SPATIAL RESOLUTION (The part you are keeping here for batching logic)
     if (EnrichedPlan.bSpawnActors && EnrichedPlan.SpawnRequest.Num() > 0)
     {
         UE_LOG(LogTemp, Display, TEXT("🔄 [3/3] ResolveLocationsInPlan (Async)..."));
         
-        // 🛑 HANDOFF: This function will trigger the build later.
-        // We pass 'UserPrompt' so it can save history when done.
+        // This function stays in SceneStateTracker for now because it handles
+        // the PendingPlan state and the HTTP batch callback.
         ResolveLocationsInPlan(EnrichedPlan); 
-        
-        // We return here to prevent double-building.
         return; 
     }
 
-    // 5. Environment-Only Path (No Spawns)
-    // If we are here, we are only changing lights/fog/props, so we build immediately.
-    UE_LOG(LogTemp, Display, TEXT("ℹ️ No spawns requested. Executing Environment/Prop plan immediately."));
-
+    // 4. ENVIRONMENT ONLY PATH
     if (SceneBuilder)
     {
-        UE_LOG(LogTemp, Display, TEXT("🔄 Building scene..."));
         SceneBuilder->BuildScene(EnrichedPlan, GetWorld());
     }
 
@@ -462,7 +459,23 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
             BatchRequests.Add(Req);
         }
     }
+// particles locations
+    for (int32 i = 0; i < PendingPlan.ParticleSpawns.Num(); i++)
+    {
+        FSpawnRequest& Req = PendingPlan.ParticleSpawns[i];
+        FVector LocalResult = LocationEngine->ResolveLocationName(Req.LocationName);
 
+        if (!LocalResult.IsZero())
+        {
+            Req.SpawnLocation = LocalResult;
+            // Note: We usually DON'T mark location occupied for particles so they can overlap meshes
+            // LocationEngine->SetLocationOccupied(Req.LocationName, true); 
+        }
+        else
+        {
+            BatchRequests.Add(Req); // Add to same batch for AI resolution
+        }
+    }
     // The Fork
     if (BatchRequests.Num() == 0)
     {
@@ -481,6 +494,28 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
     }
 }
 
+void USceneStateTracker::ResolveParticlesFromNames(FEnhancedScenePlan& Plan)
+{
+    if (!AssetIndexer) return;
+
+    for (FSpawnRequest& Req : Plan.ParticleSpawns)
+    {
+        if (Req.AssetPath.IsEmpty()) continue;
+
+        // STRICT: Only look for particles
+        FString Path = AssetIndexer->ResolveParticlePath(Req.AssetPath);
+
+        if (!Path.IsEmpty())
+        {
+            Req.AssetPath = Path;
+            UE_LOG(LogTemp, Display, TEXT("   ✨ Resolved Particle: %s"), *Req.AssetPath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("   ❌ Particle Not Found: %s"), *Req.AssetPath);
+        }
+    }
+}
 
 void USceneStateTracker::ResolveEnvironmentAssets(FEnhancedScenePlan& Plan)
 {
@@ -537,6 +572,25 @@ void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResul
         LocationEngine->SetLocationOccupied(Req.LocationName, true);
     }
 
+
+    // TRACK 2: PARTICLE LOCATIONS (New Code - Add this block)
+    for (FSpawnRequest& Req : PendingPlan.ParticleSpawns)
+    {
+        if (!bApiFailed && AsyncResults.Contains(Req.ObjectName))
+        {
+            const FResolutionResult& Res = AsyncResults[Req.ObjectName];
+            Req.SpawnLocation = Res.Location;
+            // Particles usually ignore rotation/scale from AI, but you can apply if you want
+        }
+        
+        // Fallback for Particles
+        if (Req.SpawnLocation.IsNearlyZero())
+        {
+            FSpawnLocation FallbackLoc = LocationEngine->FindValidSpawnLocation(Req.LocationName, Req.ClearanceRadius);
+            Req.SpawnLocation = FallbackLoc.WorldPosition;
+        }
+    }
+    
     // ---------------------------------------------------------
     // STEP 2: GATHER ASSETS (SOFT REFERENCES)
     // ---------------------------------------------------------

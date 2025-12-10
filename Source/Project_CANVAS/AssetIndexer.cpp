@@ -1295,3 +1295,148 @@ FString UAssetIndexer::ResolveParticlePath(const FString& SearchName)
     UE_LOG(LogTemp, Warning, TEXT("   ❌ Particle not found: %s"), *SearchName);
     return TEXT("");
 }
+
+
+void UAssetIndexer::AuditTexture(const FString& SearchTerm)
+{
+    UE_LOG(LogTemp, Warning, TEXT("🔍 AUDIT: Searching database for '%s'"), *SearchTerm);
+    
+    // 1. Test Analysis
+    FParsedTextureInfo Info = AnalyzeTexturePath(SearchTerm);
+    UE_LOG(LogTemp, Warning, TEXT("   Analyzer sees: Original='%s' -> Base='%s' Type=%d"), 
+        *Info.OriginalPath, *Info.BaseName, (uint8)Info.Type);
+
+    // 2. Test Exact Lookup
+    FString SearchBase = Info.BaseName.ToLower();
+    if (MaterialDatabase.Contains(SearchBase))
+    {
+        const FTextureSet& Set = MaterialDatabase[SearchBase];
+        UE_LOG(LogTemp, Warning, TEXT("   ✅ DATABASE HIT for key '%s':"), *SearchBase);
+        UE_LOG(LogTemp, Display, TEXT("      BaseColor: %s"), *Set.BaseColorPath);
+        UE_LOG(LogTemp, Display, TEXT("      Normal:    %s"), *Set.NormalPath);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("   ❌ DATABASE MISS for key '%s'"), *SearchBase);
+    }
+
+    // 3. Dump similar keys
+    UE_LOG(LogTemp, Display, TEXT("   --- Similar Keys in DB ---"));
+    int32 Count = 0;
+    for (const auto& Pair : MaterialDatabase)
+    {
+        if (Pair.Key.Contains(SearchBase) && Count < 5)
+        {
+            UE_LOG(LogTemp, Display, TEXT("      Found: %s"), *Pair.Key);
+            Count++;
+        }
+    }
+}
+
+
+// AssetIndexer.cpp
+
+void UAssetIndexer::BatchResolveTextures(FEnhancedScenePlan& Plan)
+{
+    UE_LOG(LogTemp, Display, TEXT("🔄 AssetIndexer: Batch resolving textures for %d props..."), Plan.Props.Num());
+
+    for (FPropsModification& Prop : Plan.Props)
+    {
+        // 1. Check if we have a key to search for
+        FString TextureKey = Prop.Texture.BaseColorPath;
+        if (TextureKey.IsEmpty()) continue;
+
+        // 2. Perform the lookup (Self-call)
+        FTextureSet ResolvedSet = ResolveTextureFromName(TextureKey);
+
+        // 3. Logic: If BaseColor is missing but we found other maps (e.g. only Normal map exists)
+        bool bHasAnyMap = !ResolvedSet.BaseColorPath.IsEmpty() || 
+                          !ResolvedSet.NormalPath.IsEmpty() || 
+                          !ResolvedSet.RoughnessPath.IsEmpty();
+
+        if (bHasAnyMap)
+        {
+            // Apply the set
+            Prop.Texture = ResolvedSet; 
+        }
+        else
+        {
+            // Nothing found. Clear the invalid string so we don't try to load "Grass".
+            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Texture '%s' not found - Clearing property"), *TextureKey);
+            Prop.Texture.BaseColorPath.Empty(); 
+            Prop.Texture.NormalPath.Empty();
+            Prop.Texture.RoughnessPath.Empty();
+            Prop.Texture.MetallicPath.Empty();
+            Prop.Texture.AOPath.Empty();
+        }
+    }
+}
+
+void UAssetIndexer::BatchResolveMeshes(FEnhancedScenePlan& Plan)
+{
+    UE_LOG(LogTemp, Display, TEXT("🔄 AssetIndexer: Batch resolving meshes for %d spawns..."), Plan.SpawnRequest.Num());
+    
+    int32 Resolved = 0, Failed = 0;
+
+    for (FSpawnRequest& Spawn : Plan.SpawnRequest)
+    {
+        if (Spawn.AssetPath.IsEmpty())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Empty AssetPath for '%s'"), *Spawn.ObjectName);
+            Failed++;
+            continue;
+        }
+
+        // Use the Robust Variant Resolver we wrote earlier
+        FString ResolvedMesh = ResolveMeshToFullPathWithVariants(Spawn.AssetPath);
+        
+        if (!ResolvedMesh.IsEmpty())
+        {
+            Spawn.AssetPath = ResolvedMesh;
+            Resolved++;
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Mesh '%s' not found"), *Spawn.AssetPath);
+            Failed++;
+        }
+    }
+
+    if (Failed > 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("  ⚠️  BatchResolveMeshes: %d/%d resolved"), Resolved, Resolved + Failed);
+    }
+}
+
+void UAssetIndexer::BatchResolveParticles(FEnhancedScenePlan& Plan)
+{
+    for (FSpawnRequest& Req : Plan.ParticleSpawns)
+    {
+        if (Req.AssetPath.IsEmpty()) continue;
+
+        // STRICT: Only look for particles
+        FString Path = ResolveParticlePath(Req.AssetPath);
+
+        if (!Path.IsEmpty())
+        {
+            Req.AssetPath = Path;
+            UE_LOG(LogTemp, Display, TEXT("   ✨ Resolved Particle: %s"), *Req.AssetPath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("   ❌ Particle Not Found: %s"), *Req.AssetPath);
+        }
+    }
+}
+
+void UAssetIndexer::ResolveEnvironmentAssets(FEnhancedScenePlan& Plan)
+{
+    if (Plan.Environment.PostProcessingName.IsEmpty()) return;
+
+    FString FullPath = ResolvePostProcessPath(Plan.Environment.PostProcessingName);
+    
+    if (!FullPath.IsEmpty())
+    {
+        Plan.Environment.PostProcessingName = FullPath;
+    }
+}

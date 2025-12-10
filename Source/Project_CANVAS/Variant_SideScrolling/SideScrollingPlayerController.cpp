@@ -324,3 +324,9 @@ void ASideScrollingPlayerController::ShowOccupancy()
 		ClientMessage(TEXT("❌ LocationEngine not found"));
 	}
 }
+
+void ASideScrollingPlayerController::AuditTexture(FString ST)
+{
+	USceneStateTracker* Tracker =GetGameInstance()->GetSubsystem<USceneStateTracker>();
+	Tracker->AssetIndexer->AuditTexture(ST);
+}

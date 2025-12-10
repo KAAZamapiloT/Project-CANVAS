@@ -32,6 +32,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "NiagaraFunctionLibrary.h"
+#include "Materials/MaterialInstance.h"
 #include "NiagaraComponent.h"
 #include "NiagaraActor.h"
 // --- Define your content paths ---
@@ -74,12 +75,20 @@ void USceneBuilder::BuildScene(const FEnhancedScenePlan& Plan, UWorld* WorldCont
     {
         UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Skipping props (bModifyProps = false)"));
     }
-    if (Plan.SpawnRequest.Num() > 0&&Plan.bSpawnActors)
+    if (Plan.bSpawnActors)
     {
-        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawning %d new actors"), Plan.SpawnRequest.Num());
-        SpawnNewActors(Plan.SpawnRequest, WorldContext,Plan.ThemeName);
+        if (Plan.SpawnRequest.Num()>0)
+        {
+            UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawning %d new actors"), Plan.SpawnRequest.Num());
+            SpawnNewActors(Plan.SpawnRequest, WorldContext,Plan.ThemeName);
+        }
+       
 
-        SpawnParticles(Plan.SpawnRequest, WorldContext);
+        if (Plan.ParticleSpawns.Num() > 0)
+        {
+            UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Spawning Particles..."));
+            SpawnParticles(Plan.ParticleSpawns, WorldContext);
+        }
     }else
     {
         UE_LOG(LogTemp,Display,TEXT("SceneBuilder:Skiiping Spawn request no of spawns %d"),Plan.SpawnRequest.Num());
@@ -504,6 +513,7 @@ void USceneBuilder::ModifyPropsWithTag(const FPropsModification& PropMod, UWorld
     
     for (AActor* Actor : FoundActors)
     {
+        UE_LOG(LogTemp, Display, TEXT("   -> Modifying Actor: %s"), *Actor->GetName()); // ADD THIS
         UStaticMeshComponent* Mesh = Actor->FindComponentByClass<UStaticMeshComponent>();
         if (Mesh)
         {
@@ -518,6 +528,8 @@ void USceneBuilder::ModifyPropsWithTag(const FPropsModification& PropMod, UWorld
     }
 }
 
+// In SceneBuilder.cpp
+
 void USceneBuilder::ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet)
 {
     if (!Mesh) return;
@@ -526,50 +538,104 @@ void USceneBuilder::ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTex
     FStreamableManager& Streamer = UAssetManager::Get().GetStreamableManager();
     
     // Create a map of Material Parameter Names -> Texture Paths
+    // IMPORTANT: Ensure these parameter names match your Master Material exactly!
     TMap<FName, FString> TextureParams;
-    TextureParams.Add(TEXT("BaseTexture"), TextureSet.BaseColorPath); // Assumes MID param is "BaseTexture"
-    TextureParams.Add(TEXT("NormalMap"), TextureSet.NormalPath);     // Assumes MID param is "NormalMap"
+    TextureParams.Add(TEXT("BaseTexture"), TextureSet.BaseColorPath); 
+    TextureParams.Add(TEXT("NormalMap"), TextureSet.NormalPath);     
     TextureParams.Add(TEXT("RoughnessMap"), TextureSet.RoughnessPath);
     TextureParams.Add(TEXT("MetallicMap"), TextureSet.MetallicPath);
     TextureParams.Add(TEXT("AOMap"), TextureSet.AOPath);
+    // Added based on your updated structs
+    TextureParams.Add(TEXT("DisplacementMap"), TextureSet.DisplacementPath);
+    TextureParams.Add(TEXT("OpacityMap"), TextureSet.OpacityPath);
 
     for (const TPair<FName, FString>& Param : TextureParams)
     {
-        if (Param.Value.IsEmpty()) continue; // Skip if no texture was specified
+        // 1. Skip empty paths
+        if (Param.Value.IsEmpty()) continue; 
 
-        // Construct the full asset path from the name
-        // e.g., "T_Brick_N" -> "/Game/Textures/Generative/T_Brick_N.T_Brick_N"
-        FString FullPath = FString::Printf(TEXT("%s%s.%s"), *GTextureBasePath, *Param.Value, *Param.Value);
+        // =========================================================
+        // ROBUST PATH CONSTRUCTION
+        // =========================================================
+        FString FullPath = Param.Value;
+        
+        // A. Remove hidden whitespace (The #1 cause of StartsWith failure)
+        FullPath.TrimStartAndEndInline();
+
+        // B. Check if it is ALREADY a package path
+        // We check for "/Game/", "/Engine/", or "/Plugin/"
+        if (FullPath.StartsWith(TEXT("/Game")) || 
+            FullPath.StartsWith(TEXT("/Engine")) || 
+            FullPath.StartsWith(TEXT("/Script")))
+        {
+            // It is already a full path. Do NOT prepend base path.
+            // Safety: Fix any accidental double slashes
+            FullPath.ReplaceInline(TEXT("//"), TEXT("/"));
+        }
+        else
+        {
+            // It is a short name (e.g. "T_Brick_N"). 
+            // Only NOW do we prepend the base path.
+            FString NameOnly = FPaths::GetBaseFilename(FullPath);
+            FullPath = FString::Printf(TEXT("%s%s.%s"), *GTextureBasePath, *NameOnly, *NameOnly);
+        }
+        
+        // C. Clean up extension (LoadObject wants Package Name, not Filename)
+        if (FullPath.EndsWith(TEXT(".uasset")))
+        {
+            FullPath.RemoveFromEnd(TEXT(".uasset"));
+        }
+
         FSoftObjectPath AssetPath = FSoftObjectPath(FullPath);
         
         TWeakObjectPtr<UStaticMeshComponent> WeakMeshPtr = Mesh;
         FName ParamName = Param.Key;
         TWeakObjectPtr<USceneBuilder> WeakThis = this;
         
-        // --- FIX 1: Changed [this, ...] to [WeakThis, ...] ---
-        // Request the load. This runs on a background thread.
+        // 3. Request Async Load
         Streamer.RequestAsyncLoad(AssetPath, [WeakThis, WeakMeshPtr, ParamName, AssetPath]()
         {
-            // This lambda function runs on the GAME THREAD after loading is complete
-            // --- FIX 1: Single validity check for both weak pointers ---
+            // --- GAME THREAD CALLBACK ---
             if (!WeakThis.IsValid() || !WeakMeshPtr.IsValid()) return;
             
             UTexture2D* LoadedTexture = Cast<UTexture2D>(AssetPath.ResolveObject());
             if (LoadedTexture)
             {
                 // Get or create the dynamic material
-                // Now this line is safe and correct
                 UMaterialInstanceDynamic* MID = WeakThis->GetOrCreateDynamicMaterial(WeakMeshPtr.Get());
                 
                 if (MID)
                 {
-                    // This is thread-safe and applies the texture!
+
+                    static bool bDebugParamsLogged = false;
+if (!bDebugParamsLogged)
+{
+    // Fix: Use 'Parent' member variable safely
+    FString MatName = MID->Parent ? MID->Parent->GetName() : MID->GetName();
+    
+    UE_LOG(LogTemp, Warning, TEXT("==== MATERIAL PARAMETER DEBUG REPORT ===="));
+    UE_LOG(LogTemp, Warning, TEXT("Material Name: %s"), *MatName);
+        
+    TArray<FMaterialParameterInfo> OutInfo;
+    TArray<FGuid> OutIds;
+        
+    MID->GetAllTextureParameterInfo(OutInfo, OutIds);
+    for (const FMaterialParameterInfo& Info : OutInfo)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("  Found Texture Param: '%s'"), *Info.Name.ToString());
+    }
+    bDebugParamsLogged = true;
+    UE_LOG(LogTemp, Warning, TEXT("========================================="));
+}
+// --- DEBUG END ---
+                    // Log success
                     UE_LOG(LogTemp, Log, TEXT("SceneBuilder: Applying texture %s to param %s"), *LoadedTexture->GetName(), *ParamName.ToString());
                     MID->SetTextureParameterValue(ParamName, LoadedTexture);
                 }
             }
             else
             {
+                // This warning will now tell us exactly which path failed
                 UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Failed to load texture: %s"), *AssetPath.ToString());
             }
         });

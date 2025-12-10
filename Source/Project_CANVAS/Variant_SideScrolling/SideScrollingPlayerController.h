@@ -85,5 +85,8 @@ public:
 	/** Prints occupancy status of all locations */
 	UFUNCTION(Exec)
 	void ShowOccupancy();
+	
+	UFUNCTION(Exec)
+	void AuditTexture(FString ST);
 
 };

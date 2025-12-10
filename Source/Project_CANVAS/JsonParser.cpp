@@ -336,6 +336,26 @@ FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
                 }
             }
         }
+        if (JsonObject->HasField(TEXT("ParticleSpawns")))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* ParticleArray;
+            if (JsonObject->TryGetArrayField(TEXT("ParticleSpawns"), ParticleArray))
+            {
+                for (const TSharedPtr<FJsonValue>& Val : *ParticleArray)
+                {
+                    const TSharedPtr<FJsonObject>* ParticleObj;
+                    if (Val->TryGetObject(ParticleObj))
+                    {
+                        FSpawnRequest ParticleReq;
+                        // Re-use ParseSpawnRequest because the JSON structure is identical
+                        ParseSpawnRequest(*ParticleObj, ParticleReq);
+                        Plan.ParticleSpawns.Add(ParticleReq);
+                    }
+                }
+                UE_LOG(LogTemp, Display, TEXT("PARSER: Parsed %d particle spawns (ParticleSpawns)"), Plan.ParticleSpawns.Num());
+            }
+        }
+        
         if (JsonObject->HasField(TEXT("bSpawnActors")))
         {
             Plan.bSpawnActors = JsonObject->GetBoolField(TEXT("bSpawnActors"));
