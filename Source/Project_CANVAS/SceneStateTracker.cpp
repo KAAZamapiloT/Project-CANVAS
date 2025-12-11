@@ -352,79 +352,7 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
     UE_LOG(LogTemp, Warning, TEXT(""));
 }
 
-void USceneStateTracker::ResolveTexturesFromNames(FEnhancedScenePlan& Plan)
-{
-    if (!AssetIndexer) return;
 
-    for (FPropsModification& Prop : Plan.Props)
-    {
-        FString TextureKey = Prop.Texture.BaseColorPath;
-        if (TextureKey.IsEmpty()) continue;
-
-        FTextureSet ResolvedSet = AssetIndexer->ResolveTextureFromName(TextureKey);
-
-        // If BaseColor is missing but we found other maps (e.g. only Normal map exists for 'Grass')
-        bool bHasAnyMap = !ResolvedSet.BaseColorPath.IsEmpty() || 
-                          !ResolvedSet.NormalPath.IsEmpty() || 
-                          !ResolvedSet.RoughnessPath.IsEmpty();
-
-        if (bHasAnyMap)
-        {
-            // Apply the set. 
-            // IMPORTANT: This overwrites the "Grass" string with "" if BaseColor was missing in the set.
-            Prop.Texture = ResolvedSet; 
-        }
-        else
-        {
-            // Nothing found at all. Clear the invalid string so we don't try to load "Grass".
-            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Texture '%s' not found - Clearing property"), *TextureKey);
-            Prop.Texture.BaseColorPath.Empty(); 
-            Prop.Texture.NormalPath.Empty();
-            Prop.Texture.RoughnessPath.Empty();
-            Prop.Texture.MetallicPath.Empty();
-            Prop.Texture.AOPath.Empty();
-        }
-    }
-}
-
-void USceneStateTracker::ResolveMeshesFromNames(FEnhancedScenePlan& Plan)
-{
-    if (!AssetIndexer)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ ResolveMeshesFromNames FAILED: AssetIndexer is null"));
-        return;
-    }
-
-    int32 Resolved = 0, Failed = 0;
-
-    for (FSpawnRequest& Spawn : Plan.SpawnRequest)
-    {
-        if (Spawn.AssetPath.IsEmpty())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Empty AssetPath for '%s'"), *Spawn.ObjectName);
-            Failed++;
-            continue;
-        }
-
-        FString ResolvedMesh = AssetIndexer->ResolveMeshToFullPath(Spawn.AssetPath);
-        if (!ResolvedMesh.IsEmpty())
-        {
-            Spawn.AssetPath = ResolvedMesh;
-            Resolved++;
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("  ⚠️  Mesh '%s' not found"), *Spawn.AssetPath);
-            Failed++;
-        }
-    }
-
-    if (Failed > 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("  ⚠️  ResolveMeshesFromNames: %d/%d resolved"), 
-            Resolved, Resolved + Failed);
-    }
-}
 
 void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
 {
@@ -491,29 +419,6 @@ void USceneStateTracker::ResolveLocationsInPlan(FEnhancedScenePlan& Plan)
             LocationEngine->GetLocationContextForLLM(),
             FOnBatchLocationsResolved::CreateUObject(this, &USceneStateTracker::FinalizeSceneBuild)
         );
-    }
-}
-
-void USceneStateTracker::ResolveParticlesFromNames(FEnhancedScenePlan& Plan)
-{
-    if (!AssetIndexer) return;
-
-    for (FSpawnRequest& Req : Plan.ParticleSpawns)
-    {
-        if (Req.AssetPath.IsEmpty()) continue;
-
-        // STRICT: Only look for particles
-        FString Path = AssetIndexer->ResolveParticlePath(Req.AssetPath);
-
-        if (!Path.IsEmpty())
-        {
-            Req.AssetPath = Path;
-            UE_LOG(LogTemp, Display, TEXT("   ✨ Resolved Particle: %s"), *Req.AssetPath);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("   ❌ Particle Not Found: %s"), *Req.AssetPath);
-        }
     }
 }
 

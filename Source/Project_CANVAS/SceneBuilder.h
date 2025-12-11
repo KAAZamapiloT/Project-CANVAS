@@ -44,7 +44,7 @@ private:
 	void SpawnParticles(const TArray<FSpawnRequest>& SpawnRequests, UWorld* WorldContext);
 	// Props helpers
 	void ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext);
-	void ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet);
+	void ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet,int32 MaterialIndex);
 	void ApplyParticleEffects(AActor* Actor, const FString& ParticleEffectsName);
     //Lighting Helpers
 	static void ApplyLightingSettings(const FLightingPlan& Lighting, UWorld* WorldContext);

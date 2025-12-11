@@ -498,39 +498,91 @@ void USceneBuilder::SpawnParticles(const TArray<FSpawnRequest>& SpawnRequests, U
 // --- Private: Props Helpers ---
 
 void USceneBuilder::ModifyPropsWithTag(const FPropsModification& PropMod, UWorld* WorldContext)
-{  // ✅ FIXED: Added opening brace
-    // Find all actors with the specified tag (e.g., "Background.Wall")
+{
     TArray<AActor*> FoundActors;
     UGameplayStatics::GetAllActorsWithTag(WorldContext, FName(*PropMod.TagName), FoundActors);
     
-    if (FoundActors.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Found 0 actors with tag: %s"), *PropMod.TagName);  // ✅ FIXED: Added closing )
-        return;
-    }
+    if (FoundActors.Num() == 0) return;
     
-    UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Modifying %d actors with tag: %s"), FoundActors.Num(), *PropMod.TagName);
-    
+    // Define keywords for parts we generally WANT to replace (Structural)
+    // You can move this to a config or header later
+    const TArray<FString> ReplaceableKeywords = { 
+        TEXT("Wall"), TEXT("Floor"), TEXT("Structure"), TEXT("Base"), 
+        TEXT("Concrete"), TEXT("Plaster"), TEXT("Paint"), TEXT("Main") 
+    };
+
+    // Define keywords for parts we MUST PRESERVE (Details)
+    const TArray<FString> PreserveKeywords = { 
+        TEXT("Glass"), TEXT("Window"), TEXT("Light"), TEXT("Lamp"), 
+        TEXT("Emissive"), TEXT("Glow"), TEXT("Screen"), TEXT("Metal"), 
+        TEXT("Trim"), TEXT("Rubber"), TEXT("Handle"), TEXT("Knob")
+    };
+
     for (AActor* Actor : FoundActors)
     {
-        UE_LOG(LogTemp, Display, TEXT("   -> Modifying Actor: %s"), *Actor->GetName()); // ADD THIS
-        UStaticMeshComponent* Mesh = Actor->FindComponentByClass<UStaticMeshComponent>();
-        if (Mesh)
+        TArray<UStaticMeshComponent*> MeshComponents;
+        Actor->GetComponents<UStaticMeshComponent>(MeshComponents);
+
+        for (UStaticMeshComponent* Mesh : MeshComponents)
         {
-            ApplyTextureSetToMesh(Mesh, PropMod.Texture);
-            UMaterialInstanceDynamic* MID = GetOrCreateDynamicMaterial(Mesh, 0);
-            if (MID)
+            if (!Mesh) continue;
+
+            int32 NumMaterials = Mesh->GetNumMaterials();
+            for (int32 i = 0; i < NumMaterials; i++)
             {
-                MID->SetVectorParameterValue(TEXT("BaseColorTint"), PropMod.PropColor);
+                // 1. Get the Original Material Interface
+                UMaterialInterface* Mat = Mesh->GetMaterial(i);
+                if (!Mat) continue;
+
+                FString MatName = Mat->GetName();
+
+                // 2. SAFETY CHECK: Skip if it's a detail part
+                bool bShouldPreserve = false;
+                for (const FString& Key : PreserveKeywords)
+                {
+                    if (MatName.Contains(Key, ESearchCase::IgnoreCase)) 
+                    {
+                        bShouldPreserve = true;
+                        break;
+                    }
+                }
+
+                if (bShouldPreserve)
+                {
+                    UE_LOG(LogTemp, Verbose, TEXT("   Skipping detail material '%s' on index %d"), *MatName, i);
+                    continue; 
+                }
+
+                // 3. OPTIONAL: Strict Check (Only replace if it matches "Wall" etc.)
+                // If you comment this out, it will replace everything that ISN'T a detail.
+                /*
+                bool bIsTargetSurface = false;
+                for (const FString& Key : ReplaceableKeywords) {
+                    if (MatName.Contains(Key, ESearchCase::IgnoreCase)) {
+                        bIsTargetSurface = true;
+                        break;
+                    }
+                }
+                if (!bIsTargetSurface) continue; 
+                */
+
+                // 4. Apply Changes
+                ApplyTextureSetToMesh(Mesh, PropMod.Texture, i);
+
+                UMaterialInstanceDynamic* MID = GetOrCreateDynamicMaterial(Mesh, i);
+                if (MID)
+                {
+                    MID->SetVectorParameterValue(TEXT("BaseColorTint"), PropMod.PropColor);
+                }
             }
-            ApplyParticleEffects(Actor, PropMod.ParticleEffects);
         }
+        ApplyParticleEffects(Actor, PropMod.ParticleEffects);
     }
 }
 
 // In SceneBuilder.cpp
 
-void USceneBuilder::ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet)
+void USceneBuilder::ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTextureSet& TextureSet,int32 MaterialIndex)
 {
     if (!Mesh) return;
 
@@ -593,7 +645,7 @@ void USceneBuilder::ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTex
         TWeakObjectPtr<USceneBuilder> WeakThis = this;
         
         // 3. Request Async Load
-        Streamer.RequestAsyncLoad(AssetPath, [WeakThis, WeakMeshPtr, ParamName, AssetPath]()
+        Streamer.RequestAsyncLoad(AssetPath, [WeakThis, WeakMeshPtr, ParamName, AssetPath,MaterialIndex]()
         {
             // --- GAME THREAD CALLBACK ---
             if (!WeakThis.IsValid() || !WeakMeshPtr.IsValid()) return;
@@ -602,7 +654,7 @@ void USceneBuilder::ApplyTextureSetToMesh(UStaticMeshComponent* Mesh, const FTex
             if (LoadedTexture)
             {
                 // Get or create the dynamic material
-                UMaterialInstanceDynamic* MID = WeakThis->GetOrCreateDynamicMaterial(WeakMeshPtr.Get());
+                UMaterialInstanceDynamic* MID = WeakThis->GetOrCreateDynamicMaterial(WeakMeshPtr.Get(),MaterialIndex);
                 
                 if (MID)
                 {

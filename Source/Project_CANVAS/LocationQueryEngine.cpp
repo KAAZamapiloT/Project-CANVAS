@@ -2295,3 +2295,73 @@ FVector ULocationQueryEngine::GetBestAnchorFor(const FString& Tag, float MinClea
     // Return ZeroVector to signal "Use Procedural Fallback"
     return FVector::ZeroVector;
 }
+
+// LocationQueryEngine.cpp
+
+bool ULocationQueryEngine::RequiresAsyncResolution(const FEnhancedScenePlan& Plan) const
+{
+    // Simple heuristic: If plan has spawns and we have an LLM configured, we might need it.
+    // A more complex check could peek at LocationNames to see if they are semantic ("mysterious corner").
+    return (Plan.SpawnRequest.Num() > 0 && LLMResolver && LLMResolver->IsEnabled());
+}
+
+void ULocationQueryEngine::ProcessLocalAndBatchRemote(
+    FEnhancedScenePlan& Plan, 
+    TArray<FSpawnRequest>& OutRemoteRequests)
+{
+    UE_LOG(LogTemp, Display, TEXT("🔍 LocationEngine: Separating Local vs Remote requests..."));
+
+    // 1. Process Spawn Requests
+    for (FSpawnRequest& Req : Plan.SpawnRequest)
+    {
+        // Try Local Resolution First (Database or Geometric Fallback)
+        FVector LocalResult = ResolveLocationName(Req.LocationName);
+
+        // ResolveLocationName returns ZeroVector if it fails/needs AI
+        if (!LocalResult.IsZero())
+        {
+            Req.SpawnLocation = LocalResult;
+            SetLocationOccupied(Req.LocationName, true); // Mark used
+            UE_LOG(LogTemp, Display, TEXT("   ✅ Local Resolve: %s -> %s"), *Req.ObjectName, *LocalResult.ToString());
+        }
+        else
+        {
+            // Failed local -> Add to Batch
+            UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Local Failed for '%s'. Queueing for Batch AI."), *Req.ObjectName);
+            OutRemoteRequests.Add(Req);
+        }
+    }
+
+    // 2. Process Particle Requests (Same logic, but don't mark occupancy)
+    for (FSpawnRequest& Req : Plan.ParticleSpawns)
+    {
+        FVector LocalResult = ResolveLocationName(Req.LocationName);
+        if (!LocalResult.IsZero())
+        {
+            Req.SpawnLocation = LocalResult;
+            // Particles generally don't block other spawns
+        }
+        else
+        {
+            OutRemoteRequests.Add(Req);
+        }
+    }
+}
+
+void ULocationQueryEngine::ResolveBatchAsync(
+    const TArray<FSpawnRequest>& Requests,
+    FOnBatchLocationsResolved Callback)
+{
+    if (!LLMResolver)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ ResolveBatchAsync Failed: No LLM Resolver configured"));
+        return;
+    }
+
+    // Delegate to the composed resolver component
+    LLMResolver->ResolveBatchLocationsAsync(
+        Requests,
+        GetLocationContextForLLM(), // Build the big context string
+        Callback
+    );
+}

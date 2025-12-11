@@ -115,30 +115,14 @@ public:
 	// ========================================================================
 	// ENRICHMENT FUNCTIONS - Resolve Semantic Names to Asset Paths
 	// ========================================================================
-
-	/**
-	 * Resolves semantic texture names in the plan (e.g., "Concrete") to full asset paths.
-	 * @param Plan The scene plan, which will be modified in place.
-	 */
-	UFUNCTION()
-	void ResolveTexturesFromNames(FEnhancedScenePlan& Plan);
-
-	/**
-	 * Resolves semantic mesh names in the plan (e.g., "Chair") to full asset paths.
-	 * @param Plan The scene plan, which will be modified in place.
-	 */
-	UFUNCTION()
-	void ResolveMeshesFromNames(FEnhancedScenePlan& Plan);
-
+	
 	/**
 	 * Resolves semantic location names in the plan (e.g., "PLAYER_FRONT") to world coordinates.
 	 * @param Plan The scene plan, which will be modified in place.
 	 */
 	UFUNCTION()
 	void ResolveLocationsInPlan(FEnhancedScenePlan& Plan);
-
-    UFUNCTION()
-	void ResolveParticlesFromNames(FEnhancedScenePlan& Plan);
+	
 	// ========================================================================
 	// ACTOR MANAGEMENT - Query & Removal Functions
 	// ========================================================================

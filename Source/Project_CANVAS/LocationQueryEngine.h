@@ -953,4 +953,35 @@ public:
     UFUNCTION(BlueprintCallable, Category = "LocationEngine")
     ULocationResolverLLM* GetLLMResolver() const { return LLMResolver; }
 
+public:
+    // ========================================
+    // BATCH RESOLUTION SUPPORT
+    // ========================================
+
+    /**
+     * @brief Checks the plan and determines which locations need AI resolution.
+     * @param Plan The scene plan to analyze.
+     * @return true if there are locations requiring async AI resolution.
+     */
+    bool RequiresAsyncResolution(const FEnhancedScenePlan& Plan) const;
+
+    /**
+     * @brief Separates requests into "Fast Local" and "Slow Remote" batches.
+     * Resolves local ones immediately in-place.
+     * * @param Plan The plan to modify. Local resolutions are applied directly.
+     * @param OutRemoteRequests Populated with requests that need LLM.
+     */
+    void ProcessLocalAndBatchRemote(
+        FEnhancedScenePlan& Plan, 
+        TArray<FSpawnRequest>& OutRemoteRequests
+    );
+
+    /**
+     * @brief Wrapper to start the async batch via the composed LLM resolver.
+     */
+    void ResolveBatchAsync(
+        const TArray<FSpawnRequest>& Requests,
+        FOnBatchLocationsResolved Callback
+    );
+
 };
