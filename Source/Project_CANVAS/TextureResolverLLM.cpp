@@ -37,9 +37,7 @@ FString UTextureResolverLLM::CreateMasterPrompt(FString UserPrompt,UAssetIndexer
         "2. TEXTURES: Use ONLY base names (NOT full paths)\n"
         "   System handles loading: material_name_diff_2k, material_name_rough_2k, etc.\n"
         "3. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
-       
         "4. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n"
-      
         "\n"
         "5.ALWAYS set bModifyProps to true if the theme requires a material change (e.g. converting concrete walls to wood)."
         "\n"
@@ -73,14 +71,84 @@ FString UTextureResolverLLM::CreateMasterPrompt(FString UserPrompt,UAssetIndexer
 
 void UTextureResolverLLM::OnResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSucessfull)
 {
+	if (!bWasSucessfull&&!Response.IsValid())
+	{
+		UE_LOG(LogTemp,Error,TEXT("%s"),TEXT("UTextureResolverLLM:Error receiving response"));
+		return;
+	}
 	FString ResponseString = Response->GetContentAsString();
+
+	TSharedPtr<FJsonObject> Object;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseString);
+
+	if (FJsonSerializer::Deserialize(Reader, Object)&&Object.IsValid())
+	{
+		FString LLMResponseString;
+
+		const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
+
+		if (Object->TryGetArrayField(TEXT("Choices"), ChoicesArray)&&ChoicesArray->Num()>0)
+		{
+			TSharedPtr<FJsonObject> FirstChoice=(*ChoicesArray)[0]->AsObject();
+			TSharedPtr<FJsonObject> MessegeObj=FirstChoice->GetObjectField(TEXT("message"));
+
+			LLMResponseString=MessegeObj->GetStringField(TEXT("content"));
+		}else
+		{
+			UE_LOG(LogTemp,Error,TEXT("TextureResolverLLM::OnResponseReceived error"));
+return;
+		}
+		int32 JsonStart=-1;
+		int32 JsonEnd=-1;
+
+		if (LLMResponseString.FindChar(TEXT('{'),JsonStart)&&
+			LLMResponseString.FindChar(TEXT('}'),JsonEnd)&&
+			JsonStart<JsonEnd)
+		{
+			LLMResponseString=LLMResponseString.Mid(JsonStart,JsonEnd-JsonStart+1);
+		}else
+		{
+			UE_LOG(LogTemp, Error, TEXT("JSON parsing error: Could not find valid braces."));
+			LLMResponseString = "";
+		}
+
+if (!LLMResponseString.IsEmpty())
+{
+	TArray<FString> Lines;
+	LLMResponseString.ParseIntoArrayLines(Lines);
+	FString CleanedJSON;
+
+	for (const FString& Line:Lines)
+	{
+		FString ProcessedLine=Line;
+		int32 CommentIndex=ProcessedLine.Find(TEXT("//"));
+		if (CommentIndex!=INDEX_NONE)
+		{
+			ProcessedLine=ProcessedLine.Left(CommentIndex);
+		}
+		ProcessedLine=ProcessedLine.TrimStartAndEnd();
+
+		if (!ProcessedLine.IsEmpty())
+		{
+			CleanedJSON+=ProcessedLine+TEXT("\n");
+		}
+	}
+	LLMResponseString=CleanedJSON.TrimStartAndEnd();
+	
+}
+		// TODO :  GET PRUNED CONTEXT 
+TArray<FString> Tags={"lets see"};
+		OnTexturePlanReady.Broadcast(LLMResponseString,Tags);
+	}
+
+	
 
 	
 }
 
 void UTextureResolverLLM::RequestPlan(FString UserPrompt, UWorld* World, class USceneHistoryManager* HistoryManager)
 {
-	USceneStateTracker* Tracker=UGameplayStatics::GetGameInstance()->GetSubsystem<USceneStateTracker>();
+	USceneStateTracker* Tracker=UGameplayStatics::GetGameInstance(World)->GetSubsystem<USceneStateTracker>();
 	if (!Tracker)
 	{
 		return;

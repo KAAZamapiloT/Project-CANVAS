@@ -15,9 +15,9 @@
 void ULightingResolverLLM::RequestPlan(FString UserPrompt, UWorld* World, class USceneHistoryManager* HistoryManager)
 {
 
+    USceneStateTracker*Tracker=UGameplayStatics::GetGameInstance(World)->GetSubsystem<USceneStateTracker>();
 
-
-	FString PlanPrompt=ConstructPlanPrompt(UserPrompt);
+	FString PlanPrompt=ConstructPlanPrompt(UserPrompt,Tracker->AssetIndexer);
 
 	FString Key=API_KEY::GetKey();
 
@@ -29,6 +29,7 @@ void ULightingResolverLLM::RequestPlan(FString UserPrompt, UWorld* World, class 
 
 	
 FString Payload = FString::Printf(TEXT(
+	
 		"{"
 		"\"model\":\"openai/gpt-oss-120b\","
 		"\"messages\":["
@@ -116,7 +117,7 @@ void ULightingResolverLLM::OnPlanReceived(FHttpRequestPtr Request, FHttpResponse
 			LLMResponseString = CleanedJSON.TrimStartAndEnd();
 			
 		}
-		OnPlanReady.Broadcast(LLMResponseString);
+		OnLightingPlanReady.Broadcast(LLMResponseString);
 	}else
 	{
 		UE_LOG(LogTemp,Error,TEXT("ULightingResolverLLM::OnPlanReceived Error"));
@@ -126,10 +127,24 @@ void ULightingResolverLLM::OnPlanReceived(FHttpRequestPtr Request, FHttpResponse
 	
 }
 
-FString ULightingResolverLLM::ConstructPlanPrompt(FString UserPrompt)
+FString ULightingResolverLLM::ConstructPlanPrompt(FString UserPrompt,UAssetIndexer*Indexer)
 {
-	FString Result =
-   "\"Environment\": {\n"
+	TArray<FString> Lines=Indexer->GetDiscoveredPostProcessNames();
+	FString PPMString=FString::Join(Lines,TEXT("\" \""));
+	FString Result =FString::Printf(TEXT(
+	"You are an expert game environment designer specializing in Unreal Engine scenes.\n"
+   "Generate a JSON scene plan based on the user request.\n\n"
+   "USER REQUEST: \"%s\"\n\n"
+"=== AVAILABLE SPAWNABLE ASSETS (Use for SpawnRequest.AssetPath) ===\n"
+        "You may use EXACT names from EITHER list below:\n"
+        "\n"
+        "=== AVAILABLE POST-PROCESS MATERIALS (for Environment.PostProcessingName) ===\n"
+        "[\"%s\"]\n\n"
+        "== CRITICAL RULES ===\n"
+        "1. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n"
+        
+        "=== JSON SCHEMA ===\n"
+        "\"Environment\": {\n"
 		"    \"FogDensity\": 0.0-5.0,\n"
 		"    \"FogColor\": [R:0-255, G:0-255, B:0-255],\n"
 		"    \"PostProcessingName\": \"material_name\",\n"
@@ -142,7 +157,11 @@ FString ULightingResolverLLM::ConstructPlanPrompt(FString UserPrompt)
 		"      \"SkyLightIntensity\": 0.0-10.0,\n"
 		"      \"SunTemperature\": 1000-15000\n"
 		"    }\n"
-		"  },\n";
+		"  },\n")
+		,*UserPrompt,
+        *PPMString
+		);
+  ;
     
 
 

@@ -21,7 +21,7 @@ class PROJECT_CANVAS_API UGenAISystem : public UObject
 {
 	GENERATED_BODY()
 public:
-	
+	UGenAISystem();
 	/**
  * Construct comprehensive LLM prompt with available assets from AssetIndexer
  * Gets all materials, meshes, tags, and post-process materials directly
@@ -48,4 +48,13 @@ public:
 
 private:
 	FString LastUserPrompt ;
+
+	UFUNCTION()
+	void OnTexturePlanReady(FString TexturePlan, TArray<FString> ActorTags);
+
+	UFUNCTION()
+	void OnMeshPlanReady(FString Plan,FString Choices);
+
+	UFUNCTION()
+	void OnLightingPlanReady(FString Plan);
 };

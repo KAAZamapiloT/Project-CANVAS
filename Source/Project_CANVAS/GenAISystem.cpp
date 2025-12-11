@@ -65,8 +65,8 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
             "{\"role\":\"system\",\"content\":\"You are a JSON generator for a 3D scene builder. Only respond with valid JSON, no markdown, no code blocks.\"},"
             "{\"role\":\"user\",\"content\":\"%s\"}"
         "],"
-        "\"temperature\":0.2,"
-        "\"max_tokens\":7000"
+        "\"temperature\":0.4,"
+        "\"max_tokens\":8000"
         "}"
     ), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
 
@@ -194,7 +194,23 @@ void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponseP
 	
 }
 
+void UGenAISystem::OnTexturePlanReady(FString TexturePlan, TArray<FString> ActorTags)
+{
+}
 
+void UGenAISystem::OnMeshPlanReady(FString Plan, FString Choices)
+{
+}
+
+void UGenAISystem::OnLightingPlanReady(FString Plan)
+{
+}
+
+
+UGenAISystem::UGenAISystem()
+{
+	
+}
 
 FString UGenAISystem::ConstructMasterPrompt(
     FString UserPrompt,

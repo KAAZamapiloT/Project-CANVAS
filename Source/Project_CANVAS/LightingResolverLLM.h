@@ -11,9 +11,9 @@
  * 
  */
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlanReady,FString,PlanString);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLightingPlanReady,FString,PlanString);
 UCLASS()
-class PROJECT_CANVAS_API ULightingResolverLLM : public UObject
+class PROJECT_CANVAS_API ULightingResolverLLM : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 public:
@@ -22,8 +22,20 @@ public:
 	
 	void OnPlanReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 	
-	FString ConstructPlanPrompt(FString UserPrompt);
+	FString ConstructPlanPrompt(FString UserPrompt,class UAssetIndexer*Indexer);
 	
     UPROPERTY(BlueprintAssignable)
-	FOnPlanReady OnPlanReady;
+	FOnLightingPlanReady OnLightingPlanReady;
+
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override
+    {
+        Super::Initialize(Collection);
+    }
+	virtual void Deinitialize() override
+	{
+		Super::Deinitialize();
+	}
+
+	
+
 };

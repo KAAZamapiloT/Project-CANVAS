@@ -12,9 +12,9 @@
  * IT WILL CHOSE AND PLAN AND BRODCAST IT I AM ALSO THINK OF BRODCASTING ALLL CANDIDATES TEXTURES FOR FINALPLAN REFINEMENT 
  */
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTextureResolution,TArray<FString>,TexturePlan,TArray<FString>,ActorTags);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTexturePlanReady,FString,TexturePlan,TArray<FString>,ActorTags);
 UCLASS()
-class PROJECT_CANVAS_API UTextureResolverLLM : public UObject
+class PROJECT_CANVAS_API UTextureResolverLLM : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 public:
@@ -26,5 +26,14 @@ public:
 	void RequestPlan(FString UserPrompt,UWorld*World,class USceneHistoryManager*HistoryManager);
 
 	UPROPERTY(BlueprintAssignable)
-    FOnTextureResolution OnTextureResolution;	
+   FOnTexturePlanReady OnTexturePlanReady;
+
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override
+	{
+		Super::Initialize(Collection);
+	}
+	virtual void Deinitialize() override
+	{
+		Super::Deinitialize();
+	}
 };
