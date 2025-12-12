@@ -63,6 +63,7 @@ private:
 	
 	// Intermediate Data Storage (The "Puzzle Pieces")
 	FString DraftMeshJson;
+	
 	FString DraftTexJson;
 
 

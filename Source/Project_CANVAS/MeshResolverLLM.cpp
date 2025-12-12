@@ -9,11 +9,8 @@
 #include "RandomAssetSelector.h"
 #include "Kismet/GameplayStatics.h"
 
-FString UMeshResolverLLM::CreateMeshPayload(FString UserPrompt, UAssetIndexer*Indexer)
+FString UMeshResolverLLM::CreateMeshPayload(FString UserPrompt, UAssetIndexer* Indexer)
 {
-
-	// Use the smart list which prioritizes Group Names ("Chair") over specific variants ("Chair_01")
-    // This reduces token usage and improves LLM reasoning.
     TArray<FString> Meshes = Indexer->GetSmartMeshList(); 
     TArray<FString> Particles = Indexer->GetDiscoveredParticleNames();
 
@@ -21,41 +18,68 @@ FString UMeshResolverLLM::CreateMeshPayload(FString UserPrompt, UAssetIndexer*In
     FString ParticleString = FString::Join(Particles, TEXT("\", \""));
 
     FString Payload = FString::Printf(TEXT(
-        "You are an expert game environment designer specializing in Unreal Engine scenes.\n"
-        "Generate a JSON scene plan based on the user request.\n\n"
-        "USER REQUEST: \"%s\"\n\n"
-       "=== AVAILABLE SPAWNABLE ASSETS (Use for SpawnRequest.AssetPath) ===\n"
-        "You may use EXACT names from EITHER list below:\n"
-        "\n"
-        "--- STATIC MESHES (Object Groups) ---\n"
-        "[\"%s\"]\n"
-        "\n"
-        "--- PARTICLE EFFECTS ---\n"
-        "[\"%s\"]\n"
-        "\n"
-        "== CRITICAL RULES ===\n"
-        "1. VARIETY: If you select a group name like 'Chair', the system will automatically pick random variants (Chair_01, Chair_02).\n"
-        "2. SPLIT ASSETS: Meshes -> 'SpawnRequest', Particles -> 'ParticleSpawn'.\n"
-        "3. LOCATIONS: Distribute objects across CENTER, BACKGROUND, LEFT_SIDE, RIGHT_SIDE.\n"
-        "4. SCALE: Use reasonable scales [0.8 - 2.5]. No leading zeros.\n"
+        "ROLE: You are the Lead Structural Engineer & Layout Specialist for a game scene.\n"
+        "TASK: Analyze the Client Request and generate a layout plan using ONLY the provided asset catalog.\n\n"
+        
+        "CLIENT REQUEST: \"%s\"\n\n"
+        
+        "=== CATALOG OF APPROVED ASSETS (Inventory) ===\n"
+        "You must select assets exclusively from these lists. Do not hallucinate files.\n\n"
+        
+        "--- 1. STATIC MESH GROUPS (Solid Objects) ---\n"
+        "Use these for 'SpawnRequest'.\n"
+        "[\"%s\"]\n\n"
+        
+        "--- 2. PARTICLE SYSTEMS (Atmosphere/FX) ---\n"
+        "Use these for 'ParticleSpawns'.\n"
+        "[\"%s\"]\n\n"
+        
+        "=== SPATIAL STRATEGY (Player-Relative Coordinates) ===\n"
+        "The Player is at (0,0,0). Use these distinct zones:\n"
+        "- CENTER: (0 to 300) units. The focal point/Hero prop.\n"
+        "- BACKGROUND: (+500 to +1500) units Y-axis (Away from player). Large structures.\n"
+        "- FOREGROUND: (-200 to 0) units Y-axis (Between camera and player). Small debris.\n"
+        "- LEFT_SIDE: (-500 to -200) units X-axis.\n"
+        "- RIGHT_SIDE: (+200 to +500) units X-axis.\n\n"
+
+        "=== DATA INTEGRITY RULES ===\n"
+        "1. SEGREGATION: Solid objects -> 'SpawnRequest'. FX -> 'ParticleSpawns'.\n"
+        "2. ROTATION: Use [Pitch, Yaw, Roll] in degrees. (Yaw = Z-axis rotation).\n"
+        "3. SCALE: Realistic sizing.\n"
+        "   - Buildings: 1.5 to 3.0\n"
+        "   - Props: 0.8 to 1.2\n"
+        "4. TAGS: Use format 'GenAI.Structure.[ObjectName]' or 'GenAI.FX.[ObjectName]'.\n"
+        "5. OUTPUT FORMAT: Return strictly valid JSON matching the schema below.\n"
         "\n"
         "=== JSON SCHEMA ===\n"
         "{\n"
-        "  \"ThemeName\": \"descriptive_name\",\n"
+        "  \"ThemeName\": \"short_descriptive_name\",\n"
         "  \"SpawnRequest\": [\n"
         "    {\n"
-        "      \"AssetPath\": \"exact_mesh_name\",\n"
-        "      \"ObjectName\": \"unique_instance_name\",\n"
-        "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
+        "      \"AssetPath\": \"EXACT_NAME_FROM_CATALOG\",\n"
+        "      \"ObjectName\": \"unique_id_string\",\n"
+        "      \"LocationName\": \"SEMANTIC_ZONE_NAME\",\n"
+        "      \"LocationOffset\": [X, Y, Z],\n"
+        "      \"Rotation\": [Pitch, Yaw, Roll],\n"
+        "      \"Scale\": [X, Y, Z],\n"
+        "      \"Tag\": \"GenAI.Type.Name\",\n"
+        "      \"ClearanceRadius\": 150.0\n"
+        "    }\n"
+        "  ],\n"
+        "  \"ParticleSpawns\": [\n"
+        "    {\n"
+        "      \"AssetPath\": \"EXACT_NAME_FROM_PARTICLE_LIST\",\n"
+        "      \"ObjectName\": \"unique_fx_id\",\n"
+        "      \"LocationName\": \"SEMANTIC_ZONE_NAME\",\n"
         "      \"LocationOffset\": [0, 0, 0],\n"
         "      \"Rotation\": [0, 0, 0],\n"
         "      \"Scale\": [1, 1, 1],\n"
-        "      \"ClearanceRadius\": 150\n"
+        "      \"Tag\": \"GenAI.FX.Name\",\n"
+        "      \"ClearanceRadius\": 150.0\n"
         "    }\n"
-        "  ],\n"
-        "  \"ParticleSpawn\": []\n"
+        "  ]\n"
         "}\n\n"
-        "Generate the JSON now:"
+        "GENERATE STRUCTURAL PLAN:"
     ),
     *UserPrompt,
     *MeshString,
@@ -64,7 +88,6 @@ FString UMeshResolverLLM::CreateMeshPayload(FString UserPrompt, UAssetIndexer*In
 
     return Payload;
 }
-
 void UMeshResolverLLM::RequestPlan(FString UserPrompt, UWorld* World, class USceneHistoryManager* HistoryManager)
 {
 	USceneStateTracker*Tracker=UGameplayStatics::GetGameInstance(World)->GetSubsystem<USceneStateTracker>();

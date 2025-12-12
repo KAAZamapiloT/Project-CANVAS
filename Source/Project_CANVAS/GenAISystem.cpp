@@ -344,99 +344,192 @@ void UGenAISystem::Deinitialize()
 	TexL->OnTexturePlanReady.RemoveDynamic(this,&UGenAISystem::OnTexturePlanReady);
 }
 
-FString UGenAISystem::ConstructMasterPrompt(FString UserPrompt, UAssetIndexer* AssetIndexer)
+
+
+FString UGenAISystem::ConstructMasterPrompt(
+		FString UserPrompt,
+		class UAssetIndexer* AssetIndexer
+	)
 {
-    // === SAFETY CHECKS ===
-    if (!AssetIndexer)
-    {
-        UE_LOG(LogTemp, Error, TEXT("GenAISystem: AssetIndexer is null"));
-        return TEXT("");
-    }
-
-    // Only check Mesh and Texture drafts (Lighting draft is removed)
-    if (DraftMeshJson.IsEmpty() || DraftTexJson.IsEmpty())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("GenAISystem: Missing Draft Plans! Director Prompt may fail."));
-    }
-
-    // === STEP 1: HANDLE EMPTY DRAFTS (Safety Fallback) ===
-    if (DraftMeshJson.IsEmpty()) DraftMeshJson = TEXT("{\"SpawnRequest\": [], \"ParticleSpawn\": []}");
-    if (DraftTexJson.IsEmpty()) DraftTexJson = TEXT("{\"Props\": []}");
-
-    // === STEP 2: PREPARE VERIFIED LISTS ===
-    // We use the PRUNED lists from our experts for Meshes and Materials.
-    FString MeshListString = PrunedMeshList.IsEmpty() ? TEXT("[]") : FString::Printf(TEXT("[%s]"), *PrunedMeshList);
-    FString MaterialString = PrunedTextureList.IsEmpty() ? TEXT("[]") : FString::Printf(TEXT("[%s]"), *PrunedTextureList);
-
-    // We use FULL lists for Tags and PostProcessMaterials
-    TArray<FString> ActorTags = AssetIndexer->GetDiscoveredActorTags();
-    FString TagString = FString::Join(ActorTags, TEXT("\", \""));
-
-    TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
-    FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
-
-    // === STEP 3: CONSTRUCT THE DIRECTOR PROMPT ===
-    // This prompt instructs the LLM to act as both a Merger (for objects) and a Creator (for lighting).
+    
+    TArray<FString> AvailableTags = AssetIndexer->GetDiscoveredActorTags();
+    TArray<FString> AvailablePPM=AssetIndexer->GetDiscoveredPostProcessNames();
+	
+    FString MaterialString = PrunedTextureList;
+	FString MeshListString = PrunedMeshList;
+    FString TagString = FString::Join(AvailableTags, TEXT("\", \""));
+	FString PPMString=FString::Join(AvailablePPM, TEXT("\", \""));
     FString Payload = FString::Printf(TEXT(
-        "You are the Lead Scene Director specializing in Unreal Engine.\n"
-        "Two specialized agents have proposed partial plans (Meshes and Textures). Your job is to MERGE them and GENERATE the Lighting/Environment settings.\n\n"
+        "ROLE: You are the Senior Level Architect for a high-end Unreal Engine 5 project.\n"
+        "OBJECTIVE: Review, validate, and integrate proposals from two junior specialists into a cohesive final scene plan.\n\n"
         
-        "USER REQUEST: \"%s\"\n\n"
-
-        "=== INPUT 1: MESH DRAFT (Spawns & Particles) ===\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "CLIENT ORIGINAL REQUEST\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "\"%s\"\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "PROPOSAL 1: STRUCTURAL ENGINEER (Mesh Placement)\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "Your structural engineer has calculated spawn locations and submitted:\n"
         "%s\n\n"
         
-        "=== INPUT 2: TEXTURE DRAFT (Materials & Props) ===\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "PROPOSAL 2: INTERIOR DESIGNER (Surface Materials)\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "Your interior designer has selected materials and submitted:\n"
         "%s\n\n"
         
-        "=== VERIFIED RESOURCE LIST (TRUST THESE) ===\n"
-        "The agents have already validated these assets against the game database. THEY EXIST.\n"
-        "Valid Meshes: %s\n"
-        "Valid Materials: %s\n"
-        "Valid PostProcess: [\"%s\"]\n"
-        "Valid Tags: [\"%s\"]\n\n"
-
-        "=== INSTRUCTIONS ===\n"
-        "1. MERGE: Combine 'SpawnRequest' and 'ParticleSpawn' from Input 1, and 'Props' from Input 2.\n"
-        "2. TRUST: The assets in the Verified List are real. Do NOT delete them unless they create a semantic conflict.\n"
-        "3. GENERATE LIGHTING (CRITICAL):\n"
-        "   - You must create the 'Environment' and 'Lighting' objects from scratch based on the USER REQUEST.\n"
-        "   - Analyze the mood (e.g. 'Cyberpunk' = Low Sun Intensity, High Fog Density, Neon Colors; 'Sunny' = High Sun Intensity, Blue Sky).\n"
-        "   - Select a valid 'PostProcessingName' from the list above if it fits the theme, otherwise use \"\".\n"
-        "4. DENSITY: If Input 1 has multiple items, include them all. Do not summarize.\n"
-        "5. OUTPUT: Return strictly valid JSON using the FULL schema below.\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "VERIFIED ASSET CATALOG (Master Inventory)\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "You may ONLY use assets from this verified inventory.\n"
+        "Do NOT approve any assets not listed here.\n\n"
         
-        "=== FULL JSON SCHEMA ===\n"
+        "Valid Static Meshes:\n"
+        "[\"%s\"]\n\n"
+        
+        "Valid Materials:\n"
+        "[\"%s\"]\n\n"
+        
+        "Valid Post-Process Volumes:\n"
+        "[\"%s\"]\n\n"
+        
+        "Valid Actor Tags:\n"
+        "[\"%s\"]\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "YOUR ARCHITECTURAL RESPONSIBILITIES\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "1. VALIDATE STRUCTURAL PROPOSAL (Critical)\n"
+        "   • Review all 'SpawnRequest' items from Proposal 1\n"
+        "   • Verify every AssetPath exists in Valid Static Meshes list\n"
+        "   • Check for spatial conflicts (overlapping ClearanceRadius)\n"
+        "   • Approve valid items, flag any hallucinated assets\n"
+        "   • Include ALL validated spawns in final output\n\n"
+        
+        "   • Review all 'ParticleSpawns' items from Proposal 1\n"
+        "   • Verify particle names exist in inventory\n"
+        "   • Ensure appropriate LocationName usage\n"
+        "   • Include ALL validated particle spawns\n\n"
+        
+        "2. VALIDATE SURFACE PROPOSAL (Critical)\n"
+        "   • Review all 'Props' items from Proposal 2\n"
+        "   • Verify every TagName exists in Valid Actor Tags\n"
+        "   • Verify every material name exists in Valid Materials\n"
+        "   • Check PropColor values are valid (0-255 range)\n"
+        "   • Include ALL validated props in final output\n\n"
+        
+        "3. DESIGN ATMOSPHERIC LIGHTING (Your Unique Contribution)\n"
+        "   The junior specialists left lighting and environment to you.\n"
+        "   Create dramatic lighting that matches the client's theme:\n\n"
+        
+        "   THEME-BASED LIGHTING PRESETS:\n\n"
+        
+        "   CYBERPUNK / SCI-FI:\n"
+        "     • SunColor: [0.3, 0.5, 0.8] (cool blue)\n"
+        "     • SunIntensity: 5.0 (dim, artificial feel)\n"
+        "     • SunPitch: -30.0 (low angle)\n"
+        "     • SunYaw: 180.0\n"
+        "     • SkyLightColor: [0.2, 0.3, 0.5] (dark blue ambient)\n"
+        "     • SkyLightIntensity: 0.5 (moody)\n"
+        "     • FogDensity: 0.8 (heavy atmosphere)\n"
+        "     • FogColor: [60, 80, 120] (blue-grey)\n\n"
+        
+        "   NATURE / FOREST:\n"
+        "     • SunColor: [1.0, 0.95, 0.8] (warm daylight)\n"
+        "     • SunIntensity: 15.0 (bright, natural)\n"
+        "     • SunPitch: -60.0 (overhead sun)\n"
+        "     • SunYaw: 90.0\n"
+        "     • SkyLightColor: [0.4, 0.6, 0.8] (sky blue)\n"
+        "     • SkyLightIntensity: 2.0 (bright ambient)\n"
+        "     • FogDensity: 0.2 (light morning mist)\n"
+        "     • FogColor: [200, 220, 240] (light blue)\n\n"
+        
+        "   HORROR / ABANDONED:\n"
+        "     • SunColor: [0.5, 0.5, 0.6] (desaturated)\n"
+        "     • SunIntensity: 3.0 (very dim)\n"
+        "     • SunPitch: -15.0 (low, ominous)\n"
+        "     • SunYaw: 270.0\n"
+        "     • SkyLightColor: [0.1, 0.1, 0.15] (almost black)\n"
+        "     • SkyLightIntensity: 0.3 (minimal)\n"
+        "     • FogDensity: 1.5 (thick, oppressive)\n"
+        "     • FogColor: [80, 80, 90] (dark grey)\n\n"
+        
+        "   DESERT / SUNSET:\n"
+        "     • SunColor: [1.0, 0.7, 0.4] (warm orange)\n"
+        "     • SunIntensity: 20.0 (intense)\n"
+        "     • SunPitch: -20.0 (sunset angle)\n"
+        "     • SunYaw: 0.0\n"
+        "     • SkyLightColor: [0.8, 0.5, 0.3] (orange ambient)\n"
+        "     • SkyLightIntensity: 1.5\n"
+        "     • FogDensity: 0.3 (heat haze)\n"
+        "     • FogColor: [255, 200, 150] (warm haze)\n\n"
+        
+        "   WINTER / ICE:\n"
+        "     • SunColor: [0.8, 0.9, 1.0] (cool white)\n"
+        "     • SunIntensity: 12.0 (bright but cold)\n"
+        "     • SunPitch: -45.0\n"
+        "     • SunYaw: 135.0\n"
+        "     • SkyLightColor: [0.7, 0.8, 0.9] (pale blue)\n"
+        "     • SkyLightIntensity: 1.8\n"
+        "     • FogDensity: 0.5 (snow/ice particles)\n"
+        "     • FogColor: [220, 230, 255] (pale blue-white)\n\n"
+        
+        "   FIELD EXPLANATIONS:\n"
+        "   • SunColor: RGB floats 0.0-1.0 (NOT 0-255)\n"
+        "   • SunIntensity: 0.0-50.0 (typical range 5-20)\n"
+        "   • SunPitch: -90 (straight down) to 0 (horizon) to 90 (straight up)\n"
+        "   • SunYaw: 0 (north) to 360 degrees\n"
+        "   • SkyLightColor: RGB floats 0.0-1.0\n"
+        "   • SkyLightIntensity: 0.0-10.0 (typical range 0.5-3.0)\n"
+        "   • SunTemperature: 1000-15000 Kelvin (optional, use if bUseTemperature=true)\n"
+        "   • FogDensity: 0.0-5.0 (0=clear, 2.0+=very thick)\n"
+        "   • FogColor: RGB integers 0-255\n"
+        "   • PostProcessingName: Select from Valid Post-Process list or leave empty\n\n"
+        
+        "4. SET MODIFICATION FLAGS\n"
+        "   • bModifyEnvironment: true (you're defining lighting/fog)\n"
+        "   • bModifyProps: true (if Proposal 2 has props)\n"
+        "   • bSpawnActors: true (if Proposal 1 has spawns)\n"
+        "   • TargetPropTags: Leave empty [] (modify all props)\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "COMPLETE JSON SCHEMA\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        
         "{\n"
         "  \"ThemeName\": \"descriptive_name\",\n"
         "  \"bModifyEnvironment\": true,\n"
         "  \"bModifyProps\": true,\n"
         "  \"bSpawnActors\": true,\n"
-        "  \"TargetPropTags\": [ \"tag1\", \"tag2\" ],\n"
+        "  \"TargetPropTags\": [],\n"
         "  \"Environment\": {\n"
         "    \"FogDensity\": 0.0-5.0,\n"
-        "    \"FogColor\": [R,G,B],\n"
-        "    \"PostProcessingName\": \"material_name_or_empty\",\n"
+        "    \"FogColor\": [R, G, B],\n"
+        "    \"PostProcessingName\": \"name_from_list_or_empty\",\n"
         "    \"Lighting\": {\n"
-        "      \"SunColor\": [R,G,B],\n"
+        "      \"SunColor\": [R, G, B],\n"
         "      \"SunIntensity\": 0.0-50.0,\n"
         "      \"SunPitch\": -90.0 to 90.0,\n"
-        "      \"SunYaw\": 0.0 to 360.0,\n"
-        "      \"SkyLightColor\": [R,G,B],\n"
+        "      \"SunYaw\": 0.0-360.0,\n"
+        "      \"SkyLightColor\": [R, G, B],\n"
         "      \"SkyLightIntensity\": 0.0-10.0,\n"
-        "      \"SunTemperature\": 1000-15000\n"
+        "      \"SunTemperature\": 1000.0-15000.0,\n"
+        "      \"bUseTemperature\": false\n"
         "    }\n"
         "  },\n"
         "  \"Props\": [\n"
         "    {\n"
-        "      \"TagName\": \"exact_tag\",\n"
-        "      \"PropColor\": [R,G,B],\n"
+        "      \"TagName\": \"exact_tag_from_validation\",\n"
+        "      \"PropColor\": [R, G, B],\n"
         "      \"Texture\": {\n"
-        "        \"BaseColorPath\": \"material_base_name\",\n"
-        "        \"NormalPath\": \"\",\n"
-        "        \"RoughnessPath\": \"\",\n"
-        "        \"MetallicPath\": \"\",\n"
-        "        \"AOPath\": \"\"\n"
+        "        \"BaseColorPath\": \"material_name\",\n"
+        "        \"NormalPath\": \"optional_name_or_empty\",\n"
+        "        \"RoughnessPath\": \"optional_name_or_empty\",\n"
+        "        \"MetallicPath\": \"optional_name_or_empty\",\n"
+        "        \"AOPath\": \"optional_name_or_empty\"\n"
         "      },\n"
         "      \"ParticleEffects\": \"\"\n"
         "    }\n"
@@ -446,39 +539,134 @@ FString UGenAISystem::ConstructMasterPrompt(FString UserPrompt, UAssetIndexer* A
         "      \"AssetPath\": \"exact_mesh_name\",\n"
         "      \"ObjectName\": \"unique_instance_name\",\n"
         "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
-        "      \"LocationOffset\": [0,0,0],\n"
-        "      \"Rotation\": [Pitch,Yaw,Roll],\n"
-        "      \"Scale\": [X,Y,Z],\n"
+        "      \"LocationOffset\": [X, Y, Z],\n"
+        "      \"Rotation\": [Pitch, Yaw, Roll],\n"
+        "      \"Scale\": [X, Y, Z],\n"
         "      \"Tag\": \"optional_tag\",\n"
-        "      \"ClearanceRadius\": 150\n"
+        "      \"ClearanceRadius\": 150.0\n"
         "    }\n"
         "  ],\n"
-        "  \"ParticleSpawn\": [\n"
+        "  \"ParticleSpawns\": [\n"
         "    {\n"
         "      \"AssetPath\": \"exact_particle_name\",\n"
         "      \"ObjectName\": \"unique_instance_name\",\n"
         "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
-        "      \"LocationOffset\": [0,0,0],\n"
-        "      \"Rotation\": [0,0,0],\n"
-        "      \"Scale\": [1,1,1],\n"
+        "      \"LocationOffset\": [X, Y, Z],\n"
+        "      \"Rotation\": [Pitch, Yaw, Roll],\n"
+        "      \"Scale\": [X, Y, Z],\n"
         "      \"Tag\": \"optional_tag\",\n"
-        "      \"ClearanceRadius\": 150\n"
+        "      \"ClearanceRadius\": 50.0\n"
         "    }\n"
         "  ]\n"
         "}\n\n"
-        "Generate the Merged JSON now:"
+        "═══════════════════════════════════════════════════════════════\n"
+        "VALIDATION CHECKLIST (Critical - Must Verify)\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        
+        "STRUCTURAL VALIDATION:\n"
+        "✓ Every SpawnRequest AssetPath exists in Valid Static Meshes\n"
+        "✓ Every ParticleSpawns AssetPath exists in particle inventory\n"
+        "✓ No duplicate ObjectName values\n"
+        "✓ All numeric values within valid ranges\n"
+        "✓ Array name is 'ParticleSpawns' (with 's')\n\n"
+        
+        "SURFACE VALIDATION:\n"
+        "✓ Every Props TagName exists in Valid Actor Tags\n"
+        "✓ Every BaseColorPath exists in Valid Materials\n"
+        "✓ PropColor values are integers 0-255\n"
+        "✓ Optional texture paths are valid names or empty strings\n\n"
+        
+        "LIGHTING VALIDATION:\n"
+        "✓ SunColor and SkyLightColor use floats 0.0-1.0\n"
+        "✓ FogColor uses integers 0-255\n"
+        "✓ Intensity values within 0-50 range\n"
+        "✓ Pitch/Yaw/Roll within specified ranges\n"
+        "✓ PostProcessingName from valid list or empty string\n\n"
+        
+        "STRUCTURAL VALIDATION:\n"
+        "✓ All required fields present\n"
+        "✓ All boolean flags set appropriately\n"
+        "✓ Arrays properly formatted with brackets\n"
+        "✓ No trailing commas\n"
+        "✓ Valid JSON syntax\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "CONFLICT RESOLUTION GUIDELINES\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        
+        "IF ASSET HALLUCINATION DETECTED:\n"
+        "• Remove the invalid spawn from SpawnRequest/ParticleSpawns\n"
+        "• Do NOT include assets not in verified catalog\n"
+        "• Continue with remaining valid spawns\n\n"
+        
+        "IF TAG MISMATCH DETECTED:\n"
+        "• Remove Props entries with invalid TagName\n"
+        "• Keep only Props with tags from Valid Actor Tags\n\n"
+        
+        "IF MATERIAL HALLUCINATION DETECTED:\n"
+        "• Replace invalid material with closest valid alternative\n"
+        "• Or remove the Props entry if no suitable match\n\n"
+        
+        "IF SPATIAL CONFLICTS DETECTED:\n"
+        "• Adjust LocationOffset to separate overlapping objects\n"
+        "• Increase ClearanceRadius for large objects\n"
+        "• Move conflicting items to different LocationName zones\n\n"
+        
+        "IF POST-PROCESS NAME INVALID:\n"
+        "• Set PostProcessingName to empty string \"\"\n"
+        "• Let default post-processing handle the scene\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "EDGE CASE HANDLING\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        
+        "• If both proposals are empty: Create minimal lighting-only scene\n"
+        "• If only meshes provided: Add default neutral lighting\n"
+        "• If only textures provided: Add atmospheric lighting matching theme\n"
+        "• If client request conflicts with proposals: Prioritize client vision\n"
+        "• If theme unclear: Use balanced neutral lighting preset\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "OUTPUT INSTRUCTIONS\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        
+        "1. Return ONLY valid JSON (no markdown blocks, no explanations)\n"
+        "2. Start with '{' and end with '}'\n"
+        "3. Do not include ```json code fences\n"
+        "4. Ensure all arrays, objects properly closed\n"
+        "5. No trailing commas after last array/object elements\n"
+        "6. All strings properly quoted\n"
+        "7. All numeric values unquoted\n"
+        "8. Boolean values as true/false (not \"true\"/\"false\")\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "FINAL REMINDER\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        
+        "You are the final authority. Your output will be parsed directly by C++.\n"
+        "Invalid JSON will crash the system. Invalid asset names will cause runtime errors.\n"
+        "Validate everything. Include only verified, approved assets.\n\n"
+        
+        "GENERATE INTEGRATED MASTER SCENE PLAN NOW:"
     ),
     *UserPrompt,
-    *DraftMeshJson,     // Input 1 (Meshes)
-    *DraftTexJson,      // Input 2 (Textures)
-    *MeshListString,    // Verified Meshes
-    *MaterialString,    // Verified Materials
-    *PPMString,         // Verified PostProcess
-    *TagString          // Verified Tags
+    *DraftMeshJson,
+    *DraftTexJson,
+    *MeshListString,
+    *MaterialString,
+    *PPMString,
+    *TagString
     );
 
     return Payload;
 }
+
+
+// ============================================================================
+// PROMPT 3: ARCHITECT (Master Integration Agent)
+// ============================================================================
+
+
 void UGenAISystem::ExecuteFallbackPlan()
 {
 	// If the Director fails, we manually stitch the 3 drafts together.
