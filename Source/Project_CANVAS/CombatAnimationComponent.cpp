@@ -70,18 +70,13 @@ void UCombatAnimationComponent::ExecuteActionCommand(const FActionCommand& Comma
 
     if (Duration > 0.f)
     {
-        UE_LOG(LogTemp, Warning, TEXT("🎬 [%s] Playing: %s | Damage: %.1f | Stun: %.1f | Duration: %.2fs"), 
-            *OwnerType,
-            *CurrentMoveIdentifier.ToString(), 
-            CachedDamage, 
-            CachedStunDuration,
-            Duration);
+  //      UE_LOG(LogTemp, Warning, TEXT("🎬 [%s] Playing: %s | Damage: %.1f | Stun: %.1f | Duration: %.2fs"), *OwnerType,*CurrentMoveIdentifier.ToString(), 
+   //         CachedDamage, CachedStunDuration,Duration);
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ [%s] Failed to play montage: %s"), 
-            *OwnerType,
-            *Command.AnimationToPlay->GetName());
+     //   UE_LOG(LogTemp, Error, TEXT("❌ [%s] Failed to play montage: %s"), 
+     //       *OwnerType,*Command.AnimationToPlay->GetName());
     }
 }
 
@@ -97,7 +92,7 @@ void UCombatAnimationComponent::StopCurrentAction()
     CurrentMoveIdentifier = NAME_None;
     MoveStartTime = 0.f;
     
-    UE_LOG(LogTemp, Log, TEXT("🛑 [%s] Combat action stopped"), *OwnerType);
+  //  UE_LOG(LogTemp, Log, TEXT("🛑 [%s] Combat action stopped"), *OwnerType);
 }
 
 void UCombatAnimationComponent::OnMontageCompleted(UAnimMontage* Montage, bool bInterrupted)
@@ -127,10 +122,8 @@ void UCombatAnimationComponent::HandleHitNotify()
     
     OnHitWindowActive.Broadcast(CachedDamage, CachedStunDuration);
     
-    UE_LOG(LogTemp, Warning, TEXT("🎯 [%s] Hit window active! Damage: %.1f | Stun: %.1f"), 
-        *OwnerType,
-        CachedDamage, 
-        CachedStunDuration);
+ //   UE_LOG(LogTemp, Warning, TEXT("🎯 [%s] Hit window active! Damage: %.1f | Stun: %.1f"), 
+ //       *OwnerType,CachedDamage, CachedStunDuration);
 }
 
 // ========================================

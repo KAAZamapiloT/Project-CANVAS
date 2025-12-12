@@ -1440,3 +1440,93 @@ void UAssetIndexer::ResolveEnvironmentAssets(FEnhancedScenePlan& Plan)
         Plan.Environment.PostProcessingName = FullPath;
     }
 }
+
+
+// =========================================================================
+// NEW PRUNING LOGIC
+// =========================================================================
+
+TArray<FString> UAssetIndexer::GetTopKMeshesForQuery(const FString& SearchQuery, int32 MaxResults)
+{
+    TArray<FString> Results;
+    
+    // 1. Get ALL semantic matches using our existing logic (Groups + Keywords + Substrings)
+    TArray<FString> AllMatches = ResolveAllMeshPaths(SearchQuery);
+    
+    // 2. If we found fewer than K, return all of them
+    if (AllMatches.Num() <= MaxResults)
+    {
+        return AllMatches;
+    }
+    
+    // 3. Selection Strategy: Prioritize Diversity if it's a large group
+    // If we matched a "Chair" group with 20 items, we want items [0], [mid], [end] or randoms
+    // to give the LLM variety, rather than just Chair_01, Chair_02...
+    
+    // For now, let's just pick K randoms to avoid bias, or pick top K based on string length/complexity
+    // Random shuffle is usually best for generative variety
+    
+    // Perform Fisher-Yates shuffle
+    int32 n = AllMatches.Num();
+    for (int32 i = n - 1; i > 0; i--)
+    {
+        int32 j = FMath::RandRange(0, i);
+        AllMatches.Swap(i, j);
+    }
+    
+    // Take Top K
+    for (int32 i = 0; i < MaxResults; i++)
+    {
+        Results.Add(AllMatches[i]);
+    }
+    
+    return Results;
+}
+
+TArray<FString> UAssetIndexer::GetTopKTexturesForQuery(const FString& SearchQuery, int32 MaxResults)
+{
+    TArray<FString> Results;
+    FString NormalizedSearch = SearchQuery.ToLower();
+    
+    // 1. Exact/Substring scan of MaterialDatabase keys
+    TArray<FString> MatchingKeys;
+    
+    for (const auto& Pair : MaterialDatabase)
+    {
+        if (Pair.Key.ToLower().Contains(NormalizedSearch) || NormalizedSearch.Contains(Pair.Key.ToLower()))
+        {
+            MatchingKeys.Add(Pair.Key);
+        }
+    }
+    
+    // 2. Fuzzy fallback if empty
+    if (MatchingKeys.Num() == 0)
+    {
+        for (const auto& Pair : MaterialDatabase)
+        {
+            if (CalculateSimilarity(Pair.Key.ToLower(), NormalizedSearch) > 50)
+            {
+                MatchingKeys.Add(Pair.Key);
+            }
+        }
+    }
+    
+    // 3. Prune to Top K
+    if (MatchingKeys.Num() > MaxResults)
+    {
+        // Shuffle
+        int32 n = MatchingKeys.Num();
+        for (int32 i = n - 1; i > 0; i--)
+        {
+            int32 j = FMath::RandRange(0, i);
+            MatchingKeys.Swap(i, j);
+        }
+        MatchingKeys.SetNum(MaxResults);
+    }
+    
+    // 4. Resolve to Strings (we return the BaseName so the LLM can use it in the JSON)
+    // NOTE: The Master Planner expects "Valid Materials" list.
+    // If we return Full Paths, the LLM might get confused if the schema expects Base Names.
+    // Let's return the Base Names (Keys) which are what ResolveBaseMaterialToTextureSet expects.
+    return MatchingKeys; 
+}

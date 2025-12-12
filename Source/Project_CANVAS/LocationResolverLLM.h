@@ -7,12 +7,13 @@
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
-#include"ScenePlan.h"
+#include "ScenePlan.h"
 #include "API_KEY.h"
 #include "LocationResolverLLM.generated.h"
 
 struct FSpawnRequest;
-// ✅ NEW STRUCT: Holds Location, Rotation, AND Scale
+
+// Standardized Result Struct
 USTRUCT(BlueprintType)
 struct FResolutionResult
 {
@@ -28,13 +29,11 @@ struct FResolutionResult
     float Scale = 1.0f;
 };
 
-// Update the typedef to use the struct
 typedef TMap<FString, FResolutionResult> FLocationMap;
 DECLARE_DELEGATE_OneParam(FOnBatchLocationsResolved, const FLocationMap&);
 
 /**
- * Minimal LLM location resolver.
- * Supports remote (cloud) and local (LM Studio/Ollama) models.
+ * Robust Location Resolver supporting Gemini and Groq/OpenAI automatically.
  */
 UCLASS()
 class PROJECT_CANVAS_API ULocationResolverLLM : public UObject
@@ -44,29 +43,26 @@ class PROJECT_CANVAS_API ULocationResolverLLM : public UObject
 public:
     /**
      * Configure resolver.
-     * @param Endpoint - API URL (e.g., "http://localhost:1234/v1/chat/completions")
-     * @param APIKey - API key (empty = local model, no auth)
-     * @param ModelName - Model name
+     * To use Gemini: Endpoint = "https://generativelanguage.googleapis.com...", APIKey = "" (Key in URL)
+     * To use Groq:   Endpoint = "https://api.groq.com...", APIKey = "gsk_..."
      */
     UFUNCTION(BlueprintCallable, Category = "LocationResolver")
     void Configure(const FString& Endpoint, const FString& APIKey, const FString& ModelName);
 
-    /**
-     * Main resolution function.
-     */
- //   UFUNCTION(BlueprintCallable, Category = "LocationResolver")
-    // CHANGE THIS LINE:
+    // Single Location Resolve (Blocking/Synchronous logic wrapper)
     FTransform ResolveLocation(
         const FString& LocationName,
         const FString& SceneContext,
         const FSpawnRequest* SpawnRequest = nullptr 
     );
 
+    // Batch Resolve (Async)
     void ResolveBatchLocationsAsync(
          const TArray<FSpawnRequest>& Requests,
          const FString& SceneContext,
          FOnBatchLocationsResolved Callback
      );
+
     FString BuildBatchPrompt(const TArray<FSpawnRequest>& Requests, const FString& SceneContext);
 
     UFUNCTION(BlueprintPure, Category = "LocationResolver")
@@ -76,17 +72,19 @@ public:
     void ClearCache() { Cache.Empty(); }
 
 private:
-    /** Makes request to remote API (with auth) */
+    // --- Internal Request Logic ---
     FString ResolveUsingRemote(const FString& Prompt);
-
-    /** Makes request to local API (no auth) */
     FString ResolveUsingLocal(const FString& Prompt);
 
-    /** Build prompt */
+    // --- Prompts ---
     FString BuildPrompt(const FString& LocationName, const FString& SceneContext, const FSpawnRequest* SpawnRequest);
 
-    /** Parse JSON response */
+    // --- Parsing Helpers ---
     bool ParseTransform(const FString& JsonResponse, FTransform& OutTransform);
+    
+    // Dynamic Parser Switchers
+    FString ParseGeminiResponse(const FString& JsonResponse);
+    FString ParseOpenAIResponse(const FString& JsonResponse);
 
     // Config
     FString Endpoint;
@@ -95,6 +93,5 @@ private:
     
     // Cache
     TMap<FString, FTransform> Cache;
-    
     float Timeout = 2.0f;
 };

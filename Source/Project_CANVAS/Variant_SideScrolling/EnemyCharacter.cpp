@@ -209,11 +209,11 @@ void AEnemyCharacter::BindCombatDelegates()
 	if (AnimInstance)
 	{
 		AnimInstance->OnMontageEnded.AddDynamic(this, &AEnemyCharacter::OnMontageCompleted);
-		UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] Delegates bound"), *GetName());
+	//	UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] Delegates bound"), *GetName());
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] AnimInstance NULL - montage delegate NOT bound!"), *GetName());
+//		UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] AnimInstance NULL - montage delegate NOT bound!"), *GetName());
 	}
 }
 
@@ -232,13 +232,13 @@ void AEnemyCharacter::StartCombatBehavior()
 	
 	if (bIsInCombat)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ [ENEMY %s] Already in combat - skipping"), *GetName());
+//		UE_LOG(LogTemp, Warning, TEXT("⚠️ [ENEMY %s] Already in combat - skipping"), *GetName());
 		return;
 	}
 	
 	if (IsBehaviorTreeActive())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⚠️ [ENEMY %s] BehaviorTree active - skipping timer"), *GetName());
+	//	UE_LOG(LogTemp, Warning, TEXT("⚠️ [ENEMY %s] BehaviorTree active - skipping timer"), *GetName());
 		return;
 	}
 
@@ -250,7 +250,7 @@ void AEnemyCharacter::StartCombatBehavior()
 		DecisionInterval,
 		true
 	);
-	UE_LOG(LogTemp, Warning, TEXT("✅ [ENEMY %s] Timer started: %.2fs interval"), *GetName(), DecisionInterval);
+	//UE_LOG(LogTemp, Warning, TEXT("✅ [ENEMY %s] Timer started: %.2fs interval"), *GetName(), DecisionInterval);
 }
 
 void AEnemyCharacter::StopCombatBehavior()
@@ -287,22 +287,22 @@ void AEnemyCharacter::MakeCombatDecision()
 	
 	if (!CombatStateComponent)
 	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatStateComponent is NULL"), *GetName());
+	//	UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatStateComponent is NULL"), *GetName());
 		return;
 	}
 
 	if (CombatAnimationComponent && CombatAnimationComponent->IsExecutingMove())
 	{
-		UE_LOG(LogTemp, Display, TEXT("⏸️ [ENEMY %s] Already executing move - skipping"), *GetName());
+	//	UE_LOG(LogTemp, Display, TEXT("⏸️ [ENEMY %s] Already executing move - skipping"), *GetName());
 		return;
 	}
 
 	if (!HealthComponent || !HealthComponent->IsAlive() || HealthComponent->IsStunned())
 	{
-		UE_LOG(LogTemp, Display, TEXT("⏸️ [ENEMY %s] Dead or stunned - skipping (Alive: %d, Stunned: %d)"), 
-			*GetName(), 
-			HealthComponent ? HealthComponent->IsAlive() : false,
-			HealthComponent ? HealthComponent->IsStunned() : false);
+	//	UE_LOG(LogTemp, Display, TEXT("⏸️ [ENEMY %s] Dead or stunned - skipping (Alive: %d, Stunned: %d)"), 
+	//		*GetName(), 
+	//		HealthComponent ? HealthComponent->IsAlive() : false,
+	//		HealthComponent ? HealthComponent->IsStunned() : false);
 		return;
 	}
 	if (CanAttackPlayer())
@@ -315,27 +315,27 @@ void AEnemyCharacter::MakeCombatDecision()
 			NewRotation.Yaw = (DeltaX > 0) ? 0.0f : 180.0f;
 			SetActorRotation(NewRotation);
             
-			UE_LOG(LogTemp, Display, TEXT("👁️ [ENEMY] Facing player for attack"));
+	//		UE_LOG(LogTemp, Display, TEXT("👁️ [ENEMY] Facing player for attack"));
 		}
-		UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] All checks passed - executing decision"), *GetName());
+	//	UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] All checks passed - executing decision"), *GetName());
 	
 		FContextVector Context = CombatStateComponent->BuildContext(FName("LightAttack"));
 		FActionCommand Decision = CombatDecisionEngine->DecideNextMove(Context);
 	
 		if (!Decision.MoveIdentifier.IsNone() && CombatAnimationComponent)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("⚡ [ENEMY %s] Executing move: %s"), *GetName(), *Decision.MoveIdentifier.ToString());
+		//	UE_LOG(LogTemp, Warning, TEXT("⚡ [ENEMY %s] Executing move: %s"), *GetName(), *Decision.MoveIdentifier.ToString());
 			CombatAnimationComponent->ExecuteActionCommand(Decision);
 		}
 		else
 		{
 			if (Decision.MoveIdentifier.IsNone())
 			{
-				UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] Decision returned None!"), *GetName());
+			//	UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] Decision returned None!"), *GetName());
 			}
 			if (!CombatAnimationComponent)
 			{
-				UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatAnimationComponent is NULL!"), *GetName());
+			//	UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY %s] CombatAnimationComponent is NULL!"), *GetName());
 			}
 		}
 	}
@@ -502,7 +502,7 @@ bool AEnemyCharacter::CanAttackPlayer() const
 
 	if (CombatAnimationComponent && CombatAnimationComponent->IsExecutingMove())
 	{
-		UE_LOG(LogTemp, Display, TEXT("🔍 [ENEMY %s] CanAttack: Already executing move"), *GetName());
+	//	UE_LOG(LogTemp, Display, TEXT("🔍 [ENEMY %s] CanAttack: Already executing move"), *GetName());
 		return false;
 	}
 
@@ -516,12 +516,12 @@ bool AEnemyCharacter::CanAttackPlayer() const
 	{
 		float Distance = CombatStateComponent->GetDistanceToEnemy();
 		bool bInRange = (Distance > 0.0f && Distance <= MinAttackDistance);
-		UE_LOG(LogTemp, Display, TEXT("🔍 [ENEMY %s] CanAttack: Distance=%.1f, MinDist=%.1f, InRange=%d"), 
-			*GetName(), Distance, MinAttackDistance, bInRange);
+	//	UE_LOG(LogTemp, Display, TEXT("🔍 [ENEMY %s] CanAttack: Distance=%.1f, MinDist=%.1f, InRange=%d"), 
+	//		*GetName(), Distance, MinAttackDistance, bInRange);
 		return bInRange;
 	}
 
-	UE_LOG(LogTemp, Display, TEXT("🔍 [ENEMY %s] CanAttack: No CombatStateComponent"), *GetName());
+//	UE_LOG(LogTemp, Display, TEXT("🔍 [ENEMY %s] CanAttack: No CombatStateComponent"), *GetName());
 	return false;
 }
 
@@ -535,8 +535,8 @@ bool AEnemyCharacter::IsBehaviorTreeActive() const
 		UBrainComponent* Brain = AIC->GetBrainComponent();
 		// ✅ Check if Brain exists AND is actively running
 		bool bActive = Brain != nullptr && Brain->IsRunning();
-		UE_LOG(LogTemp, Display, TEXT("🧠 [ENEMY %s] BehaviorTree active: %d (Brain: %d, Running: %d)"), 
-			*GetName(), bActive, Brain != nullptr, Brain ? Brain->IsRunning() : false);
+		//UE_LOG(LogTemp, Display, TEXT("🧠 [ENEMY %s] BehaviorTree active: %d (Brain: %d, Running: %d)"), 
+		//	*GetName(), bActive, Brain != nullptr, Brain ? Brain->IsRunning() : false);
 		return bActive;
 	}
 	return false;
@@ -575,10 +575,10 @@ if (bShowDebug)
 	// ✅ SIMPLE: Forward to HealthComponent
 	HealthComponent->ApplyDamage(Spec.Amount, EDamageType::Electric, Spec.HitLocation);
 
-	UE_LOG(LogTemp, Error, TEXT("💥 ENEMY took %.1f damage! HP: %.1f/%.1f"),
-		   Spec.Amount,
-		   HealthComponent->Health,
-		   HealthComponent->MaxHealth);
+//	UE_LOG(LogTemp, Error, TEXT("💥 ENEMY took %.1f damage! HP: %.1f/%.1f"),
+//		   Spec.Amount,
+//		   HealthComponent->Health,
+//		   HealthComponent->MaxHealth);
 }
 
 bool AEnemyCharacter::IsAlive_Implementation() const
@@ -591,9 +591,9 @@ bool AEnemyCharacter::IsAlive_Implementation() const
 //==============================================================================================
 void AEnemyCharacter::ExecuteMove(FName MoveName)
 {
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
-    UE_LOG(LogTemp, Warning, TEXT("🎬 [ENEMY %s] EXECUTE MOVE: %s"), *GetName(), *MoveName.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+ //   UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+ //   UE_LOG(LogTemp, Warning, TEXT("🎬 [ENEMY %s] EXECUTE MOVE: %s"), *GetName(), *MoveName.ToString());
+ //   UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
 
     // ═════════════════════════════════════════════════════════
     // VALIDATION
@@ -622,7 +622,7 @@ void AEnemyCharacter::ExecuteMove(FName MoveName)
         return;
     }
 
-    UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] All components valid"), *GetName());
+  //  UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] All components valid"), *GetName());
 
     // ═════════════════════════════════════════════════════════
     // FORCE FACE PLAYER BEFORE ATTACKING
@@ -634,7 +634,7 @@ void AEnemyCharacter::ExecuteMove(FName MoveName)
         NewRotation.Yaw = (DeltaX > 0) ? 0.0f : 180.0f;  // Face right (0°) or left (180°)
         SetActorRotation(NewRotation);
         
-        UE_LOG(LogTemp, Error, TEXT("👁️ [ENEMY] Facing player (Yaw: %.0f) DeltaX: %.1f"), NewRotation.Yaw, DeltaX);
+      //  UE_LOG(LogTemp, Error, TEXT("👁️ [ENEMY] Facing player (Yaw: %.0f) DeltaX: %.1f"), NewRotation.Yaw, DeltaX);
     }
     else
     {
@@ -644,25 +644,22 @@ void AEnemyCharacter::ExecuteMove(FName MoveName)
     // ═════════════════════════════════════════════════════════
     // BUILD CONTEXT
     // ═════════════════════════════════════════════════════════
-    UE_LOG(LogTemp, Display, TEXT("⚙️ [ENEMY %s] Building context..."), *GetName());
+  //  UE_LOG(LogTemp, Display, TEXT("⚙️ [ENEMY %s] Building context..."), *GetName());
     FContextVector Context = CombatStateComponent->BuildContext(MoveName);
 
     // ═════════════════════════════════════════════════════════
     // DECIDE MOVE
     // ═════════════════════════════════════════════════════════
-    UE_LOG(LogTemp, Display, TEXT("🧠 [ENEMY %s] Deciding move..."), *GetName());
+   // UE_LOG(LogTemp, Display, TEXT("🧠 [ENEMY %s] Deciding move..."), *GetName());
     FActionCommand Command = CombatDecisionEngine->DecideNextMove(Context);
     
-    UE_LOG(LogTemp, Warning, TEXT("📋 [ENEMY %s] Action: %s | Damage: %.1f | Stun: %.1f"), 
-           *GetName(), 
-           *Command.MoveIdentifier.ToString(),
-           Command.DamageToApply,           // ✅ CORRECT FIELD NAME
-           Command.StunDurationToInflict);  // ✅ CORRECT FIELD NAME
+   // UE_LOG(LogTemp, Warning, TEXT("📋 [ENEMY %s] Action: %s | Damage: %.1f | Stun: %.1f"), *GetName(), *Command.MoveIdentifier.ToString(),Command.DamageToApply,        
+    //       Command.StunDurationToInflict);  
 
     // ═════════════════════════════════════════════════════════
     // SCHEDULE DAMAGE TEST (Temporary - replaces AnimNotify)
     // ═════════════════════════════════════════════════════════
-    UE_LOG(LogTemp, Display, TEXT("⏲️ [ENEMY] Scheduling damage test in 0.4 seconds..."));
+  //  UE_LOG(LogTemp, Display, TEXT("⏲️ [ENEMY] Scheduling damage test in 0.4 seconds..."));
     
     GetWorld()->GetTimerManager().SetTimer(
         TempDamageTestHandle,
@@ -684,9 +681,9 @@ void AEnemyCharacter::ExecuteMove(FName MoveName)
     // ═════════════════════════════════════════════════════════
     CombatStateComponent->StartCooldown(Command.MoveIdentifier, 0.5f);
     
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
-    UE_LOG(LogTemp, Warning, TEXT("✅ [ENEMY %s] EXECUTE COMPLETE"), *GetName());
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
+ //   UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+   // UE_LOG(LogTemp, Warning, TEXT("✅ [ENEMY %s] EXECUTE COMPLETE"), *GetName());
+   // UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
 }
 
 
@@ -764,14 +761,14 @@ void AEnemyCharacter::TestDirectDamage(float Damage)
         	
             NotifyEnemyHit(Damage);
             
-            UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 ENEMY HIT PLAYER for %.1f damage 🎯🎯🎯"), Damage);
+         //   UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 ENEMY HIT PLAYER for %.1f damage 🎯🎯🎯"), Damage);
         }
     }
     else
     {
         // ✅ MISS
         ResetEnemyCombo();
-        UE_LOG(LogTemp, Error, TEXT("❌❌❌ ENEMY ATTACK MISSED ❌❌❌"));
+        //UE_LOG(LogTemp, Error, TEXT("❌❌❌ ENEMY ATTACK MISSED ❌❌❌"));
     }
 }
 //==============================================================================================
@@ -779,10 +776,10 @@ void AEnemyCharacter::TestDirectDamage(float Damage)
 //==============================================================================================
 void AEnemyCharacter::OnMontageEndedHandler(FName MontageName)
 {
-	UE_LOG(LogTemp, Display, TEXT("🎬 [ENEMY %s] Montage ended: %s"), *GetName(), *MontageName.ToString());
+	//UE_LOG(LogTemp, Display, TEXT("🎬 [ENEMY %s] Montage ended: %s"), *GetName(), *MontageName.ToString());
 	if (AAIController* AIController = Cast<AAIController>(GetController()))
 	{
-		UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] Ready for next action"), *GetName());
+		//UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] Ready for next action"), *GetName());
 	}
 }
 
@@ -791,24 +788,21 @@ void AEnemyCharacter::OnMontageEndedHandler(FName MontageName)
 //==============================================================================================
 void AEnemyCharacter::OnDamageTakenHandler(float DamageAmount, FVector HitLocation)
 {
-	UE_LOG(LogTemp, Error, TEXT("💥 [ENEMY %s] Took %.1f damage at: %s"),
-		*GetName(),
-		DamageAmount,
-		*HitLocation.ToString());
+	//UE_LOG(LogTemp, Error, TEXT("💥 [ENEMY %s] Took %.1f damage at: %s"),*GetName(),DamageAmount,*HitLocation.ToString());
 }
 FName AEnemyCharacter::SelectRandomFirstMove() 
 {
 	if (FirstMoveVariants.Num() == 0)
 	{
-		UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY] No first move variants!"));
+		//UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY] No first move variants!"));
 		return FName("EnemyAttack"); // Fallback
 	}
     
 	int32 RandomIndex = FMath::RandRange(0, FirstMoveVariants.Num() - 1);
 	FName SelectedMove = FirstMoveVariants[RandomIndex];
     
-	UE_LOG(LogTemp, Warning, TEXT("🎲 [ENEMY] Random first move: %s"), 
-		   *SelectedMove.ToString());
+	//UE_LOG(LogTemp, Warning, TEXT("🎲 [ENEMY] Random first move: %s"), 
+		//   *SelectedMove.ToString());
     
 	return SelectedMove;
 }
@@ -842,7 +836,7 @@ void AEnemyCharacter::NotifyEnemyHit(float DamageDealt)
 			Params.Damage = DamageDealt;
             
 			GameMode->ProcessEvent(RecordHitFunc, &Params);
-			UE_LOG(LogTemp, Log, TEXT("✅ Enemy hit recorded: %.1f damage"), DamageDealt);
+			//UE_LOG(LogTemp, Log, TEXT("✅ Enemy hit recorded: %.1f damage"), DamageDealt);
 		}
 	}
 }

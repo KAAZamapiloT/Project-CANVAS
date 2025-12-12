@@ -625,12 +625,12 @@ void ASideScrollingCharacter::ResetWallJump()
 
 void ASideScrollingCharacter::OnHealthChanged(float Current, float Max)
 {
-	UE_LOG(LogTemp, Log, TEXT("Player Health: %.1f / %.1f"), Current, Max);
+//	UE_LOG(LogTemp, Log, TEXT("Player Health: %.1f / %.1f"), Current, Max);
 }
 
 void ASideScrollingCharacter::OnDeath()
 {
-	UE_LOG(LogTemp, Warning, TEXT("Player died!"));
+//	UE_LOG(LogTemp, Warning, TEXT("Player died!"));
 	BP_HandleDeath();
 }
 
@@ -701,7 +701,7 @@ void ASideScrollingCharacter::OnStunExpired()
 	if (HealthComp)
 	{
 		HealthComp->StunDuration = 0.0f;  // ✅ Direct access to public variable
-		UE_LOG(LogTemp, Log, TEXT("✅ Player stun cleared - can act again"));
+	//	UE_LOG(LogTemp, Log, TEXT("✅ Player stun cleared - can act again"));
 	}
 }
 bool ASideScrollingCharacter::IsStunned() const
@@ -712,9 +712,9 @@ bool ASideScrollingCharacter::IsStunned() const
 // Clean separation of concerns
 void ASideScrollingCharacter::ExecuteMove(FName Input)
 {
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
-    UE_LOG(LogTemp, Warning, TEXT("🎬 [PLAYER] EXECUTE MOVE: %s"), *Input.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+ //   UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+ //   UE_LOG(LogTemp, Warning, TEXT("🎬 [PLAYER] EXECUTE MOVE: %s"), *Input.ToString());
+  //  UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
 
     // ═════════════════════════════════════════════════════════
     // VALIDATION
@@ -737,25 +737,25 @@ void ASideScrollingCharacter::ExecuteMove(FName Input)
         return;
     }
 
-    UE_LOG(LogTemp, Display, TEXT("✅ [PLAYER] All components valid"));
+//    UE_LOG(LogTemp, Display, TEXT("✅ [PLAYER] All components valid"));
 
     // ═════════════════════════════════════════════════════════
     // BUILD CONTEXT
     // ═════════════════════════════════════════════════════════
-    UE_LOG(LogTemp, Display, TEXT("⚙️ [PLAYER] Building context..."));
+  //  UE_LOG(LogTemp, Display, TEXT("⚙️ [PLAYER] Building context..."));
     FContextVector Context = CombatStateComp->BuildContext(Input);
 
     // ═════════════════════════════════════════════════════════
     // DECIDE MOVE
     // ═════════════════════════════════════════════════════════
-    UE_LOG(LogTemp, Display, TEXT("🧠 [PLAYER] Deciding move..."));
+  //  UE_LOG(LogTemp, Display, TEXT("🧠 [PLAYER] Deciding move..."));
     FActionCommand Command = DecisionEngine->DecideNextMove(Context);
     
-    UE_LOG(LogTemp, Warning, TEXT("📋 [PLAYER] Action: %s | Damage: %.1f | Stun: %.1f"), 
-           *Command.MoveIdentifier.ToString(),
-           Command.DamageToApply,
-           Command.StunDurationToInflict);
-
+ //   UE_LOG(LogTemp, Warning, TEXT("📋 [PLAYER] Action: %s | Damage: %.1f | Stun: %.1f"), 
+ //          *Command.MoveIdentifier.ToString(),
+//           Command.DamageToApply,
+//           Command.StunDurationToInflict);
+//
     // ═════════════════════════════════════════════════════════
     // SCHEDULE DAMAGE TEST (Temporary - replaces AnimNotify)
     // ═════════════════════════════════════════════════════════
@@ -781,18 +781,18 @@ void ASideScrollingCharacter::ExecuteMove(FName Input)
     // ═════════════════════════════════════════════════════════
     CombatStateComp->StartCooldown(Command.MoveIdentifier, 0.5f);
     
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
-    UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] EXECUTE COMPLETE"));
-    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
+//    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+ //   UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] EXECUTE COMPLETE"));
+ //   UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
 }
 // ═════════════════════════════════════════════════════════
 // TEST DIRECT DAMAGE (Temporary - Bypasses AnimNotify)
 // ═════════════════════════════════════════════════════════
 void ASideScrollingCharacter::TestPlayerDirectDamage(float Damage)
 {
-    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
-    UE_LOG(LogTemp, Error, TEXT("💥 [PLAYER] TestDirectDamage CALLED! Damage: %.1f"), Damage);
-    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
+  //  UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
+ //   UE_LOG(LogTemp, Error, TEXT("💥 [PLAYER] TestDirectDamage CALLED! Damage: %.1f"), Damage);
+   // UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
 
     // ═════════════════════════════════════════════════════════
     // HIT DETECTION - Sphere Sweep
@@ -801,9 +801,9 @@ void ASideScrollingCharacter::TestPlayerDirectDamage(float Damage)
     FVector Forward = GetActorForwardVector();
     FVector End = Start + (Forward * 150.f); // 150 units forward
 
-    UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace Start: %s"), *Start.ToString());
-    UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace End: %s"), *End.ToString());
-    UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Forward Vector: %s"), *Forward.ToString());
+  //  UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace Start: %s"), *Start.ToString());
+  //  UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace End: %s"), *End.ToString());
+  //  UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Forward Vector: %s"), *Forward.ToString());
 
     FHitResult HitResult;
     FCollisionQueryParams QueryParams;
@@ -869,12 +869,12 @@ void ASideScrollingCharacter::TestPlayerDirectDamage(float Damage)
     if (bHit && HitResult.GetActor())
     {
         AActor* HitActor = HitResult.GetActor();
-        UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] Hit actor: %s"), *HitActor->GetName());
+     //   UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] Hit actor: %s"), *HitActor->GetName());
 
         // Check if enemy (by tag)
         if (HitActor->Tags.Contains(FName("Enemy.Character")))
         {
-            UE_LOG(LogTemp, Error, TEXT("🎯 [PLAYER] CONFIRMED HIT ON ENEMY!"));
+           // UE_LOG(LogTemp, Error, TEXT("🎯 [PLAYER] CONFIRMED HIT ON ENEMY!"));
 
             // Apply damage through interface
             if (IDamagable* DamagableTarget = Cast<IDamagable>(HitActor))
@@ -892,26 +892,26 @@ void ASideScrollingCharacter::TestPlayerDirectDamage(float Damage)
                 // ✅ NOTIFY GAME MODE
                 NotifyPlayerHit(Damage);
                 
-                UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 PLAYER HIT ENEMY for %.1f damage 🎯🎯🎯"), Damage);
+         //       UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 PLAYER HIT ENEMY for %.1f damage 🎯🎯🎯"), Damage);
             }
             else
             {
-                UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] Enemy is not IDamagable!"));
+     //           UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] Enemy is not IDamagable!"));
             }
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("⚠️ [PLAYER] Hit %s but not an enemy"), *HitActor->GetName());
+  //          UE_LOG(LogTemp, Warning, TEXT("⚠️ [PLAYER] Hit %s but not an enemy"), *HitActor->GetName());
         }
     }
     else
     {
         // ✅ MISS - Reset combo
         ResetPlayerCombo();
-        UE_LOG(LogTemp, Error, TEXT("❌❌❌ PLAYER ATTACK MISSED ❌❌❌"));
+ //       UE_LOG(LogTemp, Error, TEXT("❌❌❌ PLAYER ATTACK MISSED ❌❌❌"));
     }
     
-    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════\n"));
+//    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════\n"));
 }
 
 
@@ -943,7 +943,7 @@ void ASideScrollingCharacter::LightAttack(const FInputActionValue& Value)
 	// This is the INITIAL INPUT the engine sees
 	if (IsStunned())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("⚡ Cannot attack - stunned!"));
+	//	UE_LOG(LogTemp, Warning, TEXT("⚡ Cannot attack - stunned!"));
 		return;
 	}
 	
@@ -999,7 +999,7 @@ void ASideScrollingCharacter::NotifyPlayerHit(float DamageDealt)
 			Params.Damage = DamageDealt;
             
 			GameMode->ProcessEvent(RecordHitFunc, &Params);
-			UE_LOG(LogTemp, Log, TEXT("✅ Player hit recorded: %.1f damage"), DamageDealt);
+			//UE_LOG(LogTemp, Log, TEXT("✅ Player hit recorded: %.1f damage"), DamageDealt);
 		}
 	}
 }
@@ -1013,7 +1013,7 @@ void ASideScrollingCharacter::ResetPlayerCombo()
 		if (ResetFunc)
 		{
 			GameMode->ProcessEvent(ResetFunc, nullptr);
-			UE_LOG(LogTemp, Log, TEXT("✅ Player combo reset"));
+			//UE_LOG(LogTemp, Log, TEXT("✅ Player combo reset"));
 		}
 	}
 }

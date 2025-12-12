@@ -112,7 +112,7 @@ void AAIC_Enemy::OnTargetDetected(AActor* InTarget, FAIStimulus Stimulus)
         {
             BlackboardComponent->SetValueAsBool("IsHearingPlayer", true);
             BlackboardComponent->SetValueAsVector("LastHeardLocation", Stimulus.StimulusLocation);
-            UE_LOG(LogTemp, Warning, TEXT("HEARING WAS SENSED"));
+       //     UE_LOG(LogTemp, Warning, TEXT("HEARING WAS SENSED"));
         }
     }
 }

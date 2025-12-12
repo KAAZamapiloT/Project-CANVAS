@@ -29,7 +29,7 @@ EBTNodeResult::Type UBTTask_EnemyAttack::ExecuteTask(UBehaviorTreeComponent& Own
     // ✅ STEP 1: Select random first attack
     FName RandomMove = Enemy->SelectRandomFirstMove();
     
-    UE_LOG(LogTemp, Warning, TEXT("🎲 [BT] EnemyAttack: Selected %s"), *RandomMove.ToString());
+   // UE_LOG(LogTemp, Warning, TEXT("🎲 [BT] EnemyAttack: Selected %s"), *RandomMove.ToString());
 
     // ✅ STEP 2: Execute the move
     Enemy->ExecuteMove(RandomMove);

@@ -572,6 +572,29 @@ public:
     FString ExtractMaterialBaseName(const FString& TextureName);
 
 public:
+    // ========================================
+    // NEW: ADVANCED PRUNING API
+    // ========================================
+
+    /**
+     * @brief Resolves a search query to a list of the top K matching assets.
+     * This allows the Pruner to expand a concept like "Chair" into ["Chair_01", "Chair_02", "OfficeChair"].
+     * * @param SearchQuery The concept from the LLM (e.g., "Rusty Metal Fence").
+     * @param MaxResults The maximum number of assets to return (K).
+     * @return Array of full asset paths.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Pruning")
+    TArray<FString> GetTopKMeshesForQuery(const FString& SearchQuery, int32 MaxResults = 5);
+
+    /**
+     * @brief Resolves a texture search query to a list of top K matching material sets.
+     * * @param SearchQuery The concept from the LLM (e.g., "Wood Floor").
+     * @param MaxResults The maximum number of results.
+     * @return Array of base color paths representing the material sets.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Pruning")
+    TArray<FString> GetTopKTexturesForQuery(const FString& SearchQuery, int32 MaxResults = 5);
+
     
     UFUNCTION(Exec)
     void AuditTexture(const FString& SearchTerm);

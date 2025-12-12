@@ -11,6 +11,11 @@
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "AssetIndexer.h"
+#include "AssetTypeCategories.h"
+
+#include "MeshResolverLLM.h"
+#include "TextureResolverLLM.h"
+#include "ToolContextInterfaces.h"
 
 
 void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager)
@@ -34,61 +39,26 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
     }
 
     
-    // Store user prompt
-    LastUserPrompt = UserPrompt;
+	LastUserPrompt = UserPrompt;
+	CachedWorld = WorldContext;
+	CachedHistory = HistoryManager;
 
-    // Construct master prompt
-	// Inside RequestSceneChange()
-	FString MasterPrompt = ConstructMasterPrompt(
-		UserPrompt,
-		Tracker->AssetIndexer  // Pass directly
-	);
+// RESET
+	bIsMeshReady = false;
+	
+	bIsTexReady = false;
+	
+	DraftMeshJson = "";
+	DraftTexJson = "";
+	PrunedMeshList = "";
+	PrunedTextureList = "";
 
-    // === CHANGES START HERE ===
-    
-    // Get API key
-	API_KEY APIKey;
-    FString GroqAPIKey = APIKey.GetGroqKey();
+	MeshL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
+	TexL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
 
-    // Create HTTP request
-    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-    Request->SetURL(TEXT("https://api.groq.com/openai/v1/chat/completions")); // Changed URL
-    Request->SetVerb(TEXT("POST"));
-    Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-    Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *GroqAPIKey)); // Added auth
-
-    // Build Groq JSON payload (OpenAI format)
-    FString Payload = FString::Printf(TEXT(
-        "{"
-        "\"model\":\"openai/gpt-oss-120b\","
-        "\"messages\":["
-            "{\"role\":\"system\",\"content\":\"You are a JSON generator for a 3D scene builder. Only respond with valid JSON, no markdown, no code blocks.\"},"
-            "{\"role\":\"user\",\"content\":\"%s\"}"
-        "],"
-        "\"temperature\":0.4,"
-        "\"max_tokens\":8000"
-        "}"
-    ), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
-
-	// 1. Construct the path: Project/Saved/Logs/LastGenAIPrompt.json
-	FString DebugFilePath = FPaths::ProjectSavedDir() / TEXT("Logs/LastGenAIPrompt.json");
-
-	// 2. Save the full payload string to the file
-	if (FFileHelper::SaveStringToFile(Payload, *DebugFilePath))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("🔍 DEBUG: Full Prompt Dumped to: %s"), *DebugFilePath);
-		UE_LOG(LogTemp, Warning, TEXT("👉 Go open this file to see exactly what the LLM sees!"));
-	}
-    // === CHANGES END HERE ===
-
-    UE_LOG(LogTemp, Display, TEXT("GenAI: Payload length: %d chars"), Payload.Len());
-    Request->SetContentAsString(Payload);
-
-    // Bind callback
-    Request->OnProcessRequestComplete().BindUObject(this, &UGenAISystem::OnLLMResponseReceived);
-
-    // Send request
-    Request->ProcessRequest();
+	
+	
+	
 	
 }
 
@@ -107,19 +77,23 @@ void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponseP
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseString);
     
 	if (FJsonSerializer::Deserialize(Reader, GroqJsonObject) && GroqJsonObject.IsValid())
-    {
+	{
 		FString LlmResponseString;
         
-		const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
-		if (GroqJsonObject->TryGetArrayField(TEXT("choices"), ChoicesArray) && ChoicesArray->Num() > 0)
+		// GEMINI PARSING LOGIC
+		const TArray<TSharedPtr<FJsonValue>>* Candidates;
+		if (GroqJsonObject->TryGetArrayField(TEXT("candidates"), Candidates) && Candidates->Num() > 0)
 		{
-			TSharedPtr<FJsonObject> FirstChoice = (*ChoicesArray)[0]->AsObject();
-			TSharedPtr<FJsonObject> MessageObj = FirstChoice->GetObjectField(TEXT("message"));
-			LlmResponseString = MessageObj->GetStringField(TEXT("content"));
+			TSharedPtr<FJsonObject> ContentObj = (*Candidates)[0]->AsObject()->GetObjectField(TEXT("content"));
+			const TArray<TSharedPtr<FJsonValue>>* Parts;
+			if (ContentObj->TryGetArrayField(TEXT("parts"), Parts) && Parts->Num() > 0)
+			{
+				LlmResponseString = (*Parts)[0]->AsObject()->GetStringField(TEXT("text"));
+			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("GenAI: No choices in Groq response!"));
+			UE_LOG(LogTemp, Warning, TEXT("GenAI: No candidates found"));
 			return;
 		}
 		// === END OF GROQ-SPECIFIC CODE ===
@@ -176,15 +150,27 @@ void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponseP
         // === STEP 3: Final log and parse ===
         UE_LOG(LogTemp, Warning, TEXT("Cleaned LLM response for parser:\n%s"), *LlmResponseString);
         
-        // Parse the cleaned JSON
-        FEnhancedScenePlan Plan = UJsonParser::CreatePlan(LlmResponseString);
-        
-        // Log the parsed plan data
-        UE_LOG(LogTemp, Warning, TEXT("GENAI: Parsed Plan - Theme: %s, Prop Modifications: %d"),
-            *Plan.ThemeName, Plan.Props.Num());
-        
-    	OnThemeDataReady.Broadcast(Plan, LastUserPrompt);
-        UE_LOG(LogTemp, Warning, TEXT("GENAI: Broadcast OnThemeDataReady"));
+		// 4. Parse the Director's Plan
+		FEnhancedScenePlan MasterPlan = UJsonParser::CreatePlan(LlmResponseString);
+
+		// =========================================================
+		// 🛡️ FALLBACK LOGIC (The Fix)
+		// =========================================================
+    
+		// Logic: If the Master returned 0 spawns, but we KNOW the Mesh Agent found some...
+		// Then the Master failed (hallucinated "nothing to do").
+		bool bMasterFailed = (MasterPlan.SpawnRequest.Num() == 0 && !DraftMeshJson.IsEmpty() && DraftMeshJson.Len() > 10);
+
+		if (bMasterFailed)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⚠️ GenAI: Master returned EMPTY spawns! Reverting to Draft Plans..."));
+			ExecuteFallbackPlan();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("✅ GenAI: Master Success! Spawning %d items."), MasterPlan.SpawnRequest.Num());
+			OnThemeDataReady.Broadcast(MasterPlan, LastUserPrompt);
+		}
     }
     else
     {
@@ -194,182 +180,249 @@ void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponseP
 	
 }
 
-void UGenAISystem::OnTexturePlanReady(FString TexturePlan, TArray<FString> ActorTags)
+void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, USceneHistoryManager* HistoryManager)
 {
+	// 1. Safety Check: Gates
+	if (!bIsMeshReady)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: MESH FALSE!"));
+		return;
+	}
+	if (!bIsTexReady)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: TEXTURE FALSE!"));
+		return;
+	}
+
+	// 🆕 2. CHECK THE LATCH (Prevent Double-Firing)
+	if (bHasSynthesized) 
+	{
+		UE_LOG(LogTemp, Warning, TEXT("🛑 GenAI: Synthesis blocked (Already running for this request)."));
+		return;
+	}
+
+	// 🆕 3. LOCK THE LATCH
+	bHasSynthesized = true;
+	// 2. Safety Check: World Context
+	// If the passed world is null, try to fall back to the System's world
+	UWorld* SafeWorld = WorldContext;
+	if (!SafeWorld)
+	{
+		SafeWorld = GetWorld();
+	}
+
+	if (!SafeWorld)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: No valid World Context!"));
+		return;
+	}
+
+	// 3. Safety Check: Subsystems
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(SafeWorld);
+	if (!GI) return;
+
+	USceneStateTracker* Tracker = GI->GetSubsystem<USceneStateTracker>();
+	if (!Tracker || !Tracker->AssetIndexer)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: AssetIndexer not found!"));
+		return;
+	}
+
+	// 4. Proceed
+	FString MasterPrompt = ConstructMasterPrompt(UserPrompt, Tracker->AssetIndexer);
+    // === CHANGES START HERE ===
+    
+    // Get API key
+	API_KEY APIKey;
+	FString GeminiKey = APIKey.GetGeminiKey();// <--- Gemini Key
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    
+	// Gemini URL
+	FString Url = FString::Printf(TEXT("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s"), *GeminiKey);
+	Request->SetURL(Url);
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+
+	// Gemini Payload
+	FString Payload = FString::Printf(TEXT(
+	   "{"
+	   "  \"contents\": [{"
+	   "    \"parts\": [{"
+	   "      \"text\": \"%s\""
+	   "    }]"
+	   "  }],"
+	   "  \"generationConfig\": {"
+	   "    \"temperature\": 0.1,"
+	   "    \"responseMimeType\": \"application/json\""
+	   "  }"
+	   "}"
+	), *MasterPrompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
+
+	Request->SetContentAsString(Payload);
+	Request->OnProcessRequestComplete().BindUObject(this, &UGenAISystem::OnLLMResponseReceived);
+	Request->ProcessRequest();
 }
+
+
+
+// === WATERFALL CHAIN CALLBACKS ===
 
 void UGenAISystem::OnMeshPlanReady(FString Plan, FString Choices)
 {
-}
-
-void UGenAISystem::OnLightingPlanReady(FString Plan)
-{
-}
-
-
-UGenAISystem::UGenAISystem()
-{
+	DraftMeshJson = Plan;
+	PrunedMeshList = Choices;
+	bIsMeshReady = true;
+    
+    if (bIsTexReady)
+    {
+    	if (CachedWorld.IsValid())
+    	{
+    		AttemptSynthesis(LastUserPrompt,CachedWorld.Get(), CachedHistory);return;
+    	}
 	
+    
+    	UWorld* World = GetWorld();
+    	if (World)
+    	{
+    		AttemptSynthesis(LastUserPrompt, World, CachedHistory);
+    		return;
+    	}
+    }
+    	
 }
 
-FString UGenAISystem::ConstructMasterPrompt(
-    FString UserPrompt,
-    UAssetIndexer* AssetIndexer)
+
+
+void UGenAISystem::OnTexturePlanReady(FString TexturePlan, FString Choices)
 {
+	DraftTexJson = TexturePlan;
+	PrunedTextureList = Choices;
+	bIsTexReady = true;
+	
+	if (bIsMeshReady)
+	{
+		if (CachedWorld.IsValid())
+		{
+			AttemptSynthesis(LastUserPrompt,CachedWorld.Get(), CachedHistory);return;
+		
+		}
+	
+    
+		UWorld* World = GetWorld();
+		if (World)
+		{
+			AttemptSynthesis(LastUserPrompt, World, CachedHistory);
+			return;
+		}
+	}
+}
+
+void UGenAISystem::Initialize()
+{
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(GetWorld());
+	if (!GI) return;
+	MeshL=UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<UMeshResolverLLM>();
+	
+	TexL= UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<UTextureResolverLLM>();
+
+	MeshL->OnMeshPlanReady.AddDynamic(this,&UGenAISystem::OnMeshPlanReady);
+
+	TexL->OnTexturePlanReady.AddDynamic(this,&UGenAISystem::OnTexturePlanReady);
+
+}
+
+void UGenAISystem::Deinitialize()
+{
+	//MeshL=UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<UMeshResolverLLM>();
+	//LightL=UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<ULightingResolverLLM>();
+	//TexL= UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<UTextureResolverLLM>();
+	UGameInstance* GI = UGameplayStatics::GetGameInstance(GetWorld());
+	if (!GI) return;
+	MeshL->OnMeshPlanReady.RemoveDynamic(this,&UGenAISystem::OnMeshPlanReady);
+	
+	TexL->OnTexturePlanReady.RemoveDynamic(this,&UGenAISystem::OnTexturePlanReady);
+}
+
+FString UGenAISystem::ConstructMasterPrompt(FString UserPrompt, UAssetIndexer* AssetIndexer)
+{
+    // === SAFETY CHECKS ===
     if (!AssetIndexer)
     {
         UE_LOG(LogTemp, Error, TEXT("GenAISystem: AssetIndexer is null"));
         return TEXT("");
     }
 
-    // === STEP 1: GET ALL ASSETS FROM INDEXER ===
-    TArray<FString> AvailableTextures = AssetIndexer->GetDiscoveredTextureNames();
+    // Only check Mesh and Texture drafts (Lighting draft is removed)
+    if (DraftMeshJson.IsEmpty() || DraftTexJson.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GenAISystem: Missing Draft Plans! Director Prompt may fail."));
+    }
+
+    // === STEP 1: HANDLE EMPTY DRAFTS (Safety Fallback) ===
+    if (DraftMeshJson.IsEmpty()) DraftMeshJson = TEXT("{\"SpawnRequest\": [], \"ParticleSpawn\": []}");
+    if (DraftTexJson.IsEmpty()) DraftTexJson = TEXT("{\"Props\": []}");
+
+    // === STEP 2: PREPARE VERIFIED LISTS ===
+    // We use the PRUNED lists from our experts for Meshes and Materials.
+    FString MeshListString = PrunedMeshList.IsEmpty() ? TEXT("[]") : FString::Printf(TEXT("[%s]"), *PrunedMeshList);
+    FString MaterialString = PrunedTextureList.IsEmpty() ? TEXT("[]") : FString::Printf(TEXT("[%s]"), *PrunedTextureList);
+
+    // We use FULL lists for Tags and PostProcessMaterials
     TArray<FString> ActorTags = AssetIndexer->GetDiscoveredActorTags();
-    TArray<FString> AvailableMeshes = AssetIndexer->GetAllMeshNames();
-    TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
-	// In ConstructMasterPrompt:
-	TArray<FString> AvailableParticles = AssetIndexer->GetDiscoveredParticleNames();
-    // === STEP 2: GET MATERIAL BASE NAMES ===
-    TArray<FString> MaterialBaseNames = AssetIndexer->GetMaterialBaseNames();
-    UE_LOG(LogTemp, Display, TEXT("GenAI: Using %d materials from %d textures"), MaterialBaseNames.Num(), AvailableTextures.Num());
-    UE_LOG(LogTemp, Display, TEXT("GenAI: Available meshes: %d"), AvailableMeshes.Num());
-
-
-	TArray<FString> CleanParticleNames;
-	for(const FString& Path : AvailableParticles) {
-		CleanParticleNames.Add(FPaths::GetBaseFilename(Path));
-	}
-    // === STEP 3: BUILD MESH LIST STRING (first 30 meshes for context) ===
-    FString MeshListString = TEXT("[");
-    for (int32 i = 0; i < FMath::Min(30, AvailableMeshes.Num()); i++)
-    {
-        MeshListString += FString::Printf(TEXT("\"%s\""), *AvailableMeshes[i]);
-        if (i < FMath::Min(30, AvailableMeshes.Num()) - 1) MeshListString += TEXT(", ");
-    }
-    if (AvailableMeshes.Num() > 30)
-    {
-        MeshListString += FString::Printf(TEXT(", ... %d more meshes]"), AvailableMeshes.Num() - 30);
-    }
-    else
-    {
-        MeshListString += TEXT("]");
-    }
-
-    // === STEP 4: CONVERT TO CSV STRINGS ===
-    FString MaterialString = FString::Join(MaterialBaseNames, TEXT("\", \""));
     FString TagString = FString::Join(ActorTags, TEXT("\", \""));
-    FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
-	FString ParticleString = FString::Join(CleanParticleNames, TEXT("\", \""));
-    // === STEP 5: BUILD COMPREHENSIVE PROMPT ===
-   FString Payload = FString::Printf(TEXT(
-        "You are an expert game environment designer specializing in Unreal Engine scenes.\n"
-        "Generate a JSON scene plan based on the user request.\n\n"
-        "USER REQUEST: \"%s\"\n\n"
-       "=== AVAILABLE SPAWNABLE ASSETS (Use for SpawnRequest.AssetPath) ===\n"
-        "You may use EXACT names from EITHER list below:\n"
-        "\n"
-        "--- STATIC MESHES ---\n"
-        "%s\n"
-        "\n"
-        "--- PARTICLE EFFECTS ---\n"
-        "%s\n"
-        "\n"
-        
-        "=== AVAILABLE ACTOR TAGS (for Props.TagName) ===\n"
-        "Modify only actors with these tags:\n"
-        "[\"%s\"]\n\n"
-        
-        "=== AVAILABLE MATERIALS (for Props.Texture.BaseColorPath) ===\n"
-        "Use these material base names (system auto-loads PBR textures):\n"
-        "[\"%s\"]\n\n"
-        
-        "=== AVAILABLE POST-PROCESS MATERIALS (for Environment.PostProcessingName) ===\n"
-        "[\"%s\"]\n\n"
-        "== CRITICAL RULES ===\n"
-		"1. SPLIT ASSETS:\n"
-		"   - STATIC MESHES go into 'SpawnRequest' array.\n"
-		"   - PARTICLE EFFECTS go into 'ParticleSpawns' array.\n"
-		"2. If no suitable assets are available, set bSpawnActors to false.\n"
-        "3. MATERIALS: Use ONLY base names (NOT full paths)\n"
-        "   System handles loading: material_name_diff_2k, material_name_rough_2k, etc.\n"
-        "4. TAGS: Use ONLY from AVAILABLE ACTOR TAGS for modification\n"
-        "5a. SPAWNING: Each spawned actor must have unique ObjectName\n"
-        "\n"
-        "5b. PARTICLES: If the theme implies weather/magic (Rain, Fire, Snow), you MUST pick a particle from the list.\n"
-		"   If no suitable particle exists, leave empty \"\".\n"
-        "6. LOCATIONS: Use these semantic patterns for varied spatial distribution:\n"
-        "   NAMED ZONES (use these for scene building):\n"
-        "   - CENTER: Arena center (use for 1-3 key props)\n"
-        "   - BACKGROUND: Far from camera (use for 3-6 walls/decorations)\n"
-        "   - FOREGROUND: Close to camera (use for 1-3 interactive props)\n"
-        "   - OVERHEAD: Aerial zone (use for particles/ceiling objects)\n"
-        "   - LEFT_SIDE: Left arena (use for 3-5 props)\n"
-        "   - RIGHT_SIDE: Right arena (use for 3-5 props)\n"
-        "   - LEFT_CORNER, RIGHT_CORNER: Arena edges\n"
-        "   \n"
-        "   PLAYER-RELATIVE (use sparingly, max 2-3 spawns):\n"
-        "   - PLAYER_FRONT, PLAYER_BACK, PLAYER_LEFT, PLAYER_RIGHT\n"
-        "   \n"
-        "   DYNAMIC QUERIES (for gameplay-driven spawns):\n"
-        "   - CLOSEST:<Tag>: Near player-facing side of tagged actor\n"
-        "   - NEAR:<Tag>: Random offset from tagged actor\n"
-        "   \n"
-        "   EXPLICIT (when exact control needed):\n"
-        "   - CUSTOM:[X,Y,Z]: Example CUSTOM:[500,-300,100]\n"
-        "\n"
-        "7. RETURN ONLY VALID JSON - no markdown, code blocks, or explanations\n"
-        "\n"
-        "8. SPAWN DISTRIBUTION STRATEGY:\n"
-        "   QUANTITY (match user intent):\n"
-        "   - Explicit count request (add 3 walls) → Spawn that exact number\n"
-        "   - Minimalist/simple/few → 5-10 spawns\n"
-        "   - Standard theme/scene → 12-18 spawns\n"
-        "   - Fill/crowded/detailed → 20-30 spawns\n"
-        "   \n"
-        "   SPATIAL COVERAGE (mandatory):\n"
-        "   - Distribute across MULTIPLE zones (BACKGROUND, LEFT_SIDE, RIGHT_SIDE, CENTER)\n"
-        "   - NEVER concentrate >30%% of spawns in PLAYER-RELATIVE positions\n"
-        "   - Each major zone (BACKGROUND, LEFT, RIGHT, CENTER) should have 2+ spawns\n"
-        "   \n"
-        "   MESH VARIETY:\n"
-        "   - Use 4+ different meshes\n"
-        "   - No mesh should appear more than 25%% of total spawns\n"
-        "   - Mix sizes: large (walls), medium (furniture), small (decorations)\n"
-        "   \n"
-        "   SPACING:\n"
-        "   - LocationOffset: Vary between ±100 and ±500 based on object size\n"
-        "   - Large objects (walls): ±300-600\n"
-        "   - Small objects (props): ±100-300\n"
-        "\n"
 
-        "\n"
-		"9. SCALE GUIDELINES:\n"
-		"   - IMPORTANT: JSON Format Rule -> NO LEADING ZEROS for integers.\n"
-		"   - Small props (barrels, baskets): [0.5-1.5, 0.5-1.5, 0.5-1.5]\n"
-		"   - Medium props (benches, tables): [1.0-2.0, 1.0-2.0, 1.0-2.0]\n"
-		"   - Large objects (walls, buildings): [1.0-3.0, 1.0-3.0, 1.0-3.0]\n"
-		"   - NEVER use scale >4.0 - objects become too large\n"
-		"   - Default scale: [1, 1, 1] if unsure\n"
-		"\n"
-        "10.ALWAYS set bModifyProps to true if the theme requires a material change (e.g. converting concrete walls to wood)."
-        "\n"
-        "=== JSON SCHEMA ===\n"
+    TArray<FString> AvailablePPMs = AssetIndexer->GetDiscoveredPostProcessNames();
+    FString PPMString = FString::Join(AvailablePPMs, TEXT("\", \""));
+
+    // === STEP 3: CONSTRUCT THE DIRECTOR PROMPT ===
+    // This prompt instructs the LLM to act as both a Merger (for objects) and a Creator (for lighting).
+    FString Payload = FString::Printf(TEXT(
+        "You are the Lead Scene Director specializing in Unreal Engine.\n"
+        "Two specialized agents have proposed partial plans (Meshes and Textures). Your job is to MERGE them and GENERATE the Lighting/Environment settings.\n\n"
+        
+        "USER REQUEST: \"%s\"\n\n"
+
+        "=== INPUT 1: MESH DRAFT (Spawns & Particles) ===\n"
+        "%s\n\n"
+        
+        "=== INPUT 2: TEXTURE DRAFT (Materials & Props) ===\n"
+        "%s\n\n"
+        
+        "=== VERIFIED RESOURCE LIST (TRUST THESE) ===\n"
+        "The agents have already validated these assets against the game database. THEY EXIST.\n"
+        "Valid Meshes: %s\n"
+        "Valid Materials: %s\n"
+        "Valid PostProcess: [\"%s\"]\n"
+        "Valid Tags: [\"%s\"]\n\n"
+
+        "=== INSTRUCTIONS ===\n"
+        "1. MERGE: Combine 'SpawnRequest' and 'ParticleSpawn' from Input 1, and 'Props' from Input 2.\n"
+        "2. TRUST: The assets in the Verified List are real. Do NOT delete them unless they create a semantic conflict.\n"
+        "3. GENERATE LIGHTING (CRITICAL):\n"
+        "   - You must create the 'Environment' and 'Lighting' objects from scratch based on the USER REQUEST.\n"
+        "   - Analyze the mood (e.g. 'Cyberpunk' = Low Sun Intensity, High Fog Density, Neon Colors; 'Sunny' = High Sun Intensity, Blue Sky).\n"
+        "   - Select a valid 'PostProcessingName' from the list above if it fits the theme, otherwise use \"\".\n"
+        "4. DENSITY: If Input 1 has multiple items, include them all. Do not summarize.\n"
+        "5. OUTPUT: Return strictly valid JSON using the FULL schema below.\n"
+        
+        "=== FULL JSON SCHEMA ===\n"
         "{\n"
         "  \"ThemeName\": \"descriptive_name\",\n"
-        "  \"bModifyEnvironment\": true/false,\n"
-        "  \"bModifyProps\": true/false,\n"
-        "  \"bSpawnActors\": true/false,\n"
-        "  \"TargetPropTags\": [\"tag1\", \"tag2\"],\n"
+        "  \"bModifyEnvironment\": true,\n"
+        "  \"bModifyProps\": true,\n"
+        "  \"bSpawnActors\": true,\n"
+        "  \"TargetPropTags\": [ \"tag1\", \"tag2\" ],\n"
         "  \"Environment\": {\n"
         "    \"FogDensity\": 0.0-5.0,\n"
-        "    \"FogColor\": [R:0-255, G:0-255, B:0-255],\n"
-        "    \"PostProcessingName\": \"material_name\",\n"
+        "    \"FogColor\": [R,G,B],\n"
+        "    \"PostProcessingName\": \"material_name_or_empty\",\n"
         "    \"Lighting\": {\n"
-        "      \"SunColor\": [R:0-255, G:0-255, B:0-255],\n"
+        "      \"SunColor\": [R,G,B],\n"
         "      \"SunIntensity\": 0.0-50.0,\n"
         "      \"SunPitch\": -90.0 to 90.0,\n"
-        "      \"SunYaw\": -360.0 to 360.0,\n"
-        "      \"SkyLightColor\": [R:0-255, G:0-255, B:0-255],\n"
+        "      \"SunYaw\": 0.0 to 360.0,\n"
+        "      \"SkyLightColor\": [R,G,B],\n"
         "      \"SkyLightIntensity\": 0.0-10.0,\n"
         "      \"SunTemperature\": 1000-15000\n"
         "    }\n"
@@ -377,12 +430,13 @@ FString UGenAISystem::ConstructMasterPrompt(
         "  \"Props\": [\n"
         "    {\n"
         "      \"TagName\": \"exact_tag\",\n"
-        "      \"PropColor\": [R:0-255, G:0-255, B:0-255],\n"
+        "      \"PropColor\": [R,G,B],\n"
         "      \"Texture\": {\n"
         "        \"BaseColorPath\": \"material_base_name\",\n"
         "        \"NormalPath\": \"\",\n"
         "        \"RoughnessPath\": \"\",\n"
-        "        \"MetallicPath\": \"\"\n"
+        "        \"MetallicPath\": \"\",\n"
+        "        \"AOPath\": \"\"\n"
         "      },\n"
         "      \"ParticleEffects\": \"\"\n"
         "    }\n"
@@ -392,37 +446,71 @@ FString UGenAISystem::ConstructMasterPrompt(
         "      \"AssetPath\": \"exact_mesh_name\",\n"
         "      \"ObjectName\": \"unique_instance_name\",\n"
         "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
-        "      \"LocationOffset\": [0, 0, 0],\n"
-        "      \"Rotation\": [Pitch, Yaw, Roll],\n"
-        "      \"Scale\": [X, Y, Z],\n"
+        "      \"LocationOffset\": [0,0,0],\n"
+        "      \"Rotation\": [Pitch,Yaw,Roll],\n"
+        "      \"Scale\": [X,Y,Z],\n"
+        "      \"Tag\": \"optional_tag\",\n"
+        "      \"ClearanceRadius\": 150\n"
+        "    }\n"
+        "  ],\n"
+        "  \"ParticleSpawn\": [\n"
+        "    {\n"
+        "      \"AssetPath\": \"exact_particle_name\",\n"
+        "      \"ObjectName\": \"unique_instance_name\",\n"
+        "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
+        "      \"LocationOffset\": [0,0,0],\n"
+        "      \"Rotation\": [0,0,0],\n"
+        "      \"Scale\": [1,1,1],\n"
         "      \"Tag\": \"optional_tag\",\n"
         "      \"ClearanceRadius\": 150\n"
         "    }\n"
         "  ]\n"
-        "  \"ParticleSpawn\": [\n"
-		"    {\n"
-		"      \"AssetPath\": \"exact_particle_name\",\n"
-		"      \"ObjectName\": \"unique_instance_name\",\n"
-		"      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
-		"      \"LocationOffset\": [0, 0, 0],\n"
-		"      \"Rotation\": [Pitch, Yaw, Roll],\n"
-		"      \"Scale\": [X, Y, Z],\n"
-		"      \"Tag\": \"optional_tag\",\n"
-		"      \"ClearanceRadius\": 150\n"
-		"    }\n"
-		"  ]\n"
         "}\n\n"
-        "Generate the JSON now:"
+        "Generate the Merged JSON now:"
     ),
     *UserPrompt,
-    *MeshListString,
-    *ParticleString,
-    *TagString,
-    *MaterialString,
-    *PPMString);
+    *DraftMeshJson,     // Input 1 (Meshes)
+    *DraftTexJson,      // Input 2 (Textures)
+    *MeshListString,    // Verified Meshes
+    *MaterialString,    // Verified Materials
+    *PPMString,         // Verified PostProcess
+    *TagString          // Verified Tags
+    );
 
-	return Payload;
+    return Payload;
 }
+void UGenAISystem::ExecuteFallbackPlan()
+{
+	// If the Director fails, we manually stitch the 3 drafts together.
+	// This guarantees we get the "Raw" output from Llama 3.3.
+    
+	UE_LOG(LogTemp, Display, TEXT("🔄 GenAI: Stitching Backup Plan from Drafts..."));
+
+	FEnhancedScenePlan BackupPlan;
+    
+	// 1. Recover Mesh Data
+	if (!DraftMeshJson.IsEmpty()) 
+	{
+		FEnhancedScenePlan MeshP = UJsonParser::CreatePlan(DraftMeshJson);
+		BackupPlan.SpawnRequest = MeshP.SpawnRequest;
+		BackupPlan.ParticleSpawns = MeshP.ParticleSpawns;
+		UE_LOG(LogTemp, Display, TEXT("   + Recovered %d Spawns from Mesh Draft"), BackupPlan.SpawnRequest.Num());
+	}
 
 
+
+	// 2. Recover Texture Data
+	if (!DraftTexJson.IsEmpty())
+	{
+		FEnhancedScenePlan TexP = UJsonParser::CreatePlan(DraftTexJson);
+		BackupPlan.Props = TexP.Props;
+		UE_LOG(LogTemp, Display, TEXT("   + Recovered %d Prop Edits"), BackupPlan.Props.Num());
+	}
+
+	BackupPlan.ThemeName = "Fallback: " + LastUserPrompt;
+	BackupPlan.bSpawnActors = (BackupPlan.SpawnRequest.Num() > 0);
+    
+	// Broadcast the Frankenstein plan
+	OnThemeDataReady.Broadcast(BackupPlan, LastUserPrompt);
+}
 

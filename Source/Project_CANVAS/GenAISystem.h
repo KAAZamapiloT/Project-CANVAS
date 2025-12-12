@@ -21,7 +21,10 @@ class PROJECT_CANVAS_API UGenAISystem : public UObject
 {
 	GENERATED_BODY()
 public:
-	UGenAISystem();
+
+void Initialize();
+
+void Deinitialize();	
 	/**
  * Construct comprehensive LLM prompt with available assets from AssetIndexer
  * Gets all materials, meshes, tags, and post-process materials directly
@@ -41,20 +44,44 @@ public:
 	// --- Internal HTTP Callback ---
 	void OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
-	
+	void AttemptSynthesis(FString UserPrompt,UWorld*WorldContext,USceneHistoryManager*HistoryManager);
 	// We need a reference to our parser
 	UPROPERTY(BlueprintAssignable)
 	FOnThemeDataReady OnThemeDataReady;
 
+	
+	
+
+
+	void ExecuteFallbackPlan();
 private:
+	UPROPERTY()
+	class UMeshResolverLLM* MeshL ;
+	
+	UPROPERTY()
+	class UTextureResolverLLM* TexL ;
+	
+	// Intermediate Data Storage (The "Puzzle Pieces")
+	FString DraftMeshJson;
+	FString DraftTexJson;
+
+
+	FString PrunedMeshList;      // From MeshResolver Choices
+	FString PrunedTextureList;   // From TextureResolver Choices
+	
+	bool bIsMeshReady=false;
+	bool bIsTexReady=false;
 	FString LastUserPrompt ;
 
+	TWeakObjectPtr<UWorld> CachedWorld;
+	UPROPERTY()
+	USceneHistoryManager* CachedHistory;
 	UFUNCTION()
-	void OnTexturePlanReady(FString TexturePlan, TArray<FString> ActorTags);
+	void OnTexturePlanReady(FString TexturePlan, FString Choices);
 
 	UFUNCTION()
 	void OnMeshPlanReady(FString Plan,FString Choices);
-
-	UFUNCTION()
-	void OnLightingPlanReady(FString Plan);
+	// 🆕 2. CHECK THE LATCH (Prevent Double-Firing)
+	
+	bool bHasSynthesized = false;
 };

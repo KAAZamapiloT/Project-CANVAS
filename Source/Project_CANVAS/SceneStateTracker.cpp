@@ -87,13 +87,19 @@ void USceneStateTracker::Initialize(FSubsystemCollectionBase& Collection)
         if (LocationEngine)
         {
             LocationEngine->InitializePlayableAreaBounds();
-            API_KEY a;
             LocationEngine->ScanWorldLocationsAsync(GetWorld());
+            // ✅ UPDATE: Configure Location Resolver to use Gemini 1.5 Flash
+            API_KEY KeyHandler;
+            FString GeminiKey = KeyHandler.GetGeminiKey(); // Ensure API_KEY class has this!
+            
+            // Gemini uses key in URL. Leave APIKey param empty.
+            FString Endpoint = FString::Printf(TEXT("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s"), *GeminiKey);
+            
             LocationEngine->ConfigureLLMFallback(
-           TEXT("https://api.groq.com/openai/v1/chat/completions"),
-           a.GetGroqKey(),
-           TEXT("openai/gpt-oss-20b")
-       );
+                Endpoint,
+                TEXT(""), // No Auth Header for Gemini
+                TEXT("gemini-2.5-flash")
+            );
 
         }
         
@@ -164,7 +170,9 @@ void USceneStateTracker::OnWorldInit(UWorld* World, const UWorld::Initialization
         UE_LOG(LogTemp, Display, TEXT("🔄 Retrying asset scan with world access..."));
         AssetIndexer->ScanAllAssetsAsync(World);
     }
-    
+
+    GenAISystem->Initialize();
+
     UE_LOG(LogTemp, Display, TEXT("✅ OnStart complete - system fully initialized"));
     World->GetTimerManager().SetTimer(
         InitTimerHandle, 
@@ -179,6 +187,7 @@ void USceneStateTracker::Deinitialize()
 {
    
     Super::Deinitialize();
+    GenAISystem->Deinitialize();
     FWorldDelegates::OnPostWorldInitialization.RemoveAll(this);
 }
 void USceneStateTracker::OnAssetScanFinished()

@@ -18,21 +18,21 @@ EBTNodeResult::Type UBTTask_SmartAttack::ExecuteTask(UBehaviorTreeComponent& Own
     AAIController* AIController = Cast<AAIController>(OwnerComp.GetAIOwner());
     if (!AIController)
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ BTTask_SmartAttack: No AIController"));
+  //      UE_LOG(LogTemp, Error, TEXT("❌ BTTask_SmartAttack: No AIController"));
         return EBTNodeResult::Failed;
     }
 
     AEnemyCharacter* Enemy = Cast<AEnemyCharacter>(AIController->GetPawn());
     if (!Enemy)
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ BTTask_SmartAttack: No Enemy pawn"));
+  //      UE_LOG(LogTemp, Error, TEXT("❌ BTTask_SmartAttack: No Enemy pawn"));
         return EBTNodeResult::Failed;
     }
 
     UBlackboardComponent* Blackboard = OwnerComp.GetBlackboardComponent();
     if (!Blackboard)
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ BTTask_SmartAttack: No Blackboard"));
+  //      UE_LOG(LogTemp, Error, TEXT("❌ BTTask_SmartAttack: No Blackboard"));
         return EBTNodeResult::Failed;
     }
 
@@ -41,12 +41,12 @@ EBTNodeResult::Type UBTTask_SmartAttack::ExecuteTask(UBehaviorTreeComponent& Own
     
     if (LastMove.IsNone())
     {
-        UE_LOG(LogTemp, Warning, TEXT("⚠️ [BT] SmartAttack: No previous move - skipping combo"));
+    //    UE_LOG(LogTemp, Warning, TEXT("⚠️ [BT] SmartAttack: No previous move - skipping combo"));
         return EBTNodeResult::Failed;
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("🧠 [BT] SmartAttack: Using LastMove=%s for combo prediction"), 
-           *LastMove.ToString());
+   // UE_LOG(LogTemp, Warning, TEXT("🧠 [BT] SmartAttack: Using LastMove=%s for combo prediction"), 
+   //        *LastMove.ToString());
 
     // ✅ STEP 2: Check if still in range
     float Distance = Blackboard->GetValueAsFloat("DistanceToPlayer");
@@ -54,8 +54,8 @@ EBTNodeResult::Type UBTTask_SmartAttack::ExecuteTask(UBehaviorTreeComponent& Own
     
     if (Distance > MinAttackDistance)
     {
-        UE_LOG(LogTemp, Display, TEXT("⏸️ [BT] SmartAttack: Out of range (%.1f > %.1f)"), 
-               Distance, MinAttackDistance);
+  //      UE_LOG(LogTemp, Display, TEXT("⏸️ [BT] SmartAttack: Out of range (%.1f > %.1f)"), 
+  //             Distance, MinAttackDistance);
         return EBTNodeResult::Failed;
     }
 
@@ -66,27 +66,27 @@ EBTNodeResult::Type UBTTask_SmartAttack::ExecuteTask(UBehaviorTreeComponent& Own
     
     if (!StateComp || !DecisionEngine || !AnimComp)
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ [BT] SmartAttack: Missing components"));
+  //      UE_LOG(LogTemp, Error, TEXT("❌ [BT] SmartAttack: Missing components"));
         return EBTNodeResult::Failed;
     }
 
     // ✅ STEP 4: Build context with LastMove (enables combo prediction)
     FContextVector Context = StateComp->BuildContext(LastMove);
     
-    UE_LOG(LogTemp, Display, TEXT("🔍 [BT] SmartAttack: Context built with LastMove=%s"), 
-           *LastMove.ToString());
+//    UE_LOG(LogTemp, Display, TEXT("🔍 [BT] SmartAttack: Context built with LastMove=%s"), 
+ //          *LastMove.ToString());
 
     // ✅ STEP 5: Let Decision Engine predict follow-up
     FActionCommand FollowUp = DecisionEngine->DecideNextMove(Context);
     
     if (FollowUp.MoveIdentifier.IsNone())
     {
-        UE_LOG(LogTemp, Display, TEXT("⏸️ [BT] SmartAttack: No valid follow-up - combo ended"));
+  //      UE_LOG(LogTemp, Display, TEXT("⏸️ [BT] SmartAttack: No valid follow-up - combo ended"));
         return EBTNodeResult::Failed;
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("⚡ [BT] SmartAttack: Predicted follow-up: %s"), 
-           *FollowUp.MoveIdentifier.ToString());
+//    UE_LOG(LogTemp, Warning, TEXT("⚡ [BT] SmartAttack: Predicted follow-up: %s"), 
+ //          *FollowUp.MoveIdentifier.ToString());
 
     // ✅ STEP 6: Execute follow-up
     AnimComp->ExecuteActionCommand(FollowUp);
@@ -118,7 +118,7 @@ void UBTTask_SmartAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* Nod
     // ✅ CHECK: Wait for montage to complete
     if (!Enemy->IsExecutingMove())
     {
-        UE_LOG(LogTemp, Display, TEXT("✅ [BT] SmartAttack: Montage completed"));
+       // UE_LOG(LogTemp, Display, TEXT("✅ [BT] SmartAttack: Montage completed"));
         FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
     }
 }

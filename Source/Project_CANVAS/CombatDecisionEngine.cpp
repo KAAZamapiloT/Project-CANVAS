@@ -21,7 +21,7 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     if (Context.LastMoveExecuted==NAME_None)
     {
         SelectedMove = Context.CurrentInput.IsNone() ? FName("LightAttack") : Context.CurrentInput;
-        UE_LOG(LogTemp, Log, TEXT("🎬 First Move: %s"), *SelectedMove.ToString());
+       // UE_LOG(LogTemp, Log, TEXT("🎬 First Move: %s"), *SelectedMove.ToString());
         
     }else
     {
@@ -34,7 +34,7 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     {
         
         SelectedMove = FName("HeavyAttack");
-        UE_LOG(LogTemp, Log, TEXT("Decision: Punish Stunned -> HeavyAttack"));
+       // UE_LOG(LogTemp, Log, TEXT("Decision: Punish Stunned -> HeavyAttack"));
     }
     
     // =====================================
@@ -45,7 +45,7 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     {
         
         SelectedMove = FName("Dash");
-        UE_LOG(LogTemp, Log, TEXT("Decision: Gap Closer -> Dash (distance: %.1f)"), Context.DistanceToEnemy);
+    //    UE_LOG(LogTemp, Log, TEXT("Decision: Gap Closer -> Dash (distance: %.1f)"), Context.DistanceToEnemy);
     }
     
     // =====================================
@@ -64,19 +64,19 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
             if (LastMove->FollowUpMoves.Contains(Context.EnemyDirection))
             {
                 SelectedMove = LastMove->FollowUpMoves[Context.EnemyDirection];
-                UE_LOG(LogTemp, Log, TEXT("🔗 Combo: %s → %s (Dir: %d)"),
-                       *Context.LastMoveExecuted.ToString(),
-                       *SelectedMove.ToString(),
-                       (int32)Context.EnemyDirection);
+          //      UE_LOG(LogTemp, Log, TEXT("🔗 Combo: %s → %s (Dir: %d)"),
+         //              *Context.LastMoveExecuted.ToString(),
+         //              *SelectedMove.ToString(),
+        //               (int32)Context.EnemyDirection);
             }
 
             // Fallback: Try neutral combo if directional doesn't exist
             else if (LastMove->FollowUpMoves.Contains(EInputDirection::EID_NEUTRAL))
             {
                 SelectedMove = LastMove->FollowUpMoves[EInputDirection::EID_NEUTRAL];
-                UE_LOG(LogTemp, Log, TEXT("🔗 Combo (fallback): %s → %s"), 
-                    *Context.LastMoveExecuted.ToString(), 
-                    *SelectedMove.ToString());
+        //        UE_LOG(LogTemp, Log, TEXT("🔗 Combo (fallback): %s → %s"), 
+        //            *Context.LastMoveExecuted.ToString(), 
+        //            *SelectedMove.ToString());
             }
         }
     }
@@ -88,7 +88,7 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     if (SelectedMove.IsNone())
     {
         SelectedMove = FName("LightAttack");
-        UE_LOG(LogTemp, Log, TEXT("Decision: Default -> LightAttack"));
+  //      UE_LOG(LogTemp, Log, TEXT("Decision: Default -> LightAttack"));
     }
 }
     // =====================================
@@ -99,8 +99,8 @@ FActionCommand UCombatDecisionEngine::DecideNextMove(const FContextVector& Conte
     
     if (!MoveData)
     {
-        UE_LOG(LogTemp, Error, TEXT("Decision: Move '%s' not found in DataTable!"), 
-               *SelectedMove.ToString());
+   //     UE_LOG(LogTemp, Error, TEXT("Decision: Move '%s' not found in DataTable!"), 
+  //             *SelectedMove.ToString());
         return FActionCommand();  // Return empty command on error
     }
 
