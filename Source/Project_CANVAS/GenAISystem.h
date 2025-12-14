@@ -60,7 +60,12 @@ private:
 	
 	UPROPERTY()
 	class UTextureResolverLLM* TexL ;
-	
+
+	UPROPERTY()
+	class UIntentionResolverLLM* IntentionL;
+
+	UPROPERTY()
+	class UPaintingResolverLLM* PaintL;
 	// Intermediate Data Storage (The "Puzzle Pieces")
 	FString DraftMeshJson;
 	
@@ -82,7 +87,25 @@ private:
 
 	UFUNCTION()
 	void OnMeshPlanReady(FString Plan,FString Choices);
-	// 🆕 2. CHECK THE LATCH (Prevent Double-Firing)
-	
+
+	UFUNCTION()
+	void OnIntentionReady(const TArray<FString>&  RelevantKeywords);
+
+	UFUNCTION()
+	void OnPaintingPlanReady(FString Plan,FString Sum);
+	TArray<FString> ActiveAssetContext;
 	bool bHasSynthesized = false;
+	// NEW: Store the draft plan from the Painting Agent
+	FString DraftPaintingJson; 
+    
+	// NEW: Flag to track if Painting Agent has finished
+	bool bIsPaintingReady = false;
+	bool bPaintL=true;
+	bool bIntent=true;
+private:
+	/**
+	 * Applies a lighting preset based on keywords in the prompt, 
+	 * or picks a random valid archetype if no keywords match.
+	 */
+	void ApplySmartFallbackLighting(struct FEnhancedScenePlan& Plan, const FString& Prompt);
 };

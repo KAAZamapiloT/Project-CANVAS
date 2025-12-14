@@ -107,8 +107,20 @@ void ULocationResolverLLM::ResolveBatchLocationsAsync(
     Request->SetHeader("Content-Type", "application/json");
 
     bool bIsGemini = Endpoint.Contains("googleapis");
-    if (!bIsGemini && !APIKey.IsEmpty()) 
+    FString FinalURL = Endpoint;
+    
+    if (bIsGemini)
     {
+        // Gemini: Ensure Key is in URL parameter
+        if (!APIKey.IsEmpty() && !FinalURL.Contains("key="))
+        {
+            FString Separator = FinalURL.Contains("?") ? "&" : "?";
+            FinalURL += FString::Printf(TEXT("%skey=%s"), *Separator, *APIKey);
+        }
+    }
+    else if (!APIKey.IsEmpty())
+    {
+        // OpenAI/Groq: Use Bearer Header
         Request->SetHeader("Authorization", FString::Printf(TEXT("Bearer %s"), *APIKey));
     }
 
@@ -282,6 +294,11 @@ FString ULocationResolverLLM::BuildBatchPrompt(const TArray<FSpawnRequest>& Requ
         "Layout Task. Assign valid world coordinates (x,y,z), rotation (yaw), and scale.\n"
         "SCENE CONTEXT:\n%s\n\n"
         "OBJECTS TO PLACE:\n%s\n"
+        "Instead of random coordinates, use 'LocationOffset' to define a Layout Pattern ID:\n"
+        "   - [0, 0, 0] = Single Center Item\n"
+        "   - [1, radius, count] = Circle Formation\n"
+        "   - [2, width, depth] = Grid Formation\n"
+        "   - [3, distance, 0] = Scatter Randomly in Zone (Clutter)\n"
         "RULES:\n"
         "1. Respect Bounds. Avoid overlaps.\n"
         "2. Scale: 1.0 is standard. 0.5 is half size.\n"

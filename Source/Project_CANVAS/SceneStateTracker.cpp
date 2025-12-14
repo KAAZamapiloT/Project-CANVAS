@@ -98,7 +98,7 @@ void USceneStateTracker::Initialize(FSubsystemCollectionBase& Collection)
             LocationEngine->ConfigureLLMFallback(
                 Endpoint,
                 TEXT(""), // No Auth Header for Gemini
-                TEXT("gemini-2.5-flash")
+                TEXT("gemini-2.5-flash-lite")
             );
 
         }
@@ -334,6 +334,7 @@ void USceneStateTracker::OnPlanReceived(const FEnhancedScenePlan& Plan, const FS
         AssetIndexer->ResolveEnvironmentAssets(EnrichedPlan);
     }
 
+    ResolveProceduralLayouts(EnrichedPlan);
     // 3. SPATIAL RESOLUTION (The part you are keeping here for batching logic)
     if (EnrichedPlan.bSpawnActors && EnrichedPlan.SpawnRequest.Num() > 0)
     {
@@ -571,6 +572,192 @@ void USceneStateTracker::OnActorSpawned(AActor* NewActor, const FString& ObjectN
     FVector Loc = NewActor->GetActorLocation();
     UE_LOG(LogTemp, Warning, TEXT("🎬 Actor spawned: %s at [%.0f, %.0f, %.0f] | Total: %d"),
         *ObjectName, Loc.X, Loc.Y, Loc.Z, SpawnedActors.Num());
+}
+
+void USceneStateTracker::ResolveProceduralLayouts(FEnhancedScenePlan& Plan)
+{
+    // Safety Checks
+    if (!LocationEngine || !AssetIndexer)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ ResolveProceduralLayouts Failed: Missing Engine or Indexer"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("📐 Pre-calculating %d Layout Commands..."), Plan.LayoutCommands.Num());
+
+    for (FPaintingCommand& Cmd : Plan.LayoutCommands)
+    {
+        // =========================================================
+        // 1. ASSET RESOLUTION (Late Binding)
+        // =========================================================
+        // Convert abstract keyword (e.g., "SciFi_Wall") to concrete path (e.g., "/Game/Meshes/SM_SciFi_Wall_01.uasset")
+        // NOTE: AssetIndexer needs ResolveMeshPath/ResolveMaterialPath implemented.
+        // ✅ Correct Mesh Resolver
+        Cmd.ResolvedMeshPath = AssetIndexer->ResolveMeshToFullPathWithVariants(Cmd.Style.MeshKeyword);
+        
+        // ✅ Correct Texture Resolver (Returns struct, not string)
+        Cmd.ResolvedTextureSet = AssetIndexer->ResolveTextureFromName(Cmd.Style.MaterialKeyword);
+        if (Cmd.ResolvedMeshPath.IsEmpty())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Could not resolve mesh for keyword '%s'. Skipping command."), *Cmd.Style.MeshKeyword);
+            continue;
+        }
+
+        // =========================================================
+        // 2. SPATIAL RESOLUTION (Math Phase)
+        // =========================================================
+        
+        // Resolve the "Center of Operations" for this command
+        FVector Origin = LocationEngine->ResolveLocationName(Cmd.TargetZone);
+        
+        // Fallback: If "SecretBase" isn't a known location, pick a random safe spot in the center
+        if (Origin.IsZero() && !Cmd.TargetZone.Equals("CENTER"))
+        {
+             UE_LOG(LogTemp, Warning, TEXT("   TargetZone '%s' unknown. Using Random Center fallback."), *Cmd.TargetZone);
+             Origin = LocationEngine->GetRandomCenterPosition();
+        }
+
+        FString Tool = Cmd.Tool.ToUpper();
+        TArray<FTransform>& OutPoints = Cmd.BakedTransforms; // Direct reference to storage
+
+        // ---------------------------------------------------------
+        // TOOL A: SCATTER / CLUSTER (Random Organic Placement)
+        // ---------------------------------------------------------
+        if (Tool.Contains("SCATTER") || Tool.Contains("CLUSTER"))
+        {
+            int32 Count = (int32)Cmd.Settings.FindRef("Count");
+            float Radius = Cmd.Settings.FindRef("Radius");
+            float Clearance = Cmd.Settings.FindRef("MinClearance");
+            
+            // Robust Defaults
+            if (Radius <= 0) Radius = 500.0f;
+            if (Clearance <= 0) Clearance = 100.0f;
+            if (Count <= 0) Count = 5;
+
+            for(int i=0; i<Count; i++)
+            {
+                // Math: Random point in circle (2D)
+                FVector2D RandPt = FMath::RandPointInCircle(Radius);
+                FVector Candidate = Origin + FVector(RandPt.X, RandPt.Y, 0);
+                
+                // Logic: Find safe spot near candidate using Spatial Grid
+                // This ensures we don't spawn inside existing walls
+                FSpawnLocation SafeLoc = LocationEngine->FindNearestFreeLocation(Candidate, Clearance);
+                
+                // Logic: Raycast down to floor to handle terrain height
+                FVector SnappedPos = LocationEngine->SnapToGround(SafeLoc.WorldPosition);
+                
+                // Logic: Random Rotation (Yaw) for organic look
+                FRotator Rot(0, FMath::RandRange(0.0f, 360.0f), 0);
+                
+                OutPoints.Add(FTransform(Rot, SnappedPos));
+            }
+        }
+        // ---------------------------------------------------------
+        // TOOL B: PERIMETER / WALLS (Boundary Definition)
+        // ---------------------------------------------------------
+        else if (Tool.Contains("PERIMETER") || Tool.Contains("FILL_PERIMETER"))
+        {
+            FBox Bounds = LocationEngine->GetPlayableAreaBounds();
+            float Spacing = Cmd.Settings.FindRef("Spacing");
+            if (Spacing <= 10.0f) Spacing = 400.0f; // Default wall segment size
+
+            // Lambda: Fills a straight line with objects
+            auto FillLine = [&](FVector Start, FVector End, float Yaw)
+            {
+                float Dist = FVector::Dist(Start, End);
+                int32 Steps = FMath::FloorToInt(Dist / Spacing);
+                if (Steps < 1) Steps = 1;
+                
+                FVector Dir = (End - Start).GetSafeNormal();
+                
+                for(int i=0; i<=Steps; i++)
+                {
+                    FVector Pos = Start + (Dir * (i * Spacing));
+                    
+                    // Raycast to ensure wall sits on floor
+                    Pos = LocationEngine->SnapToGround(Pos);
+                    
+                    OutPoints.Add(FTransform(FRotator(0, Yaw, 0), Pos));
+                }
+            };
+
+            // Calculate corners of the arena based on PlayableAreaBounds
+            FVector BL(Bounds.Min.X, Bounds.Min.Y, 0);
+            FVector BR(Bounds.Min.X, Bounds.Max.Y, 0);
+            FVector TL(Bounds.Max.X, Bounds.Min.Y, 0);
+            FVector TR(Bounds.Max.X, Bounds.Max.Y, 0);
+
+            // Execute lines (Walls facing appropriately based on Yaw)
+            FillLine(BL, TL, 0.0f);   // Left Wall
+            FillLine(TL, TR, 90.0f);  // Top Wall
+            FillLine(TR, BR, 180.0f); // Right Wall
+            FillLine(BR, BL, 270.0f); // Bottom Wall
+        }
+        // ---------------------------------------------------------
+        // TOOL C: GRID (Ordered Placement)
+        // ---------------------------------------------------------
+        else if (Tool.Contains("GRID"))
+        {
+            int32 Rows = (int32)Cmd.Settings.FindRef("Rows");
+            int32 Cols = (int32)Cmd.Settings.FindRef("Cols");
+            float Spacing = Cmd.Settings.FindRef("Spacing");
+            
+            // Defaults
+            if (Rows <= 0) Rows = 3;
+            if (Cols <= 0) Cols = 3;
+            if (Spacing <= 0) Spacing = 200.0f;
+
+            // Calculate Grid Dimensions
+            float TotalWidth = (Cols - 1) * Spacing;
+            float TotalDepth = (Rows - 1) * Spacing;
+            
+            // Start top-left relative to origin so the grid is centered
+            FVector StartPos = Origin - FVector(TotalDepth/2, TotalWidth/2, 0);
+
+            for (int r = 0; r < Rows; r++)
+            {
+                for (int c = 0; c < Cols; c++)
+                {
+                    FVector Pos = StartPos + FVector(r * Spacing, c * Spacing, 0);
+                    
+                    // Snap to ground
+                    FVector Snapped = LocationEngine->SnapToGround(Pos);
+                    
+                    // No random rotation for grids (uniform look)
+                    OutPoints.Add(FTransform(FRotator::ZeroRotator, Snapped));
+                }
+            }
+        }
+        // ---------------------------------------------------------
+        // TOOL D: RING / CIRCLE (Ritual Placement)
+        // ---------------------------------------------------------
+        else if (Tool.Contains("RING") || Tool.Contains("CIRCLE"))
+        {
+            int32 Count = (int32)Cmd.Settings.FindRef("Count");
+            float Radius = Cmd.Settings.FindRef("Radius");
+            
+            if (Count < 3) Count = 5;
+            if (Radius <= 0) Radius = 300.0f;
+
+            for(int i=0; i<Count; i++)
+            {
+                float Angle = (360.0f / Count) * i;
+                float Rad = FMath::DegreesToRadians(Angle);
+                
+                FVector Offset(FMath::Cos(Rad) * Radius, FMath::Sin(Rad) * Radius, 0);
+                FVector Pos = Origin + Offset;
+                
+                FVector Snapped = LocationEngine->SnapToGround(Pos);
+                
+                // Rotate to face outward from center
+                FRotator Rot(0, Angle, 0); 
+                OutPoints.Add(FTransform(Rot, Snapped));
+            }
+        }
+        
+        UE_LOG(LogTemp, Display, TEXT("   ✅ Processed '%s': Generated %d points"), *Tool, OutPoints.Num());
+    }
 }
 
 void USceneStateTracker::PrintAllSpawnedActors() const

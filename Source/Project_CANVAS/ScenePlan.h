@@ -228,6 +228,51 @@ struct FPropsModification
     }
 };
 
+// 1. The Visual Definition
+USTRUCT(BlueprintType)
+struct FStyleProfile
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString MeshKeyword;      // e.g., "SciFi_Wall"
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString MaterialKeyword;  // e.g., "Dark_Stone"
+};
+
+// 2. The Action Command
+USTRUCT(BlueprintType)
+struct FPaintingCommand
+{
+    GENERATED_BODY()
+
+    // --- INPUTS (From LLM) ---
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString Tool;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString TargetZone;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString Archetype; 
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FStyleProfile Style;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TMap<FString, float> Settings;
+    
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+    FString ResolvedMeshPath;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+    FTextureSet ResolvedTextureSet;
+
+    // 2. The exact transforms to spawn at (Baked Math)
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+    TArray<FTransform> BakedTransforms; 
+};
 // === MAIN SCENE PLAN ===
 /**
  * Complete scene modification plan
@@ -280,6 +325,10 @@ struct FEnhancedScenePlan
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     bool bSpawnActors=false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TArray<FPaintingCommand> LayoutCommands;
+
     
     // === FUTURE EXTENSIONS (Commented out for now) ===
     // UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -302,3 +351,7 @@ struct FEnhancedScenePlan
         return !(*this == Other);
     }
 };
+
+
+
+

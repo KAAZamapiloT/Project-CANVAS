@@ -17,12 +17,16 @@ class PROJECT_CANVAS_API UMeshResolverLLM : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 public:
-	FString CreateMeshPayload(FString UserPrompt,class UAssetIndexer*Indexer);
+
 	
 	UFUNCTION(BlueprintCallable)
 	void RequestPlan(FString UserPrompt,UWorld* World,class USceneHistoryManager* HistoryManager);
 	
 	void OnPlanReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// New Pruned Request Function
+	UFUNCTION(BlueprintCallable)
+	void RequestPlan_Pruned(FString UserPrompt, FString& PrunedAssets, UWorld* World, class USceneHistoryManager* HistoryManager);
 	
 	UPROPERTY(BlueprintAssignable)
 	FOnMeshPlanReady OnMeshPlanReady;
@@ -35,4 +39,8 @@ public:
 	{
 		Super::Deinitialize();
 	}
+private:
+	FString CreateMeshPayload(FString UserPrompt,class UAssetIndexer*Indexer);
+	// Helper to generate prompt from specific list
+	FString CreatePrunedMeshPayload(FString UserPrompt, FString& PrunedAssets);
 };

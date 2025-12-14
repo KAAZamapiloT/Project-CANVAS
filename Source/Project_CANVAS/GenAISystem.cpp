@@ -12,10 +12,12 @@
 #include "JsonUtilities.h"
 #include "AssetIndexer.h"
 #include "AssetTypeCategories.h"
-
+#include "IntentionResolverLLM.h"
+#include"PaintingResolverLLM.h"
 #include "MeshResolverLLM.h"
 #include "TextureResolverLLM.h"
 #include "ToolContextInterfaces.h"
+#include "Components/Image.h"
 
 
 void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager)
@@ -47,15 +49,36 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 	bIsMeshReady = false;
 	
 	bIsTexReady = false;
-	
+	bIsPaintingReady = false; 
+	DraftPaintingJson = "";
 	DraftMeshJson = "";
 	DraftTexJson = "";
 	PrunedMeshList = "";
 	PrunedTextureList = "";
 
-	MeshL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
-	TexL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
+	TArray<FString> AllConcepts;
+	AllConcepts.Append(Tracker->AssetIndexer->GetSmartMeshList());
+	AllConcepts.Append(Tracker->AssetIndexer->GetMaterialBaseNames());
 
+	// 3. START STAGE 1: INTENTION
+	UE_LOG(LogTemp, Display, TEXT("🤖 Phase 1: Analyzing Intention..."));
+	if (bIntent)
+	{
+		IntentionL->RequestIntention(UserPrompt, AllConcepts);
+	}else
+	{
+		MeshL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
+		TexL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
+		if (bPaintL)
+		{
+			PaintL->RequestPaintingPlan(UserPrompt, WorldContext, Tracker->AssetIndexer);
+		}
+		else
+		{
+			// If Painting Resolver is missing/disabled, mark it as ready instantly so we don't hang
+			bIsPaintingReady = true; 
+		}
+	}
 	
 	
 	
@@ -193,7 +216,13 @@ void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, US
 		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: TEXTURE FALSE!"));
 		return;
 	}
-
+	// NEW: Wait for Painting
+	if (!bIsPaintingReady) 
+	{
+		// Optional: Log that we are waiting
+		UE_LOG(LogTemp, Display, TEXT("⏳ Waiting for Painting Agent..."));
+		return;
+	}
 	// 🆕 2. CHECK THE LATCH (Prevent Double-Firing)
 	if (bHasSynthesized) 
 	{
@@ -318,6 +347,25 @@ void UGenAISystem::OnTexturePlanReady(FString TexturePlan, FString Choices)
 	}
 }
 
+void UGenAISystem::OnPaintingPlanReady(FString Plan, FString Summary)
+{
+	UE_LOG(LogTemp, Display, TEXT("✅ Painting Agent Finished. Summary: %s"), *Summary);
+
+	DraftPaintingJson = Plan;
+	bIsPaintingReady = true;
+
+	// Trigger Synthesis Check
+	// We pass the cached context vars you saved in RequestSceneChange
+	if (CachedWorld.IsValid())
+	{
+		AttemptSynthesis(LastUserPrompt, CachedWorld.Get(), CachedHistory);
+	}
+	else
+	{
+		AttemptSynthesis(LastUserPrompt, GetWorld(), CachedHistory);
+	}
+}
+
 void UGenAISystem::Initialize()
 {
 	UGameInstance* GI = UGameplayStatics::GetGameInstance(GetWorld());
@@ -326,9 +374,17 @@ void UGenAISystem::Initialize()
 	
 	TexL= UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<UTextureResolverLLM>();
 
+	IntentionL = UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<UIntentionResolverLLM>();
+
+	PaintL=GI->GetSubsystem<UPaintingResolverLLM>();
+	
 	MeshL->OnMeshPlanReady.AddDynamic(this,&UGenAISystem::OnMeshPlanReady);
 
 	TexL->OnTexturePlanReady.AddDynamic(this,&UGenAISystem::OnTexturePlanReady);
+
+	IntentionL->OnIntentionReady.AddDynamic(this,&UGenAISystem::OnIntentionReady);
+
+	PaintL->OnPaintingPlanReady.AddDynamic(this,&UGenAISystem::OnPaintingPlanReady);
 
 }
 
@@ -342,9 +398,71 @@ void UGenAISystem::Deinitialize()
 	MeshL->OnMeshPlanReady.RemoveDynamic(this,&UGenAISystem::OnMeshPlanReady);
 	
 	TexL->OnTexturePlanReady.RemoveDynamic(this,&UGenAISystem::OnTexturePlanReady);
+
+	IntentionL->OnIntentionReady.RemoveDynamic(this,&UGenAISystem::OnIntentionReady);
+
+	PaintL->OnPaintingPlanReady.RemoveDynamic(this,&UGenAISystem::OnPaintingPlanReady);
 }
 
+void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
+{
+    UE_LOG(LogTemp, Display, TEXT("✅ Phase 1: Intention identified %d categories."), Keywords.Num());
 
+    USceneStateTracker* Tracker = UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<USceneStateTracker>();
+    if (!Tracker || !Tracker->AssetIndexer)
+    {
+        UE_LOG(LogTemp, Error, TEXT("GenAISystem: Tracker/Indexer invalid in OnIntentionReady"));
+        return;
+    }
+
+    // 1. SMART EXPANSION (The New Robust Logic)
+    // This splits the keywords into valid Meshes, Particles, and Textures
+    FSmartAssetSelection Selection = Tracker->AssetIndexer->ExpandKeywordsToCollection(Keywords);
+
+    // 2. PREPARE PAYLOADS (Convert to Comma-Separated Strings)
+    
+    // Payload A: Structural Agent needs Meshes + Particles
+    TArray<FString> MeshContextArray;
+    MeshContextArray.Append(Selection.Meshes);
+    MeshContextArray.Append(Selection.Particles);
+    FString MeshContextString = FString::Join(MeshContextArray, TEXT(", "));
+
+    // Payload B: Texture Agent needs Material Base Names ONLY
+    FString TextureContextString = FString::Join(Selection.Textures, TEXT(", "));
+
+    // 3. STORE GLOBAL CONTEXT
+    // We save the combined list so the Master Architect knows what assets were actually available
+    ActiveAssetContext = Selection.GetAll();
+
+    // 4. DISPATCH TO RESOLVERS (With Specific Lists)
+    UE_LOG(LogTemp, Display, TEXT("🤖 Phase 2: Dispatching Specialists..."));
+    UE_LOG(LogTemp, Display, TEXT("   • Mesh Context: %d items"), MeshContextArray.Num());
+    UE_LOG(LogTemp, Display, TEXT("   • Texture Context: %d items"), Selection.Textures.Num());
+
+    // --- MESH AGENT ---
+    if (MeshContextArray.Num() > 0)
+    {
+        MeshL->RequestPlan_Pruned(LastUserPrompt, MeshContextString, CachedWorld.Get(), CachedHistory);
+    }
+    else
+    {
+        // CRITICAL: Unblock the pipeline if no meshes found
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ No meshes found. Skipping Mesh Agent."));
+        OnMeshPlanReady(TEXT("{\"SpawnRequest\": [], \"ParticleSpawns\": []}"), TEXT(""));
+    }
+
+    // --- TEXTURE AGENT ---
+    if (Selection.Textures.Num() > 0)
+    {
+        TexL->RequestPlan_Pruned(LastUserPrompt, TextureContextString, CachedWorld.Get(), CachedHistory);
+    }
+    else
+    {
+        // CRITICAL: Unblock the pipeline if no textures found
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ No textures found. Skipping Texture Agent."));
+        OnTexturePlanReady(TEXT("{\"Props\": []}"), TEXT(""));
+    }
+}
 
 FString UGenAISystem::ConstructMasterPrompt(
 		FString UserPrompt,
@@ -379,7 +497,11 @@ FString UGenAISystem::ConstructMasterPrompt(
         "═══════════════════════════════════════════════════════════════\n"
         "Your interior designer has selected materials and submitted:\n"
         "%s\n\n"
-        
+        "═══════════════════════════════════════════════════════════════\n"
+	"PROPOSAL 3: LEVEL DIRECTOR (Layout Commands)\n"
+	"═══════════════════════════════════════════════════════════════\n"
+	"Your Level Director has issued these procedural commands:\n"
+	"%s\n\n"
         "═══════════════════════════════════════════════════════════════\n"
         "VERIFIED ASSET CATALOG (Master Inventory)\n"
         "═══════════════════════════════════════════════════════════════\n"
@@ -402,17 +524,12 @@ FString UGenAISystem::ConstructMasterPrompt(
         "YOUR ARCHITECTURAL RESPONSIBILITIES\n"
         "═══════════════════════════════════════════════════════════════\n\n"
         
-        "1. VALIDATE STRUCTURAL PROPOSAL (Critical)\n"
-        "   • Review all 'SpawnRequest' items from Proposal 1\n"
-        "   • Verify every AssetPath exists in Valid Static Meshes list\n"
-        "   • Check for spatial conflicts (overlapping ClearanceRadius)\n"
-        "   • Approve valid items, flag any hallucinated assets\n"
-        "   • Include ALL validated spawns in final output\n\n"
-        
-        "   • Review all 'ParticleSpawns' items from Proposal 1\n"
-        "   • Verify particle names exist in inventory\n"
-        "   • Ensure appropriate LocationName usage\n"
-        "   • Include ALL validated particle spawns\n\n"
+        "1. VALIDATE & RESOLVE STRUCTURAL PROPOSAL\n"
+"   • Review 'SpawnRequest' items from Proposal 1 (The Draft)\n"
+"   • The Draft may use generic names (e.g., 'Tree', 'Chair')\n" // <--- NEW INSTRUCTION
+"   • Search the 'Valid Static Meshes' list for the best matching specific asset\n" // <--- NEW INSTRUCTION
+"   • REPLACE the generic AssetPath with the specific one from the list\n" // <--- NEW INSTRUCTION
+"   • If no thematic match exists, reject the item\n"
         
         "2. VALIDATE SURFACE PROPOSAL (Critical)\n"
         "   • Review all 'Props' items from Proposal 2\n"
@@ -420,8 +537,13 @@ FString UGenAISystem::ConstructMasterPrompt(
         "   • Verify every material name exists in Valid Materials\n"
         "   • Check PropColor values are valid (0-255 range)\n"
         "   • Include ALL validated props in final output\n\n"
-        
-        "3. DESIGN ATMOSPHERIC LIGHTING (Your Unique Contribution)\n"
+        "3. INTEGRATE LAYOUT COMMANDS\n"
+	"   • Review 'PaintingCommands' from Proposal 3\n"
+	"   • Ensure 'Tool' is valid (FILL_PERIMETER, SCATTER, GRID, RING)\n"
+	"   • Ensure 'TargetZone' exists in the map\n"
+	"   • COPY these valid commands into your final 'LayoutCommands' array\n"
+	"   • You may adjust 'Settings' (e.g., reduce density) if needed\n\n"
+        "4. DESIGN ATMOSPHERIC LIGHTING (Your Unique Contribution)\n"
         "   The junior specialists left lighting and environment to you.\n"
         "   Create dramatic lighting that matches the client's theme:\n\n"
         
@@ -489,7 +611,7 @@ FString UGenAISystem::ConstructMasterPrompt(
         "   • FogColor: RGB integers 0-255\n"
         "   • PostProcessingName: Select from Valid Post-Process list or leave empty\n\n"
         
-        "4. SET MODIFICATION FLAGS\n"
+        "5. SET MODIFICATION FLAGS\n"
         "   • bModifyEnvironment: true (you're defining lighting/fog)\n"
         "   • bModifyProps: true (if Proposal 2 has props)\n"
         "   • bSpawnActors: true (if Proposal 1 has spawns)\n"
@@ -557,7 +679,15 @@ FString UGenAISystem::ConstructMasterPrompt(
         "      \"Tag\": \"optional_tag\",\n"
         "      \"ClearanceRadius\": 50.0\n"
         "    }\n"
-        "  ]\n"
+        "  ],\n"
+        "  \"LayoutCommands\": [\n"     
+	"    {\n"
+	"      \"Tool\": \"TOOL_NAME\",\n"
+	"      \"TargetZone\": \"ZONE\",\n"
+	"      \"Style\": { \"MeshKeyword\": \"...\", \"MaterialKeyword\": \"...\" },\n"
+	"      \"Settings\": { \"Param\": 0.0 }\n"
+	"    }\n"
+	"  ],\n"
         "}\n\n"
         "═══════════════════════════════════════════════════════════════\n"
         "VALIDATION CHECKLIST (Critical - Must Verify)\n"
@@ -652,6 +782,7 @@ FString UGenAISystem::ConstructMasterPrompt(
     *UserPrompt,
     *DraftMeshJson,
     *DraftTexJson,
+    *DraftPaintingJson,
     *MeshListString,
     *MaterialString,
     *PPMString,
@@ -695,10 +826,103 @@ void UGenAISystem::ExecuteFallbackPlan()
 		UE_LOG(LogTemp, Display, TEXT("   + Recovered %d Prop Edits"), BackupPlan.Props.Num());
 	}
 
+	// 3. NEW: Recover Painting Data
+	if (!DraftPaintingJson.IsEmpty())
+	{
+		FEnhancedScenePlan PaintP = UJsonParser::CreatePlan(DraftPaintingJson);
+		BackupPlan.LayoutCommands = PaintP.LayoutCommands;
+		UE_LOG(LogTemp, Display, TEXT("   + Recovered %d Layout Commands"), BackupPlan.LayoutCommands.Num());
+	}
+	// 4. ✅ APPLY SMART RANDOM LIGHTING
+	// This makes the fallback feel like a feature, not a bug.
+	ApplySmartFallbackLighting(BackupPlan, LastUserPrompt);
+	
 	BackupPlan.ThemeName = "Fallback: " + LastUserPrompt;
-	BackupPlan.bSpawnActors = (BackupPlan.SpawnRequest.Num() > 0);
+	BackupPlan.bSpawnActors = (BackupPlan.SpawnRequest.Num() > 0 || BackupPlan.LayoutCommands.Num() > 0);
     
 	// Broadcast the Frankenstein plan
 	OnThemeDataReady.Broadcast(BackupPlan, LastUserPrompt);
 }
 
+void UGenAISystem::ApplySmartFallbackLighting(FEnhancedScenePlan& Plan, const FString& Prompt)
+{
+    Plan.bModifyEnvironment = true;
+    FString P = Prompt.ToLower();
+
+    // 1. Define Archetypes
+    enum class ELightTheme { Day, Sunset, Night, Cyberpunk, Horror };
+    ELightTheme SelectedTheme = ELightTheme::Day;
+
+    // 2. Keyword Detection (Smart Selection)
+    if (P.Contains("night") || P.Contains("dark") || P.Contains("moon")) 
+        SelectedTheme = ELightTheme::Night;
+    else if (P.Contains("sunset") || P.Contains("evening") || P.Contains("dusk")) 
+        SelectedTheme = ELightTheme::Sunset;
+    else if (P.Contains("cyber") || P.Contains("neon") || P.Contains("future")) 
+        SelectedTheme = ELightTheme::Cyberpunk;
+    else if (P.Contains("horror") || P.Contains("scary") || P.Contains("spooky")) 
+        SelectedTheme = ELightTheme::Horror;
+    else 
+    {
+        // 3. Random Fallback (If prompt is vague like "make a scene")
+        // Pick a random theme to keep it interesting
+        int32 Roll = FMath::RandRange(0, 3);
+        if (Roll == 0) SelectedTheme = ELightTheme::Day;
+        if (Roll == 1) SelectedTheme = ELightTheme::Sunset;
+        if (Roll == 2) SelectedTheme = ELightTheme::Night;
+        if (Roll == 3) SelectedTheme = ELightTheme::Horror;
+    }
+
+    // 4. Apply Thematics
+    switch (SelectedTheme)
+    {
+    case ELightTheme::Day:
+        Plan.Environment.Lighting.SunColor = FLinearColor(1.0f, 0.95f, 0.8f);
+        Plan.Environment.Lighting.SunIntensity = FMath::RandRange(8.0f, 12.0f); // Slight variance
+        Plan.Environment.Lighting.SunPitch = FMath::RandRange(-60.0f, -45.0f); // High noonish
+        Plan.Environment.Lighting.SunYaw = FMath::RandRange(0.0f, 360.0f);
+        Plan.Environment.Lighting.SkyLightIntensity = 1.0f;
+        Plan.Environment.FogDensity = 0.01f;
+        Plan.Environment.FogColor = FColor(200, 220, 255);
+        break;
+
+    case ELightTheme::Sunset:
+        Plan.Environment.Lighting.SunColor = FLinearColor(1.0f, 0.5f, 0.2f); // Orange
+        Plan.Environment.Lighting.SunIntensity = 20.0f; // Bright sun disk
+        Plan.Environment.Lighting.SunPitch = FMath::RandRange(-15.0f, -5.0f); // Low angle
+        Plan.Environment.Lighting.SunYaw = FMath::RandRange(0.0f, 360.0f);
+        Plan.Environment.Lighting.SkyLightIntensity = 0.7f;
+        Plan.Environment.FogDensity = 0.2f; // Haze
+        Plan.Environment.FogColor = FColor(255, 180, 120);
+        break;
+
+    case ELightTheme::Night:
+        Plan.Environment.Lighting.SunColor = FLinearColor(0.6f, 0.7f, 1.0f); // Moonlight blue
+        Plan.Environment.Lighting.SunIntensity = 0.5f; // Dim
+        Plan.Environment.Lighting.SunPitch = -45.0f;
+        Plan.Environment.Lighting.SkyLightIntensity = 0.2f;
+        Plan.Environment.FogDensity = 0.5f;
+        Plan.Environment.FogColor = FColor(10, 10, 20); // Black/Blue fog
+        break;
+
+    case ELightTheme::Cyberpunk:
+        Plan.Environment.Lighting.SunColor = FLinearColor(0.0f, 0.0f, 0.0f); // No sun, just city lights
+        Plan.Environment.Lighting.SunIntensity = 0.0f;
+        Plan.Environment.Lighting.SkyLightIntensity = 0.5f;
+        Plan.Environment.Lighting.SkyLightColor = FLinearColor(0.2f, 0.0f, 0.5f); // Purple ambient
+        Plan.Environment.FogDensity = 1.5f; // Heavy smog
+        Plan.Environment.FogColor = FColor(40, 0, 60); // Purple fog
+        break;
+
+    case ELightTheme::Horror:
+        Plan.Environment.Lighting.SunColor = FLinearColor(0.3f, 0.35f, 0.4f); // Dead grey
+        Plan.Environment.Lighting.SunIntensity = 2.0f;
+        Plan.Environment.Lighting.SunPitch = -20.0f;
+        Plan.Environment.Lighting.SkyLightIntensity = 0.1f; // Very dark shadows
+        Plan.Environment.FogDensity = 2.0f; // Thick fog
+        Plan.Environment.FogColor = FColor(50, 50, 50); // Grey fog
+        break;
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("🎨 GenAI: Applied Fallback Lighting Theme: %d"), (int32)SelectedTheme);
+}

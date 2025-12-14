@@ -35,6 +35,23 @@ struct FParsedTextureInfo
     ETextureMapType Type;
 };
 
+USTRUCT(BlueprintType)
+struct FSmartAssetSelection
+{
+    GENERATED_BODY()
+    UPROPERTY() TArray<FString> Meshes;
+    UPROPERTY() TArray<FString> Particles;
+    UPROPERTY() TArray<FString> Textures;
+
+    TArray<FString> GetAll() const
+    {
+        TArray<FString> All;
+        All.Append(Meshes);
+        All.Append(Particles);
+        All.Append(Textures);
+        return All;
+    }
+};
 
 // ========================================
 // STRUCTS
@@ -117,7 +134,25 @@ struct FParsedMeshInfo
     int32 VariantNumber;    // 1 (if found) or -1
     TArray<FString> Keywords;
 };
+USTRUCT(BlueprintType)
+struct FTextureVariantGroup
+{
+    GENERATED_BODY()
 
+    /// @brief The high-level family name (e.g., "Wood", "Fabric", "Metal")
+    UPROPERTY()
+    FString FamilyName;
+
+    /// @brief List of specific Base Material names in this family (e.g., "Wood_Oak", "Wood_Pine")
+    UPROPERTY()
+    TArray<FString> MaterialBaseNames;
+
+    FString GetRandomMaterial() const
+    {
+        if (MaterialBaseNames.Num() == 0) return TEXT("");
+        return MaterialBaseNames[FMath::RandRange(0, MaterialBaseNames.Num() - 1)];
+    }
+};
 // ========================================
 // DELEGATES
 // ========================================
@@ -212,6 +247,11 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Textures")
     FTextureSet ResolveTextureFromName(const FString& SearchName);
+
+
+    // New Smart List function for Textures (Pruned)
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Textures")
+    TArray<FString> GetSmartMaterialList() const;
     
     /**
      * @brief Resolves a base material name (e.g., "MI_Concrete") to its corresponding FTextureSet.
@@ -226,7 +266,7 @@ public:
 
     FParsedMeshInfo AnalyzeMeshName(const FString& MeshName);
 
-    
+    FSmartAssetSelection ExpandKeywordsToCollection(const TArray<FString>& Keywords);
     /**
      * @brief Gets the names of all base materials found.
      * @return TArray of base material names.
@@ -464,7 +504,11 @@ private:
     /// @brief Database mapping a base material name to its FTextureSet.
     UPROPERTY()
     TMap<FString, FTextureSet> MaterialDatabase;
-    
+
+    UPROPERTY()
+    TMap<FString, FTextureVariantGroup> TextureVariantGroups;
+
+   
     // ========================================
     // STATE
     // ========================================
@@ -479,6 +523,10 @@ private:
     
     /// @brief Counter for tracking pending asynchronous scan tasks.
     int32 PendingScans = 0;
+
+    // Helper to extract "Wood" from "Wood_Oak_01"
+    FString AnalyzeMaterialFamily(const FString& BaseMaterialName);
+    
 public:
 
     // ========================================
@@ -533,7 +581,19 @@ public:
      * @return The normalized base name.
      */
     FString ExtractBaseName(const FString& VariantName);
-    
+
+    /**
+     * @brief Expands a list of high-level keywords into a comprehensive list of specific asset paths.
+     * Used by the "Intention" stage to convert concepts ("Chair") into file lists ("SM_Chair_01", "SM_Chair_02").
+     * * Logic:
+     * 1. Checks Variant Groups (e.g. "Chair" -> All chair variants).
+     * 2. Checks individual Mesh Keywords (e.g. "Spooky" -> Matches "SM_Ghost" which has "spooky" tag).
+     * 3. Checks direct Substring matches.
+     * * @param Keywords List of concepts from the Intention LLM.
+     * @return Array of unique, valid asset paths.
+     */
+    UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Pruning")
+    TArray<FString> ExpandKeywordsToPaths(const TArray<FString>& Keywords);
     /**
      * @brief Checks if a name is a numbered variant (e.g., "Name_01", "Name_02").
      * @param Name The name to check.

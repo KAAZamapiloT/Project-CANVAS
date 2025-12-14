@@ -402,9 +402,43 @@ TMap<FString, FTextureSet> UAssetIndexer::BuildMaterialDatabase()
         }
     }
 
+    // === NEW: Build Variant Groups ===
+    TextureVariantGroups.Empty();
+
+    for (const auto& Pair : Database)
+    {
+        FString BaseName = Pair.Key; // e.g. "Wood_Oak_01"
+        
+        // 1. Extract Family (e.g. "Wood_Oak")
+        FString Family = AnalyzeMaterialFamily(BaseName);
+        
+        // 2. Add to Group
+        if (!TextureVariantGroups.Contains(Family))
+        {
+            FTextureVariantGroup NewGroup;
+            NewGroup.FamilyName = Family;
+            TextureVariantGroups.Add(Family, NewGroup);
+        }
+        
+        TextureVariantGroups[Family].MaterialBaseNames.Add(BaseName);
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("✅ Texture Grouping: Compressed %d Materials into %d Families"), 
+        Database.Num(), TextureVariantGroups.Num());
+    
     UE_LOG(LogTemp, Warning, TEXT("✅ Smart Indexing Complete. Mapped %d unique materials."), Database.Num());
     return Database;
 }
+
+
+TArray<FString> UAssetIndexer::GetSmartMaterialList() const
+{
+    TArray<FString> SmartList;
+    TextureVariantGroups.GetKeys(SmartList);
+    SmartList.Sort();
+    return SmartList;
+}
+
 FTextureSet UAssetIndexer::ResolveBaseMaterialToTextureSet(const FString& BaseMaterialName)
 {
     if (MaterialDatabase.Contains(BaseMaterialName))
@@ -1046,6 +1080,127 @@ FString UAssetIndexer::ExtractBaseName(const FString& VariantName)
     return Result;
 }
 
+TArray<FString> UAssetIndexer::ExpandKeywordsToPaths(const TArray<FString>& Keywords)
+{
+    // Use a Set to prevent duplicates (e.g. "Wood" and "Chair" both finding "WoodenChair")
+    TSet<FString> UniquePaths;
+    
+    UE_LOG(LogTemp, Display, TEXT("🌳 Pruner: Expanding %d keywords..."), Keywords.Num());
+
+    for (const FString& RawKeyword : Keywords)
+    {
+        if (RawKeyword.IsEmpty()) continue;
+
+        // Normalize (Lowercase, remove extra spaces)
+        FString Key = RawKeyword.ToLower();
+        Key.TrimStartAndEndInline();
+
+        // =========================================================
+        // STRATEGY 1: VARIANT GROUP MATCH (Fastest & Best)
+        // =========================================================
+        // If LLM asks for "Chair", and we have a Variant Group "chair",
+        // add ALL variants (Chair_01, Chair_02, Chair_Broken).
+        if (VariantGroups.Contains(Key))
+        {
+            const FMeshVariantGroup& Group = VariantGroups[Key];
+            for (const FString& Path : Group.VariantPaths)
+            {
+                UniquePaths.Add(Path);
+            }
+            UE_LOG(LogTemp, Verbose, TEXT("   + Expanded Group '%s': %d items"), *Key, Group.VariantPaths.Num());
+            continue; // We found a direct group match, move to next keyword
+        }
+
+        // =========================================================
+        // STRATEGY 2: REVERSE KEYWORD LOOKUP (Semantic)
+        // =========================================================
+        // If LLM asks for "Spooky", find assets that have "spooky" in their Analyzed Keywords.
+        // (Recall: AnalyzeMeshName generates these keywords during scanning)
+        int32 KeywordHits = 0;
+        
+        for (const auto& Pair : DiscoveredMeshes)
+        {
+            const FMeshAssetInfo& Info = Pair.Value;
+
+            // Check the asset's keywords (e.g. "SM_SciFi_Crate" has "scifi", "crate")
+            if (Info.Keywords.Contains(Key))
+            {
+                UniquePaths.Add(Info.FullPath);
+                KeywordHits++;
+            }
+            // Check direct substring match on the name
+            else if (Info.MeshName.Contains(Key, ESearchCase::IgnoreCase))
+            {
+                UniquePaths.Add(Info.FullPath);
+                KeywordHits++;
+            }
+        }
+        
+        if (KeywordHits > 0)
+        {
+            UE_LOG(LogTemp, Verbose, TEXT("   + Expanded Concept '%s': %d matches"), *Key, KeywordHits);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("   ⚠️ Pruner: No assets found for concept '%s'"), *Key);
+        }
+    }
+
+    // Convert Set to Array
+    TArray<FString> Result = UniquePaths.Array();
+    
+    // Optional: Sort for determinism
+    Result.Sort();
+
+    UE_LOG(LogTemp, Display, TEXT("✅ Expansion Complete. Converted %d keywords into %d specific assets."), 
+        Keywords.Num(), Result.Num());
+
+    return Result;
+}
+
+FSmartAssetSelection UAssetIndexer::ExpandKeywordsToCollection(const TArray<FString>& Keywords)
+{
+    FSmartAssetSelection Selection;
+    TSet<FString> MeshSet;
+    TSet<FString> ParticleSet;
+    TSet<FString> TextureSet;
+
+    for (const FString& RawKeyword : Keywords)
+    {
+        FString Key = RawKeyword.ToLower().TrimStartAndEnd();
+        if (Key.IsEmpty()) continue;
+
+        // A. MESHES: Get FULL PATHS (Resolver needs specific assets to spawn)
+        if (VariantGroups.Contains(Key))
+        {
+            MeshSet.Append(VariantGroups[Key].VariantPaths);
+        }
+        
+        // B. PARTICLES: Get FULL PATHS
+        for (const FString& PPath : DiscoveredParticleNames)
+        {
+            if (FPaths::GetBaseFilename(PPath).ToLower().Contains(Key))
+                ParticleSet.Add(PPath);
+        }
+
+        // C. TEXTURES: Get BASE NAMES ONLY (Resolver needs "Wood", not "/Game/Textures/Wood_N")
+        if (TextureVariantGroups.Contains(Key))
+        {
+            // If it's a family like "Wood", add specific bases "Wood_Oak", "Wood_Pine"
+            TextureSet.Append(TextureVariantGroups[Key].MaterialBaseNames);
+        }
+        else
+        {
+            // If it's a direct base name match
+            if (MaterialDatabase.Contains(Key)) TextureSet.Add(Key);
+        }
+    }
+
+    Selection.Meshes = MeshSet.Array();
+    Selection.Particles = ParticleSet.Array();
+    Selection.Textures = TextureSet.Array();
+    return Selection;
+}
 bool UAssetIndexer::IsNumberedVariant(const FString& Name, int32& OutVariantNumber)
 {
     if (Name.Len() < 3) return false;
@@ -1429,6 +1584,59 @@ void UAssetIndexer::BatchResolveParticles(FEnhancedScenePlan& Plan)
     }
 }
 
+
+FString UAssetIndexer::AnalyzeMaterialFamily(const FString& BaseMaterialName)
+{
+    // Input: "Wood_Floor_01" or "Brick_Red_Old"
+    // Output: "Wood_Floor" or "Brick"
+
+    FString Temp = BaseMaterialName;
+    
+    // 1. Remove trailing numbers (_01, _v2)
+    while (Temp.Len() > 0)
+    {
+        int32 LastIndex = Temp.Len() - 1;
+        if (FChar::IsDigit(Temp[LastIndex]))
+        {
+            Temp.RemoveAt(LastIndex);
+        }
+        else if (Temp.EndsWith(TEXT("_")))
+        {
+            Temp.RemoveAt(LastIndex);
+            break; // Stop at the first underscore before number
+        }
+        else
+        {
+            break; // Found a letter, stop
+        }
+    }
+
+    // 2. Tokenize to find the "Head" noun
+    // Strategy: If name is "Brick_Wall_Red", maybe we group by "Brick_Wall"?
+    // Or simpler: Group by the FIRST word? "Brick"
+    // Let's try grouping by the first logical segment.
+    
+    TArray<FString> Parts;
+    Temp.ParseIntoArray(Parts, TEXT("_"), true);
+
+    if (Parts.Num() > 0)
+    {
+        // Heuristic: If first part is generic (New, Old, Dark), take the second?
+        // For now, let's return the cleaned up name (minus numbers) as the Family.
+        // So "Wood_Oak" is its own family, separate from "Wood_Birch".
+        // To merge them, you need a dictionary or "First Token" logic.
+        
+        // AGGRESSIVE GROUPING: Return just the first word?
+        // return Parts[0]; // "Wood" from "Wood_Oak"
+        
+        // BALANCED: Return everything except the last descriptor?
+        return Temp; 
+    }
+
+    return BaseMaterialName;
+}
+
+
 void UAssetIndexer::ResolveEnvironmentAssets(FEnhancedScenePlan& Plan)
 {
     if (Plan.Environment.PostProcessingName.IsEmpty()) return;
@@ -1487,6 +1695,30 @@ TArray<FString> UAssetIndexer::GetTopKTexturesForQuery(const FString& SearchQuer
 {
     TArray<FString> Results;
     FString NormalizedSearch = SearchQuery.ToLower();
+
+
+    // STRATEGY 1: Check Variant Groups (Family Match)
+    // If LLM asks for "Wood", and we have a "Wood" family
+    if (TextureVariantGroups.Contains(NormalizedSearch))
+    {
+        // Return ALL specific variants (e.g. Wood_01, Wood_02)
+        // Or just Top K random ones from this family
+        TArray<FString> Variants = TextureVariantGroups[NormalizedSearch].MaterialBaseNames;
+        
+        // Shuffle and pick K
+        int32 n = Variants.Num();
+        for (int32 i = n - 1; i > 0; i--) {
+            int32 j = FMath::RandRange(0, i);
+            Variants.Swap(i, j);
+        }
+        
+        for (int32 i = 0; i < FMath::Min(MaxResults, Variants.Num()); i++)
+        {
+            Results.Add(Variants[i]);
+        }
+        return Results;
+    }
+
     
     // 1. Exact/Substring scan of MaterialDatabase keys
     TArray<FString> MatchingKeys;

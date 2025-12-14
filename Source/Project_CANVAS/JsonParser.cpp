@@ -253,6 +253,51 @@ FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
             UE_LOG(LogTemp, Display, TEXT("PARSER: ThemeName: %s"), *Plan.ThemeName);
         }
 
+        if (JsonObject->HasField(TEXT("LayoutCommands")))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* LayoutArray;
+            if (JsonObject->TryGetArrayField(TEXT("LayoutCommands"), LayoutArray))
+            {
+                for (const TSharedPtr<FJsonValue>& Val : *LayoutArray)
+                {
+                    const TSharedPtr<FJsonObject>* CmdObj;
+                    if (Val->TryGetObject(CmdObj))
+                    {
+                        FPaintingCommand Cmd;
+                        
+                        // 1. Basic Identifiers
+                        Cmd.Tool = (*CmdObj)->GetStringField(TEXT("Tool"));
+                        Cmd.TargetZone = (*CmdObj)->GetStringField(TEXT("TargetZone"));
+                        Cmd.Archetype = (*CmdObj)->GetStringField(TEXT("Archetype")); // e.g. "Wall"
+                        
+                        // 2. Style Object (Visuals)
+                        const TSharedPtr<FJsonObject>* StyleObj;
+                        if ((*CmdObj)->TryGetObjectField(TEXT("Style"), StyleObj))
+                        {
+                            Cmd.Style.MeshKeyword = (*StyleObj)->GetStringField(TEXT("MeshKeyword"));
+                            Cmd.Style.MaterialKeyword = (*StyleObj)->GetStringField(TEXT("MaterialKeyword"));
+                        }
+
+                        // 3. Settings Map (Dynamic Parameters)
+                        const TSharedPtr<FJsonObject>* SettingsObj;
+                        if ((*CmdObj)->TryGetObjectField(TEXT("Settings"), SettingsObj))
+                        {
+                            for (auto& Elem : (*SettingsObj)->Values)
+                            {
+                                // Only accept numbers for settings
+                                if (Elem.Value->Type == EJson::Number)
+                                {
+                                    Cmd.Settings.Add(Elem.Key, Elem.Value->AsNumber());
+                                }
+                            }
+                        }
+                        
+                        Plan.LayoutCommands.Add(Cmd);
+                    }
+                }
+                UE_LOG(LogTemp, Display, TEXT("PARSER: Parsed %d Layout Commands"), Plan.LayoutCommands.Num());
+            }
+        }
         // Parse Environment object
         if (JsonObject->HasField(TEXT("Environment")))
         {

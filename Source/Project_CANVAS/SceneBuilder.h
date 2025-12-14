@@ -50,10 +50,14 @@ private:
 	static void ApplyLightingSettings(const FLightingPlan& Lighting, UWorld* WorldContext);
 	static void ApplyDirectionalLight(const FLightingPlan& Lighting, UWorld* WorldContext);
 	static void ApplySkyLight(const FLightingPlan& Lighting, UWorld* WorldContext);
+
+	void ExecuteLayoutCommand(const FPaintingCommand& Cmd, UWorld* World);
 	// Texture loading helpers
 	UTexture2D* LoadTextureFromPath(const FString& TexturePath);
 	UMaterialInstanceDynamic* GetOrCreateDynamicMaterial(UStaticMeshComponent* Mesh, int32 MaterialIndex = 0);
 
+
+	
 	FVector ParseCustomCoordinate(const FString& CoordString) const;
 	
 };

@@ -34,6 +34,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "Materials/MaterialInstance.h"
 #include "NiagaraComponent.h"
+#include"ArchitecturalProp.h"
 #include "NiagaraActor.h"
 // --- Define your content paths ---
 // You MUST place your assets in these folders, or change these paths.
@@ -924,5 +925,68 @@ void USceneBuilder::FindGenAIActors()
         FVector Loc = Actor->GetActorLocation();
         UE_LOG(LogTemp, Display, TEXT("  • %s at [%.0f, %.0f, %.0f]"), 
             *Actor->GetActorLabel(), Loc.X, Loc.Y, Loc.Z);
+    }
+}
+
+void USceneBuilder::ExecuteLayoutCommand(const FPaintingCommand& Cmd, UWorld* World)
+{
+    // Safety Checks
+    if (!World) return;
+    if (Cmd.ResolvedMeshPath.IsEmpty()) return;
+
+    // 1. LOAD MESH (Synchronous check - usually pre-loaded by Tracker)
+    // We use StaticLoadObject because SceneStateTracker's async load phase 
+    // should have already pulled this into memory.
+    UStaticMesh* LoadedMesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *Cmd.ResolvedMeshPath));
+
+    if (!LoadedMesh)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SceneBuilder: Failed to load mesh '%s' for command '%s'"), 
+            *Cmd.ResolvedMeshPath, *Cmd.Tool);
+        return;
+    }
+
+    // 2. EXECUTE SPAWNS (Iterate Baked Transforms)
+    for (const FTransform& Transform : Cmd.BakedTransforms)
+    {
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+        // Spawn the Smart Actor
+        // Ensure AArchitecturalProp.h is included!
+        AArchitecturalProp* Prop = World->SpawnActor<AArchitecturalProp>(
+            AArchitecturalProp::StaticClass(), 
+            Transform, 
+            SpawnParams
+        );
+
+        if (Prop && Prop->MeshComponent)
+        {
+            // A. Set Geometry
+            Prop->MeshComponent->SetStaticMesh(LoadedMesh);
+
+            // B. Apply PBR Texture Set
+            // Only apply if we have a valid texture resolution
+            if (!Cmd.ResolvedTextureSet.BaseColorPath.IsEmpty())
+            {
+                // Apply to Material Index 0 (Standard for props)
+                ApplyTextureSetToMesh(Prop->MeshComponent, Cmd.ResolvedTextureSet, 0);
+            }
+
+            // C. Tagging (CRITICAL for Cleanup)
+            Prop->Tags.Add(TEXT("GenAI.Spawned"));           // Required for ClearAllSpawnedActors
+            Prop->Tags.Add(FName(*("GenAI_" + Cmd.Tool)));   // e.g. "GenAI_SCATTER"
+            Prop->SemanticTag = Cmd.Archetype;               // e.g. "Wall"
+
+            // D. Register with Tracker
+            if (StateTracker)
+            {
+                // Generate a unique name for the tracker (e.g. "Wall_SCATTER_1042")
+                FString UniqueName = FString::Printf(TEXT("%s_%s_%d"), 
+                    *Cmd.Archetype, *Cmd.Tool, FMath::Rand());
+                
+                StateTracker->OnActorSpawned(Prop, UniqueName);
+            }
+        }
     }
 }

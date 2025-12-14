@@ -211,6 +211,9 @@ public:
 	UFUNCTION()
 	void OnActorSpawned(AActor* NewActor, const FString& ObjectName);
 
+
+	void ResolveProceduralLayouts(FEnhancedScenePlan& Plan);
+	
 	UFUNCTION(BlueprintCallable, Category = "Scene Generation|Actor Management")
 	void ClearAllGeneratedContent();
 private:

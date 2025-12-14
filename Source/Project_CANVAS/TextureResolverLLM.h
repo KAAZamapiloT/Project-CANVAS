@@ -18,13 +18,16 @@ class PROJECT_CANVAS_API UTextureResolverLLM : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 public:
-	FString CreateMasterPrompt(FString UserPrompt,class UAssetIndexer* AssetIndexer);
+	
 
 	void OnResponseReceived(FHttpRequestPtr Request,FHttpResponsePtr Response,bool bWasSucessfull);
 
 	UFUNCTION(BlueprintCallable)
 	void RequestPlan(FString UserPrompt,UWorld*World,class USceneHistoryManager*HistoryManager);
 
+	// New Pruned Request Function
+	UFUNCTION(BlueprintCallable)
+	void RequestPlan_Pruned(FString UserPrompt, FString& PrunedAssets, UWorld* World, class USceneHistoryManager* HistoryManager);
 	UPROPERTY(BlueprintAssignable)
    FOnTexturePlanReady OnTexturePlanReady;
 
@@ -36,4 +39,7 @@ public:
 	{
 		Super::Deinitialize();
 	}
+private:
+	FString CreateMasterPrompt(FString UserPrompt,class UAssetIndexer* AssetIndexer);
+	FString CreatePrunedTexturePayload(FString UserPrompt,FString& PrunedAssets, UAssetIndexer* Indexer);
 };
