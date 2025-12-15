@@ -38,6 +38,8 @@ void Deinitialize();
 		class UAssetIndexer* AssetIndexer
 	);
 
+	FString ConstructPrunedMasterPrompt(FString UserPrompt,
+		class UAssetIndexer* AssetIndexer);
 	UFUNCTION(BlueprintCallable)
 	void RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager);
 	
@@ -45,6 +47,8 @@ void Deinitialize();
 	void OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	void AttemptSynthesis(FString UserPrompt,UWorld*WorldContext,USceneHistoryManager*HistoryManager);
+
+	
 	// We need a reference to our parser
 	UPROPERTY(BlueprintAssignable)
 	FOnThemeDataReady OnThemeDataReady;
@@ -97,15 +101,28 @@ private:
 	bool bHasSynthesized = false;
 	// NEW: Store the draft plan from the Painting Agent
 	FString DraftPaintingJson; 
-    
-	// NEW: Flag to track if Painting Agent has finished
-	bool bIsPaintingReady = false;
-	bool bPaintL=true;
-	bool bIntent=true;
-private:
+	
 	/**
 	 * Applies a lighting preset based on keywords in the prompt, 
 	 * or picks a random valid archetype if no keywords match.
 	 */
 	void ApplySmartFallbackLighting(struct FEnhancedScenePlan& Plan, const FString& Prompt);
+	// NEW: Flag to track if Painting Agent has finished
+	UPROPERTY(EditAnywhere)
+	bool bIsPaintingReady = false;
+	UPROPERTY(EditAnywhere)
+	bool bPaintL=true;
+	UPROPERTY(EditAnywhere)
+	bool bIntent=true;
+	/*
+	 * A way to bypass mutistage sytem and go to a legacy one with minor optmizations
+	 */
+	UPROPERTY(EditAnywhere)
+	bool bSpeedMode=true;
+public:
+
+FORCEINLINE void SetSpeedMode(bool SpeedMode){ bSpeedMode=SpeedMode; }
+
+FORCEINLINE bool GetSpeedMode() const{ return bSpeedMode;}
+	
 };

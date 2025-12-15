@@ -23,7 +23,18 @@
 void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager)
 {
 	
+	UWorld* SafeWorld = WorldContext;
+	if (!SafeWorld)
+	{
+		SafeWorld = GetWorld();
+	}
 
+	// 2. Validate Critical Systems
+	if (!SafeWorld)
+	{
+		UE_LOG(LogTemp, Error, TEXT("GenAISystem: Cannot resolve a valid World Context!"));
+		return;
+	}
 	// 1. Get the GameInstance and AssetIndexer
 	UGameInstance* GameInstance = UGameplayStatics::GetGameInstance(WorldContext);
 	USceneStateTracker* Tracker = GameInstance->GetSubsystem<USceneStateTracker>();
@@ -42,14 +53,15 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 
     
 	LastUserPrompt = UserPrompt;
-	CachedWorld = WorldContext;
+	CachedWorld = SafeWorld;
 	CachedHistory = HistoryManager;
 
 // RESET
 	bIsMeshReady = false;
 	
 	bIsTexReady = false;
-	bIsPaintingReady = false; 
+	bIsPaintingReady = false;
+	
 	DraftPaintingJson = "";
 	DraftMeshJson = "";
 	DraftTexJson = "";
@@ -67,15 +79,19 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 		IntentionL->RequestIntention(UserPrompt, AllConcepts);
 	}else
 	{
-		MeshL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
-		TexL->RequestPlan(UserPrompt,WorldContext,HistoryManager);
+		UE_LOG(LogTemp, Display, TEXT("🤖 Legacy Mode: Skipping Intention, calling all agents directly..."));
+        
+		// Pass the resolved SafeWorld to all agents
+		MeshL->RequestPlan(UserPrompt, SafeWorld, HistoryManager);
+		TexL->RequestPlan(UserPrompt, SafeWorld, HistoryManager);
+        
 		if (bPaintL)
 		{
-			PaintL->RequestPaintingPlan(UserPrompt, WorldContext, Tracker->AssetIndexer);
+			PaintL->RequestPaintingPlan(UserPrompt, SafeWorld, Tracker->AssetIndexer);
 		}
 		else
 		{
-			// If Painting Resolver is missing/disabled, mark it as ready instantly so we don't hang
+			// If Painting Resolver is disabled, mark ready immediately to unblock synthesis
 			bIsPaintingReady = true; 
 		}
 	}
@@ -232,6 +248,8 @@ void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, US
 
 	// 🆕 3. LOCK THE LATCH
 	bHasSynthesized = true;
+
+	
 	// 2. Safety Check: World Context
 	// If the passed world is null, try to fall back to the System's world
 	UWorld* SafeWorld = WorldContext;
@@ -256,9 +274,16 @@ void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, US
 		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: AssetIndexer not found!"));
 		return;
 	}
-
+	FString MasterPrompt;
 	// 4. Proceed
-	FString MasterPrompt = ConstructMasterPrompt(UserPrompt, Tracker->AssetIndexer);
+	if (bSpeedMode){
+		MasterPrompt = ConstructMasterPrompt(UserPrompt, Tracker->AssetIndexer);
+	}else
+	{
+	MasterPrompt=ConstructPrunedMasterPrompt(UserPrompt,Tracker->AssetIndexer);
+	}
+	
+	
     // === CHANGES START HERE ===
     
     // Get API key
@@ -407,7 +432,30 @@ void UGenAISystem::Deinitialize()
 void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
 {
     UE_LOG(LogTemp, Display, TEXT("✅ Phase 1: Intention identified %d categories."), Keywords.Num());
+	// =========================================================
+	// 1. ROBUST WORLD RECOVERY (Prevents "Invalid World" crashes)
+	// =========================================================
+	UWorld* TargetWorld = CachedWorld.Get();
+    
+	if (!TargetWorld)
+	{
+		// Fallback: Try to get world from the GameInstance (we are a Subsystem)
+		if (UGameInstance* GI = Cast<UGameInstance>(GetOuter()))
+		{
+			TargetWorld = GI->GetWorld();
+		}
+		// Fallback: Try standard global lookup
+		if (!TargetWorld)
+		{
+			TargetWorld = UGameplayStatics::GetGameInstance(this)->GetWorld();
+		}
+	}
 
+	if (!TargetWorld)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ GenAISystem: CRITICAL - Lost World Context. Aborting Pipeline."));
+		return;
+	}
     USceneStateTracker* Tracker = UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<USceneStateTracker>();
     if (!Tracker || !Tracker->AssetIndexer)
     {
@@ -419,7 +467,7 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
     // This splits the keywords into valid Meshes, Particles, and Textures
     FSmartAssetSelection Selection = Tracker->AssetIndexer->ExpandKeywordsToCollection(Keywords);
 
-    // 2. PREPARE PAYLOADS (Convert to Comma-Separated Strings)
+    // 2. PREPARE PAYLOADS 
     
     // Payload A: Structural Agent needs Meshes + Particles
     TArray<FString> MeshContextArray;
@@ -439,29 +487,64 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
     UE_LOG(LogTemp, Display, TEXT("   • Mesh Context: %d items"), MeshContextArray.Num());
     UE_LOG(LogTemp, Display, TEXT("   • Texture Context: %d items"), Selection.Textures.Num());
 
-    // --- MESH AGENT ---
-    if (MeshContextArray.Num() > 0)
-    {
-        MeshL->RequestPlan_Pruned(LastUserPrompt, MeshContextString, CachedWorld.Get(), CachedHistory);
-    }
-    else
-    {
-        // CRITICAL: Unblock the pipeline if no meshes found
-        UE_LOG(LogTemp, Warning, TEXT("⚠️ No meshes found. Skipping Mesh Agent."));
-        OnMeshPlanReady(TEXT("{\"SpawnRequest\": [], \"ParticleSpawns\": []}"), TEXT(""));
-    }
+	if (bSpeedMode)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⚡ SPEED MODE: Bypassing Specialists."));
 
-    // --- TEXTURE AGENT ---
-    if (Selection.Textures.Num() > 0)
-    {
-        TexL->RequestPlan_Pruned(LastUserPrompt, TextureContextString, CachedWorld.Get(), CachedHistory);
-    }
-    else
-    {
-        // CRITICAL: Unblock the pipeline if no textures found
-        UE_LOG(LogTemp, Warning, TEXT("⚠️ No textures found. Skipping Texture Agent."));
-        OnTexturePlanReady(TEXT("{\"Props\": []}"), TEXT(""));
-    }
+		// Inject Data Directly
+		PrunedMeshList = MeshContextString;
+		PrunedTextureList = TextureContextString;
+        
+		// Clear drafts to force Master to generate fresh JSON
+		DraftMeshJson = ""; 
+		DraftTexJson = "";
+		DraftPaintingJson = "";
+
+		// Open ALL Gates
+		bIsMeshReady = true;
+		bIsTexReady = true;
+		bIsPaintingReady = true;
+
+		// Trigger Master Immediately
+		AttemptSynthesis(LastUserPrompt, TargetWorld, CachedHistory);
+	}
+	else
+	{
+		// --- AGENT 1: MESH RESOLVER ---
+		if (MeshContextArray.Num() > 0)
+		{
+			MeshL->RequestPlan_Pruned(LastUserPrompt, MeshContextString, TargetWorld, CachedHistory);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⚠️ No meshes found. Auto-completing Mesh Agent."));
+			OnMeshPlanReady(TEXT("{\"SpawnRequest\": [], \"ParticleSpawns\": []}"), TEXT(""));
+		}
+
+		// --- AGENT 2: TEXTURE RESOLVER ---
+		if (Selection.Textures.Num() > 0)
+		{
+			TexL->RequestPlan_Pruned(LastUserPrompt, TextureContextString, TargetWorld, CachedHistory);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("⚠️ No textures found. Auto-completing Texture Agent."));
+			OnTexturePlanReady(TEXT("{\"Props\": []}"), TEXT(""));
+		}
+
+		// --- AGENT 3: PAINTING RESOLVER (THE FIX) ---
+		// We MUST trigger this or AttemptSynthesis will wait forever.
+		if (bPaintL && PaintL)
+		{
+			PaintL->RequestPaintingPlan(LastUserPrompt, TargetWorld, Tracker->AssetIndexer);
+		}
+		else
+		{
+			// If disabled/missing, mark ready immediately to unblock pipeline
+			bIsPaintingReady = true; 
+		}
+	}
+    
 }
 
 FString UGenAISystem::ConstructMasterPrompt(
@@ -537,12 +620,12 @@ FString UGenAISystem::ConstructMasterPrompt(
         "   • Verify every material name exists in Valid Materials\n"
         "   • Check PropColor values are valid (0-255 range)\n"
         "   • Include ALL validated props in final output\n\n"
-        "3. INTEGRATE LAYOUT COMMANDS\n"
-	"   • Review 'PaintingCommands' from Proposal 3\n"
-	"   • Ensure 'Tool' is valid (FILL_PERIMETER, SCATTER, GRID, RING)\n"
-	"   • Ensure 'TargetZone' exists in the map\n"
-	"   • COPY these valid commands into your final 'LayoutCommands' array\n"
-	"   • You may adjust 'Settings' (e.g., reduce density) if needed\n\n"
+        "3. INTEGRATE LAYOUT COMMANDS (CRITICAL)\n"
+   "   • Review 'PaintingCommands' from Proposal 3\n"
+   "   • YOU MUST COPY ALL VALID COMMANDS into the final JSON 'LayoutCommands' array\n" // Stronger wording
+   "   • DO NOT return an empty array if Proposal 3 has content\n"
+   "   • Ensure 'Tool' is valid (FILL_PERIMETER, SCATTER, GRID, RING)\n"
+   "   • Ensure 'TargetZone' exists in the map\n"
         "4. DESIGN ATMOSPHERIC LIGHTING (Your Unique Contribution)\n"
         "   The junior specialists left lighting and environment to you.\n"
         "   Create dramatic lighting that matches the client's theme:\n\n"
@@ -680,14 +763,22 @@ FString UGenAISystem::ConstructMasterPrompt(
         "      \"ClearanceRadius\": 50.0\n"
         "    }\n"
         "  ],\n"
-        "  \"LayoutCommands\": [\n"     
-	"    {\n"
-	"      \"Tool\": \"TOOL_NAME\",\n"
-	"      \"TargetZone\": \"ZONE\",\n"
-	"      \"Style\": { \"MeshKeyword\": \"...\", \"MaterialKeyword\": \"...\" },\n"
-	"      \"Settings\": { \"Param\": 0.0 }\n"
-	"    }\n"
-	"  ],\n"
+        "  \"LayoutCommands\": [\n"
+			   "    {\n"
+			   "      \"Tool\": \"FILL_PERIMETER\",               // or SCATTER, GRID, RING\n"
+			   "      \"TargetZone\": \"zone_name\",             // semantic zone identifier\n"
+			   "      \"Archetype\": \"optional_archetype\",     // optional preset\n"
+			   "      \"Style\": {\n"
+			   "        \"MeshKeyword\": \"mesh_search_term\",   // partial name to match\n"
+			   "        \"MaterialKeyword\": \"mat_search_term\" // partial name to match\n"
+			   "      },\n"
+			   "      \"Settings\": {                            // tool-specific parameters\n"
+			   "        \"Spacing\": 200.0,\n"
+			   "        \"Count\": 10,\n"
+			   "        \"Radius\": 500.0\n"
+			   "      }\n"
+			   "    }\n"
+			   "  ]\n"
         "}\n\n"
         "═══════════════════════════════════════════════════════════════\n"
         "VALIDATION CHECKLIST (Critical - Must Verify)\n"
@@ -785,6 +876,388 @@ FString UGenAISystem::ConstructMasterPrompt(
     *DraftPaintingJson,
     *MeshListString,
     *MaterialString,
+    *PPMString,
+    *TagString
+    );
+
+    return Payload;
+}
+
+FString UGenAISystem::ConstructPrunedMasterPrompt(FString UserPrompt, class UAssetIndexer* AssetIndexer)
+{
+	TArray<FString> AvailableTags = AssetIndexer->GetDiscoveredActorTags();
+    TArray<FString> AvailablePPM = AssetIndexer->GetDiscoveredPostProcessNames();
+    
+    // Get pruned asset lists
+    FString ValidMeshString = PrunedMeshList;     
+    FString ValidMatString = PrunedTextureList;
+    FString TagString = FString::Join(AvailableTags, TEXT("\", \""));
+    FString PPMString = FString::Join(AvailablePPM, TEXT("\", \""));
+    
+    FString Payload = FString::Printf(TEXT(
+        "═══════════════════════════════════════════════════════════════\n"
+        "ROLE: UNREAL ENGINE 5 SENIOR LEVEL DESIGNER\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "You are an experienced UE5 level designer creating complete scene plans from client requests.\n"
+        "Your output will be directly parsed by C++ into an FEnhancedScenePlan structure.\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "CLIENT REQUEST\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "\"%s\"\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "AVAILABLE ASSET CATALOG (STRICT INVENTORY)\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "⚠️ CRITICAL: You may ONLY use assets from this verified inventory.\n"
+        "Assets not listed here do NOT exist and will cause runtime crashes.\n\n"
+        
+        "Valid Static Meshes:\n"
+        "[\"%s\"]\n\n"
+        
+        "Valid Materials:\n"
+        "[\"%s\"]\n\n"
+        
+        "Valid Post-Process Volumes:\n"
+        "[\"%s\"]\n\n"
+        
+        "Valid Actor Tags (for Props):\n"
+        "[\"%s\"]\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "YOUR DESIGN RESPONSIBILITIES\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "1. INTERPRET CLIENT VISION\n"
+        "   • Understand the requested theme, mood, and scene type\n"
+        "   • Identify key elements needed (structures, props, atmosphere)\n"
+        "   • Plan a cohesive visual experience\n\n"
+        
+        "2. DESIGN ATMOSPHERIC LIGHTING & ENVIRONMENT\n"
+        "   • Select lighting that matches the theme mood\n"
+        "   • Configure fog for atmospheric depth\n"
+        "   • Choose appropriate post-processing (or leave empty)\n"
+        "   • Set bModifyEnvironment = true\n\n"
+        
+        "   THEME-BASED LIGHTING PRESETS:\n\n"
+        
+        "   CYBERPUNK / SCI-FI:\n"
+        "     SunColor: [0.3, 0.5, 0.8] (cool blue)\n"
+        "     SunIntensity: 5.0\n"
+        "     SunPitch: -30.0\n"
+        "     SunYaw: 180.0\n"
+        "     SkyLightColor: [0.2, 0.3, 0.5]\n"
+        "     SkyLightIntensity: 0.5\n"
+        "     FogDensity: 0.8\n"
+        "     FogColor: [60, 80, 120]\n\n"
+        
+        "   NATURE / FOREST:\n"
+        "     SunColor: [1.0, 0.95, 0.8] (warm daylight)\n"
+        "     SunIntensity: 15.0\n"
+        "     SunPitch: -60.0\n"
+        "     SunYaw: 90.0\n"
+        "     SkyLightColor: [0.4, 0.6, 0.8]\n"
+        "     SkyLightIntensity: 2.0\n"
+        "     FogDensity: 0.2\n"
+        "     FogColor: [200, 220, 240]\n\n"
+        
+        "   HORROR / ABANDONED:\n"
+        "     SunColor: [0.5, 0.5, 0.6] (desaturated)\n"
+        "     SunIntensity: 3.0\n"
+        "     SunPitch: -15.0\n"
+        "     SunYaw: 270.0\n"
+        "     SkyLightColor: [0.1, 0.1, 0.15]\n"
+        "     SkyLightIntensity: 0.3\n"
+        "     FogDensity: 1.5\n"
+        "     FogColor: [80, 80, 90]\n\n"
+        
+        "   DESERT / SUNSET:\n"
+        "     SunColor: [1.0, 0.7, 0.4] (warm orange)\n"
+        "     SunIntensity: 20.0\n"
+        "     SunPitch: -20.0\n"
+        "     SunYaw: 0.0\n"
+        "     SkyLightColor: [0.8, 0.5, 0.3]\n"
+        "     SkyLightIntensity: 1.5\n"
+        "     FogDensity: 0.3\n"
+        "     FogColor: [255, 200, 150]\n\n"
+        
+        "   WINTER / ICE:\n"
+        "     SunColor: [0.8, 0.9, 1.0] (cool white)\n"
+        "     SunIntensity: 12.0\n"
+        "     SunPitch: -45.0\n"
+        "     SunYaw: 135.0\n"
+        "     SkyLightColor: [0.7, 0.8, 0.9]\n"
+        "     SkyLightIntensity: 1.8\n"
+        "     FogDensity: 0.5\n"
+        "     FogColor: [220, 230, 255]\n\n"
+        
+        "   LIGHTING FIELD REFERENCE:\n"
+        "   • SunColor/SkyLightColor: RGB floats 0.0-1.0 (NOT 0-255)\n"
+        "   • SunIntensity: 0.0-50.0 (typical: 5-20)\n"
+        "   • SunPitch: -90 (overhead) to 0 (horizon) to 90 (up)\n"
+        "   • SunYaw: 0-360 degrees (0=north, 90=east, 180=south, 270=west)\n"
+        "   • SkyLightIntensity: 0.0-10.0 (typical: 0.5-3.0)\n"
+        "   • FogDensity: 0.0-5.0 (0=clear, 2.0+=very thick)\n"
+        "   • FogColor: RGB integers 0-255\n"
+        "   • SunTemperature: 1000-15000 Kelvin (optional)\n"
+        "   • bUseTemperature: false (use SunColor instead)\n\n"
+        
+        "3. SELECT & TEXTURE EXISTING PROPS (OPTIONAL)\n"
+        "   • Review Valid Actor Tags - these are props already in the scene\n"
+        "   • Assign materials from Valid Materials list\n"
+        "   • Set PropColor for tinting (RGB 0-255)\n"
+        "   • Each TagName must exist in Valid Actor Tags\n"
+        "   • Each BaseColorPath must exist in Valid Materials\n"
+        "   • Set bModifyProps = true if you modify any props\n"
+        "   • Leave TargetPropTags empty to modify all props\n\n"
+        
+        "4. PLAN ACTOR SPAWNS (HIGH-LEVEL LOCATIONS)\n"
+        "   ⚠️ LOCATION HANDLING:\n"
+        "   • Use SEMANTIC location names (e.g., \"PLAYER_FRONT\", \"Arena_Center\", \"Room_Corner\")\n"
+        "   • The location resolver will handle exact coordinates later\n"
+        "   • You can specify LocationOffset for relative positioning (e.g., [0, 0, 200] for \"200 units up\")\n"
+        "   • SpawnLocation field will be populated by the resolver - you can leave it at [0,0,0]\n\n"
+        
+        "   SPAWN PLANNING:\n"
+        "   • Select meshes from Valid Static Meshes list\n"
+        "   • Use descriptive ObjectName (e.g., \"EntryGate_01\", \"CornerTree_02\")\n"
+        "   • Set appropriate Scale (default [1,1,1])\n"
+        "   • Set Rotation in [Pitch, Yaw, Roll] format\n"
+        "   • Set ClearanceRadius for collision avoidance (default: 150.0)\n"
+        "   • Set bSpawnActors = true if you add any spawns\n\n"
+        
+        "   EXAMPLE SEMANTIC LOCATIONS:\n"
+        "   • \"PLAYER_FRONT\" - in front of player spawn\n"
+        "   • \"PLAYER_BACK\" - behind player spawn\n"
+        "   • \"CENTER\" - scene center\n"
+        "   • \"NORTH_WALL\", \"SOUTH_WALL\", \"EAST_WALL\", \"WEST_WALL\"\n"
+        "   • \"CORNER_NE\", \"CORNER_NW\", \"CORNER_SE\", \"CORNER_SW\"\n"
+        "   • \"Arena_Center\", \"Room_01_Center\" - any named zone\n\n"
+        
+        "5. PARTICLE EFFECTS (OPTIONAL)\n"
+        "   • Similar to SpawnRequest but for particle systems\n"
+        "   • Use ParticleSpawns array\n"
+        "   • Same semantic location system applies\n"
+        "   • Smaller ClearanceRadius (default: 50.0)\n\n"
+        
+        "6. LAYOUT COMMANDS (PROCEDURAL PLACEMENT)\n"
+        "   • Use for repetitive patterns (walls, fences, grids)\n"
+        "   • Available Tools: FILL_PERIMETER, SCATTER, GRID, RING\n"
+        "   • TargetZone: semantic zone name\n"
+        "   • Style.MeshKeyword: partial mesh name to search for\n"
+        "   • Style.MaterialKeyword: partial material name to search for\n"
+        "   • Settings: tool-specific parameters (e.g., {\"Spacing\": 200.0, \"Count\": 10})\n\n"
+        
+        "   EXAMPLE LAYOUT COMMAND:\n"
+        "   {\n"
+        "     \"Tool\": \"FILL_PERIMETER\",\n"
+        "     \"TargetZone\": \"Arena\",\n"
+        "     \"Style\": {\n"
+        "       \"MeshKeyword\": \"Wall\",\n"
+        "       \"MaterialKeyword\": \"Stone\"\n"
+        "     },\n"
+        "     \"Settings\": {\"Spacing\": 300.0}\n"
+        "   }\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "COMPLETE JSON SCHEMA (FEnhancedScenePlan)\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "{\n"
+        "  \"ThemeName\": \"descriptive_theme_name\",\n"
+        "  \n"
+        "  \"bModifyEnvironment\": true/false,\n"
+        "  \"bModifyProps\": true/false,\n"
+        "  \"bSpawnActors\": true/false,\n"
+        "  \"TargetPropTags\": [],\n"
+        "  \n"
+        "  \"Environment\": {\n"
+        "    \"Lighting\": {\n"
+        "      \"SunColor\": [R, G, B],              // floats 0.0-1.0\n"
+        "      \"SunIntensity\": 10.0,              // float 0.0-50.0\n"
+        "      \"SunPitch\": -45.0,                 // float -90 to 90\n"
+        "      \"SunYaw\": 0.0,                     // float 0-360\n"
+        "      \"SkyLightColor\": [R, G, B],       // floats 0.0-1.0\n"
+        "      \"SkyLightIntensity\": 1.0,         // float 0.0-10.0\n"
+        "      \"SunTemperature\": 6500.0,         // float 1000-15000 (optional)\n"
+        "      \"bUseTemperature\": false          // boolean\n"
+        "    },\n"
+        "    \"FogDensity\": 0.1,                  // float 0.0-5.0\n"
+        "    \"FogColor\": [R, G, B],              // integers 0-255\n"
+        "    \"PostProcessingName\": \"\"           // string from list or empty\n"
+        "  },\n"
+        "  \n"
+        "  \"Props\": [\n"
+        "    {\n"
+        "      \"TagName\": \"exact_tag_from_list\",        // MUST exist in Valid Actor Tags\n"
+        "      \"PropColor\": [R, G, B],                   // integers 0-255\n"
+        "      \"Texture\": {\n"
+        "        \"BaseColorPath\": \"material_name\",      // MUST exist in Valid Materials\n"
+        "        \"NormalPath\": \"\",                      // optional\n"
+        "        \"RoughnessPath\": \"\",                   // optional\n"
+        "        \"MetallicPath\": \"\",                    // optional\n"
+        "        \"AOPath\": \"\",                          // optional\n"
+        "        \"DisplacementPath\": \"\",                // optional\n"
+        "        \"OpacityPath\": \"\"                      // optional\n"
+        "      },\n"
+        "      \"ParticleEffects\": \"\"                    // optional particle system\n"
+        "    }\n"
+        "  ],\n"
+        "  \n"
+        "  \"SpawnRequest\": [\n"
+        "    {\n"
+        "      \"AssetPath\": \"exact_mesh_name\",         // MUST exist in Valid Static Meshes\n"
+        "      \"ObjectName\": \"unique_instance_name\",   // e.g., \"Tree_01\"\n"
+        "      \"SpawnLocation\": [0, 0, 0],              // will be resolved - can leave as [0,0,0]\n"
+        "      \"LocationName\": \"SEMANTIC_LOCATION\",    // e.g., \"PLAYER_FRONT\", \"CENTER\"\n"
+        "      \"LocationOffset\": [X, Y, Z],             // offset from resolved location\n"
+        "      \"Rotation\": [Pitch, Yaw, Roll],          // floats in degrees\n"
+        "      \"Scale\": [X, Y, Z],                      // floats (default [1,1,1])\n"
+        "      \"Tag\": \"optional_tag\",                  // optional tracking tag\n"
+        "      \"ClearanceRadius\": 150.0                 // float - collision avoidance radius\n"
+        "    }\n"
+        "  ],\n"
+        "  \n"
+        "  \"ParticleSpawns\": [\n"
+        "    {\n"
+        "      \"AssetPath\": \"particle_system_name\",\n"
+        "      \"ObjectName\": \"unique_particle_name\",\n"
+        "      \"SpawnLocation\": [0, 0, 0],\n"
+        "      \"LocationName\": \"SEMANTIC_LOCATION\",\n"
+        "      \"LocationOffset\": [X, Y, Z],\n"
+        "      \"Rotation\": [Pitch, Yaw, Roll],\n"
+        "      \"Scale\": [X, Y, Z],\n"
+        "      \"Tag\": \"optional_tag\",\n"
+        "      \"ClearanceRadius\": 50.0\n"
+        "    }\n"
+        "  ],\n"
+        "  \n"
+        "  \"LayoutCommands\": [\n"
+        "    {\n"
+        "      \"Tool\": \"FILL_PERIMETER\",               // or SCATTER, GRID, RING\n"
+        "      \"TargetZone\": \"zone_name\",             // semantic zone identifier\n"
+        "      \"Archetype\": \"optional_archetype\",     // optional preset\n"
+        "      \"Style\": {\n"
+        "        \"MeshKeyword\": \"mesh_search_term\",   // partial name to match\n"
+        "        \"MaterialKeyword\": \"mat_search_term\" // partial name to match\n"
+        "      },\n"
+        "      \"Settings\": {                            // tool-specific parameters\n"
+        "        \"Spacing\": 200.0,\n"
+        "        \"Count\": 10,\n"
+        "        \"Radius\": 500.0\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "CRITICAL VALIDATION RULES\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "ASSET VALIDATION (MANDATORY):\n"
+        "✓ Every AssetPath in SpawnRequest MUST exist in Valid Static Meshes\n"
+        "✓ Every AssetPath in ParticleSpawns MUST be a valid particle system\n"
+        "✓ Every TagName in Props MUST exist in Valid Actor Tags\n"
+        "✓ Every BaseColorPath in Texture MUST exist in Valid Materials\n"
+        "✓ PostProcessingName MUST be from Valid Post-Process list or empty string\n"
+        "✓ NO HALLUCINATION - if asset doesn't exist in lists, DON'T use it\n\n"
+        
+        "VALUE RANGE VALIDATION:\n"
+        "✓ SunColor, SkyLightColor: floats 0.0-1.0\n"
+        "✓ PropColor, FogColor: integers 0-255\n"
+        "✓ SunIntensity: 0.0-50.0\n"
+        "✓ SkyLightIntensity: 0.0-10.0\n"
+        "✓ FogDensity: 0.0-5.0\n"
+        "✓ SunPitch: -90.0 to 90.0\n"
+        "✓ SunYaw: 0.0-360.0\n"
+        "✓ Scale: positive floats (typical: 0.5-5.0)\n\n"
+        
+        "STRUCTURAL VALIDATION:\n"
+        "✓ All ObjectName values must be unique\n"
+        "✓ Arrays must use proper brackets []\n"
+        "✓ Objects must use proper braces {}\n"
+        "✓ No trailing commas\n"
+        "✓ All strings in quotes\n"
+        "✓ All numbers unquoted\n"
+        "✓ Booleans as true/false (not strings)\n\n"
+        
+        "FLAG CONSISTENCY:\n"
+        "✓ If Environment has content → bModifyEnvironment = true\n"
+        "✓ If Props array is non-empty → bModifyProps = true\n"
+        "✓ If SpawnRequest or ParticleSpawns non-empty → bSpawnActors = true\n"
+        "✓ If all arrays empty → at least set bModifyEnvironment = true for lighting\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "SMART DESIGN GUIDELINES\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "WHEN CLIENT REQUEST IS VAGUE:\n"
+        "• Create a simple, atmospheric scene with good lighting\n"
+        "• Use 3-5 key objects that establish the theme\n"
+        "• Focus on mood through lighting rather than clutter\n\n"
+        
+        "WHEN CLIENT REQUEST IS DETAILED:\n"
+        "• Match all specified elements\n"
+        "• Search asset lists for best thematic matches\n"
+        "• Prioritize quality over quantity\n\n"
+        
+        "LOCATION STRATEGY:\n"
+        "• Use semantic names that make spatial sense\n"
+        "• Distribute objects using variety (FRONT, BACK, CORNERS)\n"
+        "• Use LocationOffset for fine positioning\n"
+        "• Trust the resolver to handle exact coordinates\n\n"
+        
+        "MATERIAL SELECTION:\n"
+        "• Match materials to object type (wood for trees, metal for machines)\n"
+        "• Use PropColor for subtle variations\n"
+        "• Leave optional texture paths empty if not needed\n\n"
+        
+        "LAYOUT COMMANDS:\n"
+        "• Use for repetitive elements (walls, forests, grids)\n"
+        "• Keep Settings simple - resolver will handle math\n"
+        "• One command can spawn dozens of objects efficiently\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "OUTPUT FORMAT REQUIREMENTS\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "🔴 CRITICAL JSON OUTPUT RULES:\n"
+        "1. Return ONLY valid JSON - no markdown, no explanations, no preamble\n"
+        "2. Start with '{' and end with '}'\n"
+        "3. Do NOT include ```json code fences\n"
+        "4. Ensure all arrays and objects are properly closed\n"
+        "5. No trailing commas after last elements\n"
+        "6. All strings must be in double quotes\n"
+        "7. All numeric values must be unquoted\n"
+        "8. Booleans must be true/false (not \"true\"/\"false\")\n"
+        "9. Empty strings must be \"\" (not null)\n"
+        "10. Empty arrays must be [] (not null)\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n"
+        "FINAL CHECKLIST BEFORE OUTPUT\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "Before submitting your JSON, verify:\n"
+        "☐ All asset paths exist in provided lists\n"
+        "☐ All numeric values within valid ranges\n"
+        "☐ All required fields present\n"
+        "☐ Flags (bModify*) set correctly\n"
+        "☐ No duplicate ObjectName values\n"
+        "☐ Valid JSON syntax (test with a validator if unsure)\n"
+        "☐ LocationName uses semantic descriptors\n"
+        "☐ Lighting matches requested theme/mood\n\n"
+        
+        "═══════════════════════════════════════════════════════════════\n\n"
+        
+        "Your JSON will be directly parsed by C++ into FEnhancedScenePlan.\n"
+        "Invalid JSON = system crash. Invalid assets = runtime errors.\n"
+        "Precision and validation are critical.\n\n"
+        
+        "CREATE COMPLETE SCENE PLAN NOW:"
+    ),
+    *UserPrompt,
+    *ValidMeshString,
+    *ValidMatString,
     *PPMString,
     *TagString
     );

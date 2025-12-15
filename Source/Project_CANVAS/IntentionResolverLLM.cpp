@@ -14,7 +14,8 @@ void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FS
     // STRICT JSON PROMPT
     FString Prompt = FString::Printf(TEXT(
         "ROLE: Semantic Asset Filter.\n"
-        "TASK: Return a JSON Array of strings containing only the relevant asset categories from the list below that match the User Request.\n\n"
+        "TASK: Analyze the USER REQUEST and select the most relevant asset categories from the AVAILABLE LIST.\n"
+        "OUTPUT FORMAT: A JSON object with a single key 'categories' containing the list of strings.\n\n"
         
         "USER REQUEST: \"%s\"\n\n"
         
@@ -23,8 +24,8 @@ void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FS
         
         "RULES:\n"
         "1. Return ONLY valid JSON. No markdown, no explanations.\n"
-        "2. Format: [\"Keyword1\", \"Keyword2\"]\n"
-        "3. Select 5-15 most relevant items.\n"
+        "2. If a term is not found, ignore it. DO NOT insert comments or explanations.\n"
+        "3. Select most relevant items.\n"
         "4. Use exact spelling from the list.\n\n"
         
         "JSON RESPONSE:"
@@ -38,17 +39,18 @@ void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FS
     Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
     Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *KEY));
 
+    // ✅ FIX: Added response_format and improved string escaping logic
     FString JsonPayload = FString::Printf(TEXT(
         "{"
         "\"model\": \"llama-3.3-70b-versatile\","
         "\"messages\": ["
-        "  {\"role\": \"system\", \"content\": \"You are a JSON API. Output only a JSON array.\"},"
+        "  {\"role\": \"system\", \"content\": \"You are a strict JSON API. Output only valid JSON.\"},"
         "  {\"role\": \"user\", \"content\": \"%s\"}"
         "],"
-        "\"temperature\": 0.2,"
-        "\"max_tokens\": 2500"
+        "\"temperature\": 0.1," // Low temp for strictness
+        "\"response_format\": {\"type\": \"json_object\"}" // Force Valid JSON
         "}"
-    ), *Prompt.Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
+    ), *Prompt.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\"")).Replace(TEXT("\n"), TEXT("\\n")));
 
     Request->SetContentAsString(JsonPayload);
     Request->OnProcessRequestComplete().BindUObject(this, &UIntentionResolverLLM::OnResponseReceived);
@@ -57,83 +59,102 @@ void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FS
 
 void UIntentionResolverLLM::OnResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
+    // 1. Declare output array once
     TArray<FString> Keywords;
 
+    // 2. HTTP Validation
     if (!bWasSuccessful || !Response.IsValid())
     {
-        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Request failed"));
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: HTTP Request failed"));
         OnIntentionReady.Broadcast(Keywords);
         return;
     }
 
-   FString LLMResponseString;
-        
-        // [Existing Gemini/Groq parsing logic to get the raw text into LLMResponseString...]
-        // (Assuming you have already extracted "content" or "text" into LLMResponseString)
+    FString ResponseString = Response->GetContentAsString();
+    FString LLMResponseString = "";
 
-        // === FIXED PARSING LOGIC ===
-        int32 StartIdx = -1; 
-        int32 EndIdx = -1;
+    // 3. Parse API Response (Groq/OpenAI/Gemini Standard)
+    TSharedPtr<FJsonObject> JsonObj;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseString);
 
-        // Find coordinates of [ and ]
-        // Note: FindChar returns bool, and outputs the index to the second argument
-        bool bFoundStart = LLMResponseString.FindChar(TEXT('['), StartIdx);
-        bool bFoundEnd = LLMResponseString.FindLastChar(TEXT(']'), EndIdx);
-
-        if (bFoundStart && bFoundEnd && EndIdx > StartIdx)
+    if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+    {
+        // TRY GROQ / OPENAI FORMAT ("choices" -> "message" -> "content")
+        const TArray<TSharedPtr<FJsonValue>>* Choices;
+        if (JsonObj->TryGetArrayField(TEXT("choices"), Choices) && Choices->Num() > 0)
         {
-            // Extract the substring between [ and ] inclusive
-            LLMResponseString = LLMResponseString.Mid(StartIdx, (EndIdx - StartIdx) + 1);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Could not find valid JSON array [...] in response."));
-            // Optional: Broadcast empty/failed state here
-            OnIntentionReady.Broadcast(TArray<FString>());
-            return;
-        }
-
-        // === CLEANUP & PARSE ===
-        // Remove newlines and potential comments
-        FString CleanedJSON;
-        TArray<FString> Lines;
-        LLMResponseString.ParseIntoArrayLines(Lines);
-        
-        for (const FString& Line : Lines)
-        {
-            FString ProcessedLine = Line;
-            // Strip // comments
-            int32 CommentIdx;
-            if (ProcessedLine.FindChar(TEXT('/'), CommentIdx)) // Simple check, careful with URLs
+            TSharedPtr<FJsonObject> FirstChoice = (*Choices)[0]->AsObject();
+            if (FirstChoice.IsValid())
             {
-               // Better comment stripper:
-               int32 DoubleSlash = ProcessedLine.Find(TEXT("//"));
-               if (DoubleSlash != INDEX_NONE)
-               {
-                   ProcessedLine = ProcessedLine.Left(DoubleSlash);
-               }
+                TSharedPtr<FJsonObject> Message = FirstChoice->GetObjectField(TEXT("message"));
+                if (Message.IsValid())
+                {
+                    LLMResponseString = Message->GetStringField(TEXT("content"));
+                }
             }
-            CleanedJSON += ProcessedLine.TrimStartAndEnd();
         }
-
-        // Parse Array
-        TArray<TSharedPtr<FJsonValue>> JsonArray;
-        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(CleanedJSON);
-
-        if (FJsonSerializer::Deserialize(Reader, JsonArray))
+        // TRY GEMINI FORMAT ("candidates" -> "content" -> "parts" -> "text")
+        else 
         {
-            
-            for (auto& Val : JsonArray)
+            const TArray<TSharedPtr<FJsonValue>>* Candidates;
+            if (JsonObj->TryGetArrayField(TEXT("candidates"), Candidates) && Candidates->Num() > 0)
             {
-                Keywords.Add(Val->AsString());
+                TSharedPtr<FJsonObject> ContentObj = (*Candidates)[0]->AsObject()->GetObjectField(TEXT("content"));
+                const TArray<TSharedPtr<FJsonValue>>* Parts;
+                if (ContentObj->TryGetArrayField(TEXT("parts"), Parts) && Parts->Num() > 0)
+                {
+                    LLMResponseString = (*Parts)[0]->AsObject()->GetStringField(TEXT("text"));
+                }
             }
-            
-            // Success!
-            OnIntentionReady.Broadcast(Keywords);
         }
-        else
+    }
+
+    // 4. Validate Extraction
+    if (LLMResponseString.IsEmpty())
+    {
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Failed to extract content from API Response: %s"), *ResponseString);
+        OnIntentionReady.Broadcast(Keywords);
+        return;
+    }
+
+    // 5. Extract JSON Array [...]
+    // Even though we asked for an object {"categories": [...]}, this logic still works
+    // because it finds the FIRST '[' (start of list) and LAST ']' (end of list).
+    int32 StartIdx = -1; 
+    int32 EndIdx = -1;
+
+    bool bFoundStart = LLMResponseString.FindChar(TEXT('['), StartIdx);
+    bool bFoundEnd = LLMResponseString.FindLastChar(TEXT(']'), EndIdx);
+
+    if (bFoundStart && bFoundEnd && EndIdx > StartIdx)
+    {
+        // Slice the string to get just the array content
+        LLMResponseString = LLMResponseString.Mid(StartIdx, (EndIdx - StartIdx) + 1);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Could not find valid JSON array in text: %s"), *LLMResponseString);
+        OnIntentionReady.Broadcast(Keywords);
+        return;
+    }
+
+    // 6. Deserialize the Array
+    TArray<TSharedPtr<FJsonValue>> JsonArray;
+    TSharedRef<TJsonReader<>> ArrayReader = TJsonReaderFactory<>::Create(LLMResponseString);
+
+    if (FJsonSerializer::Deserialize(ArrayReader, JsonArray))
+    {
+        for (auto& Val : JsonArray)
         {
-            UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Failed to deserialize JSON Array: %s"), *CleanedJSON);
-            OnIntentionReady.Broadcast(TArray<FString>());
+            Keywords.Add(Val->AsString());
         }
+        
+        UE_LOG(LogTemp, Log, TEXT("IntentionResolver: Success! Found %d keywords."), Keywords.Num());
+        OnIntentionReady.Broadcast(Keywords);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Failed to deserialize final JSON array: %s"), *LLMResponseString);
+        OnIntentionReady.Broadcast(Keywords);
+    }
 }
