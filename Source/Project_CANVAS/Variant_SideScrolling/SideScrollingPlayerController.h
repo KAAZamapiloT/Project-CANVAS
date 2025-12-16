@@ -10,6 +10,7 @@
 
 class ASideScrollingCharacter;
 class UInputMappingContext;
+
 /**
  *  A simple Side Scrolling Player Controller
  *  Manages input mappings

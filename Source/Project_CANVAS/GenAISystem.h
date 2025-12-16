@@ -113,12 +113,16 @@ private:
 	UPROPERTY(EditAnywhere)
 	bool bPaintL=true;
 	UPROPERTY(EditAnywhere)
-	bool bIntent=true;
+	bool bIntent=false;
+
+	UPROPERTY(EditAnywhere)
+	bool bIsIntentReady=false;
+	
 	/*
 	 * A way to bypass mutistage sytem and go to a legacy one with minor optmizations
 	 */
 	UPROPERTY(EditAnywhere)
-	bool bSpeedMode=true;
+	bool bSpeedMode=false;
 public:
 
 FORCEINLINE void SetSpeedMode(bool SpeedMode){ bSpeedMode=SpeedMode; }

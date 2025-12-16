@@ -81,8 +81,11 @@ void UBTTask_MoveToPlayer::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* No
     FVector MoveDirection = FVector(DirectionX, 0.0f, 0.0f);
     Enemy->AddMovementInput(MoveDirection, 1.0f);
 
-    // ✅ SIDESCROLLER: Face the player (flip sprite)
-    FacePlayer(Enemy, Player);
+    if (Enemy && Player)
+    {
+        // Optional: Increase facing speed while chasing
+        Enemy->OrientToTarget(Player->GetActorLocation(), 20.0f, DeltaSeconds); 
+    }
 
     // ✅ CONDITIONAL JUMP: Only if player is ABOVE enemy
     if (HeightDiff > 100.0f) // Player is higher than enemy by 100 units

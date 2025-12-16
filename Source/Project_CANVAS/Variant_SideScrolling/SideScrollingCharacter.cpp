@@ -21,6 +21,7 @@
 #include "EnemyCharacter.h"  // For enemy class check
 #include "DrawDebugHelpers.h" 
 #include "CombatDecisionEngine.h"
+#include"CombatFeedbackComponent.h"
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -68,7 +69,7 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	HealthComp = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComp"));
 	CombatAnimComp = CreateDefaultSubobject<UCombatAnimationComponent>(TEXT("CombatAnimComp"));
 	CombatStateComp = CreateDefaultSubobject<UCombatStateComponent>(TEXT("CombatStateComp"));
-	
+	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComp"));
 	Tags.Add("Player.Character");
 	Tags.Add(FName("Player")); // ✅ Matches HealthComponent Dojo check
 
@@ -666,7 +667,16 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 		);
 	}
 
-	
+	if (CombatFeedbackComponent)
+	{
+		// This now matches the signature perfectly (4 args)
+		CombatFeedbackComponent->PlayImpactFeedback(
+			Spec.HitLocation, 
+			Spec.HitNormal, 
+			Spec.Amount, 
+			Spec.DamageCauser 
+		);
+	}
 
 	// ✅ SIMPLE: Just forward to HealthComponent
 	HealthComp->ApplyDamage(Spec.Amount, EDamageType::Physical, Spec.HitLocation);

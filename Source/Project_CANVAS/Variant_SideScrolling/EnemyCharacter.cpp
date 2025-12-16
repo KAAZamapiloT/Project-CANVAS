@@ -14,8 +14,10 @@
 #include "TimerManager.h"
 #include "AIController.h"
 #include "AIC_Enemy.h"
+#include "Kismet/KismetMathLibrary.h"
 #include"GameFramework/GameModeBase.h"
-#include "DrawDebugHelpers.h" 
+#include "DrawDebugHelpers.h"
+#include"CombatFeedbackComponent.h"
 //==============================================================================================
 // CONSTRUCTOR
 //==============================================================================================
@@ -44,6 +46,7 @@ AEnemyCharacter::AEnemyCharacter()
 	GetCharacterMovement()->AirControl = 1.0f;
 	JumpMaxCount = 4; // 1 ground jump + 3 air jumps
 	HealthComponent=CreateDefaultSubobject<UHealthComponent>(FName("HealthComponent"));
+	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComp"));
 	//CombatDecisionEngine=CreateDefaultSubobject<UCombatDecisionEngine>("CombatDecisionEngine");
 //	CombatAnimationComponent=CreateDefaultSubobject<UCombatAnimationComponent>("CombatAnimationComponent");
 //	CombatStateComponent=CreateDefaultSubobject<UCombatStateComponent>("CombatState");
@@ -103,36 +106,43 @@ void AEnemyCharacter::Tick(float DeltaTime)
 }
 void AEnemyCharacter::UpdateFacing(float DeltaTime)
 {
-	// 1. Safety Checks
-	if (!PlayerCharacter || !HealthComponent || !HealthComponent->IsAlive())
-	{
-		return;
-	}
+	if (!PlayerCharacter || !HealthComponent || !HealthComponent->IsAlive()) return;
+	if (HealthComponent->IsStunned() || GetMesh()->IsSimulatingPhysics()) return;
 
-	// 2. Don't rotate while being hit or dead (Optional polish)
-	if (HealthComponent->IsStunned() || GetMesh()->IsSimulatingPhysics())
-	{
-		return;
-	}
-
-	// 3. Calculate Direction
-	// Only care about X-axis (2.5D Fighter logic)
-	float MyX = GetActorLocation().X;
-	float TargetX = PlayerCharacter->GetActorLocation().X;
-    
-	// If Player is to my RIGHT (+X), I should face 0 degrees.
-	// If Player is to my LEFT (-X), I should face 180 degrees.
-	float TargetYaw = (TargetX > MyX) ? 0.0f : 180.0f;
-
-	// 4. Smoothly Rotate
-	FRotator CurrentRot = GetActorRotation();
-	FRotator TargetRot = FRotator(0.0f, TargetYaw, 0.0f);
-
-	// Use a high speed (15.0f) for snappy fighting game turns
-	FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, 15.0f);
-
-	SetActorRotation(NewRot);
+	// Use a smooth speed (e.g., 15.0f) for general gameplay
+	OrientToTarget(PlayerCharacter->GetActorLocation(), 15.0f, DeltaTime);
 }
+
+void AEnemyCharacter::OrientToTarget(FVector TargetLocation, float InterpSpeed, float DeltaTime)
+{
+	// 1. Get Direction Vector
+	FVector MyLoc = GetActorLocation();
+	FVector Direction = TargetLocation - MyLoc;
+    
+	// 2. Constrain to 2.5D Plane (Flatten Y or Z depending on your setup)
+	// Since you are side-scrolling on X-Axis (Walking along X, locked Y):
+	// You typically face +X or -X. 
+	// If your game is on X-Z plane, we ignore Y differences.
+	Direction.Y = 0.0f; 
+	Direction.Z = 0.0f; // Don't tilt up/down
+
+	if (Direction.IsNearlyZero()) return;
+
+	// 3. Calculate "Look At" Rotation from Forward Vector
+	FRotator TargetRot = Direction.Rotation(); 
+    
+	// 4. Apply Rotation (Interpolated or Instant)
+	if (InterpSpeed > 0.0f)
+	{
+		FRotator NewRot = FMath::RInterpTo(GetActorRotation(), TargetRot, DeltaTime, InterpSpeed);
+		SetActorRotation(NewRot);
+	}
+	else
+	{
+		SetActorRotation(TargetRot);
+	}
+}
+
 void AEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UE_LOG(LogTemp, Log, TEXT("🛑 [ENEMY %s] EndPlay"), *GetName());
@@ -570,7 +580,16 @@ if (bShowDebug)
 		4.0f
 	);
 }
-	
+	if (CombatFeedbackComponent)
+	{
+		// This triggers Particles on the Enemy and Shake on the Player
+		CombatFeedbackComponent->PlayImpactFeedback(
+			Spec.HitLocation, 
+			Spec.HitNormal, 
+			Spec.Amount, 
+			Spec.DamageCauser // Vital for camera shake checks
+		);
+	}
 
 	// ✅ SIMPLE: Forward to HealthComponent
 	HealthComponent->ApplyDamage(Spec.Amount, EDamageType::Electric, Spec.HitLocation);
@@ -627,15 +646,11 @@ void AEnemyCharacter::ExecuteMove(FName MoveName)
     // ═════════════════════════════════════════════════════════
     // FORCE FACE PLAYER BEFORE ATTACKING
     // ═════════════════════════════════════════════════════════
-    if (PlayerCharacter)
-    {
-        float DeltaX = PlayerCharacter->GetActorLocation().X - GetActorLocation().X;
-        FRotator NewRotation = GetActorRotation();
-        NewRotation.Yaw = (DeltaX > 0) ? 0.0f : 180.0f;  // Face right (0°) or left (180°)
-        SetActorRotation(NewRotation);
-        
-      //  UE_LOG(LogTemp, Error, TEXT("👁️ [ENEMY] Facing player (Yaw: %.0f) DeltaX: %.1f"), NewRotation.Yaw, DeltaX);
-    }
+	if (PlayerCharacter)
+	{
+		// Pass 0.0f as speed for INSTANT rotation
+		OrientToTarget(PlayerCharacter->GetActorLocation(), 0.0f, 0.0f);
+	}
     else
     {
         UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY] No PlayerCharacter reference - can't face target!"));

@@ -13,7 +13,8 @@ struct FInputActionValue;
 class UHealthComponent;
 class UCombatAnimationComponent;  // ADD
 class UCombatStateComponent;      // ADD
-class UCombatDecisionEngine;   
+class UCombatDecisionEngine;
+class UCombatFeedbackComponent;
 /**
  *  A player-controllable character side scrolling game
  */
@@ -154,6 +155,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	class UCombatDecisionEngine* DecisionEngine;
+
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	UCombatFeedbackComponent* CombatFeedbackComponent;
 public:
 	
 	/** Constructor */

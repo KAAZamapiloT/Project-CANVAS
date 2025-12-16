@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "CombatData.h"
+
 #include "Damagable.h"
 #include "EnemyCharacter.generated.h"
 
@@ -16,7 +17,7 @@ class UCombatDecisionEngine;
 class UBehaviorTree;
 class AAIController;
 class UAnimMontage;  // ✅ ADDED: Required for OnMontageCompleted delegate signature
-
+class UCombatFeedbackComponent;
 /**
  * @enum EEnemyState
  * @brief Enemy behavioral state for AI control
@@ -253,6 +254,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Combat")
     void ResetEnemyState();
 protected:
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat")
+    UCombatFeedbackComponent* CombatFeedbackComponent;
     // ========================================
     // INTERNAL STATE
     // ========================================
@@ -343,6 +346,13 @@ protected:
      * Returns 0.0f (Face Right) or 180.0f (Face Left).
      */
     void UpdateFacing(float DeltaTime);
+
+public:
+    /** * Calculates and applies rotation to face the target using Forward Vector alignment.
+     * @param TargetLocation The location to look at.
+     * @param InterpSpeed Rotation speed (0 for instant).
+     */
+    void OrientToTarget(FVector TargetLocation, float InterpSpeed, float DeltaTime);
 public:
     /** Called when enemy lands (resets jump flags) */
     virtual void Landed(const FHitResult& Hit) override;

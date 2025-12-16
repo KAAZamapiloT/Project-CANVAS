@@ -324,6 +324,7 @@ void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, US
 
 void UGenAISystem::OnMeshPlanReady(FString Plan, FString Choices)
 {
+	if (bIsMeshReady) return;
 	DraftMeshJson = Plan;
 	PrunedMeshList = Choices;
 	bIsMeshReady = true;
@@ -350,6 +351,7 @@ void UGenAISystem::OnMeshPlanReady(FString Plan, FString Choices)
 
 void UGenAISystem::OnTexturePlanReady(FString TexturePlan, FString Choices)
 {
+	if (bIsTexReady) return;
 	DraftTexJson = TexturePlan;
 	PrunedTextureList = Choices;
 	bIsTexReady = true;
@@ -374,6 +376,9 @@ void UGenAISystem::OnTexturePlanReady(FString TexturePlan, FString Choices)
 
 void UGenAISystem::OnPaintingPlanReady(FString Plan, FString Summary)
 {
+	if (bIsPaintingReady){
+		return;
+	}
 	UE_LOG(LogTemp, Display, TEXT("✅ Painting Agent Finished. Summary: %s"), *Summary);
 
 	DraftPaintingJson = Plan;
@@ -431,6 +436,13 @@ void UGenAISystem::Deinitialize()
 
 void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
 {
+	if (bIsIntentReady)
+	{
+		UE_LOG(LogTemp, Display, TEXT("<UNK> OnIntentionReady: MULTIPLE INTETIONS"));
+		return;
+	}
+	bIsIntentReady = true;
+	
     UE_LOG(LogTemp, Display, TEXT("✅ Phase 1: Intention identified %d categories."), Keywords.Num());
 	// =========================================================
 	// 1. ROBUST WORLD RECOVERY (Prevents "Invalid World" crashes)
