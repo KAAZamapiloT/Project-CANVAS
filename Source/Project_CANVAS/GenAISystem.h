@@ -93,11 +93,14 @@ private:
 	void OnMeshPlanReady(FString Plan,FString Choices);
 
 	UFUNCTION()
-	void OnIntentionReady(const TArray<FString>&  RelevantKeywords);
+	void OnIntentionReady(const TArray<FString>&  RelevantMeshes,const TArray<FString>&  RelevantTextures,
+		const TArray<FString>&  RelevantParticles);
 
 	UFUNCTION()
 	void OnPaintingPlanReady(FString Plan,FString Sum);
-	TArray<FString> ActiveAssetContext;
+	TArray<FString> ActiveMeshesContext;
+	TArray<FString> ActiveTexturesContext;
+	TArray<FString> ActiveParticlesContext;
 	bool bHasSynthesized = false;
 	// NEW: Store the draft plan from the Painting Agent
 	FString DraftPaintingJson; 

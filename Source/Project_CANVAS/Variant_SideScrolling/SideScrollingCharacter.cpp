@@ -260,7 +260,10 @@ void ASideScrollingCharacter::BeginPlay()
 	// ═════════════════════════════════════════════════════════
 	if (CombatAnimComp)
 	{
-		CombatAnimComp->OnHitWindowActive.AddDynamic(this, &ASideScrollingCharacter::OnHitWindowActive);
+		// ✅ ADD THIS NEW LINE:
+		// Listen for the "Start/Stop" signal from the component
+		CombatAnimComp->OnHitWindowChanged.AddDynamic(this, &ASideScrollingCharacter::OnHitWindowChanged);
+        
 		CombatAnimComp->OnMontageEnded.AddDynamic(this, &ASideScrollingCharacter::OnMoveCompleted);
 	}
 
@@ -474,6 +477,23 @@ void ASideScrollingCharacter::OnMoveCompleted(FName CompletedMove)
     
 	UE_LOG(LogTemp, Log, TEXT("⏱️ Combo window opened for %.2f seconds"), ComboWindowDuration);
 }
+
+void ASideScrollingCharacter::StartBlocking()
+{
+	if (HealthComp && !HealthComp->IsStunned())
+	{
+		bIsBlocking = true;
+		BlockStartTime = GetWorld()->GetTimeSeconds();
+		// Optional: Play "Hold Block" animation here
+	}
+}
+
+void ASideScrollingCharacter::StopBlocking()
+{
+	bIsBlocking = false;
+	// Optional: Stop animation
+}
+
 void ASideScrollingCharacter::CloseComboWindow()
 {
 	bCanBufferInput = false;
@@ -639,6 +659,9 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 {
 	if (!HealthComp || !HealthComp->IsAlive())
 		return;
+
+
+	
 	if (bShowDebug)
 	{
 		// ✅ DRAW DEBUG SPHERE - Player taking damage
@@ -667,6 +690,53 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 		);
 	}
 
+	// 1. CHECK BLOCKING
+	// We only block if holding the button AND facing the attacker
+	if (bIsBlocking && IsFacing(Spec.DamageCauser)) 
+	{
+		float BlockDuration = GetWorld()->GetTimeSeconds() - BlockStartTime;
+
+		// --- PERFECT PARRY (Pressed < 0.2s ago) ---
+		if (BlockDuration < 0.25f)
+		{
+			// JUICE: Blue Sparks + Clang Sound
+			if (CombatFeedbackComponent)
+			{
+				// Assuming you added BlockVFX to your component, or just re-use LightHit with 0 damage
+				CombatFeedbackComponent->PlayImpactFeedback(Spec.HitLocation, Spec.HitNormal, 0.0f, this); 
+			}
+
+			// REVERSAL: Stun the Enemy!
+			if (ACharacter* Attacker = Cast<ACharacter>(Spec.DamageCauser))
+			{
+				if (UHealthComponent* EnemyHP = Attacker->FindComponentByClass<UHealthComponent>())
+				{
+					EnemyHP->DamagePoise(100.0f); // Instantly break their guard
+				}
+			}
+			// Take NO damage
+			return; 
+		}
+
+		// --- NORMAL BLOCK ---
+		// Take Chip Damage to Poise
+		if (HealthComp)
+		{
+			// If block breaks, we get stunned
+			bool bGuardBroken = HealthComp->DamagePoise(20.0f); 
+			if (bGuardBroken)
+			{
+				StopBlocking();
+			}
+		}
+
+		// Reduce HP damage by 80%
+		float ReducedDamage = Spec.Amount * 0.2f;
+        
+		// Pass reduced damage to normal logic
+		if (HealthComp) HealthComp->ApplyDamage(ReducedDamage, Spec.DamageType, Spec.HitLocation,Spec.DamageCauser);
+		return;
+	}
 	if (CombatFeedbackComponent)
 	{
 		// This now matches the signature perfectly (4 args)
@@ -679,7 +749,7 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 	}
 
 	// ✅ SIMPLE: Just forward to HealthComponent
-	HealthComp->ApplyDamage(Spec.Amount, EDamageType::Physical, Spec.HitLocation);
+	HealthComp->ApplyDamage(Spec.Amount, EDamageType::Physical, Spec.HitLocation,Spec.DamageCauser);
 
 	// ✅ CHECK IF DAMAGE CAME FROM ENEMY (using tags)
 	if (Spec.DamageCauser && Spec.DamageCauser->Tags.Contains(FName("Enemy.Character")))
@@ -705,7 +775,88 @@ void ASideScrollingCharacter::ReceiveDamage_Implementation(const FDamageSpec& Sp
 	}
 }
 
+void ASideScrollingCharacter::OnHitWindowChanged(bool bActive, const FActionCommand& Command)
+{
+	bIsHitboxActive = bActive;
 
+	if (bActive)
+	{
+		CurrentHitDamage = Command.DamageToApply;
+		HitActors.Empty(); // Reset for new swing
+	}
+}
+
+void ASideScrollingCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (bIsHitboxActive)
+	{
+		PerformAttackTrace();
+	}
+}
+
+// ✅ NEW: The Physics Logic
+void ASideScrollingCharacter::PerformAttackTrace()
+{
+	FVector Start = GetActorLocation();
+	FVector Forward = GetActorForwardVector();
+	FVector End = Start + (Forward * 120.f); // 120 units forward reach
+
+	
+	TArray<FHitResult> OutHits;
+	TArray<AActor*> Ignored;
+	Ignored.Add(this);
+
+	// Sphere Trace
+	bool bHit = UKismetSystemLibrary::SphereTraceMulti(
+		GetWorld(), 
+		Start, 
+		End, 
+		60.f, // Radius
+		UEngineTypes::ConvertToTraceType(ECC_Pawn),
+		false, 
+		Ignored,
+		bShowDebug ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None,
+		OutHits, 
+		true
+	);
+
+	if (bHit)
+	{
+		for (const FHitResult& Hit : OutHits)
+		{
+			AActor* Target = Hit.GetActor();
+			
+			// Valid target? Has Interface? Not hit yet this swing?
+			if (Target && Target->Implements<UDamagable>() && !HitActors.Contains(Target))
+			{
+				HitActors.Add(Target); // Mark as hit so we don't hit them next frame
+
+				// Construct Damage Spec
+				FDamageSpec Spec;
+				Spec.Amount = CurrentHitDamage;
+				Spec.HitLocation = Hit.ImpactPoint;
+				Spec.HitNormal = Hit.ImpactNormal;
+				Spec.DamageCauser = this; // ✅ I am the causer
+				Spec.InstigatorController = GetController();
+
+				// Send Damage
+				IDamagable::Execute_ReceiveDamage(Target, Spec);
+				
+				// Reward Player (Juice)
+				NotifyPlayerHit(CurrentHitDamage); 
+			}
+		}
+	}
+}
+
+bool ASideScrollingCharacter::IsFacing(AActor* OtherActor)
+{
+	if (!OtherActor) return true;
+	FVector ToTarget = OtherActor->GetActorLocation() - GetActorLocation();
+	float Dot = FVector::DotProduct(GetActorForwardVector(), ToTarget.GetSafeNormal());
+	return Dot > 0.0f; // Positive dot product means it's in front of us
+}
 void ASideScrollingCharacter::OnStunExpired()
 {
 	if (HealthComp)
@@ -722,207 +873,25 @@ bool ASideScrollingCharacter::IsStunned() const
 // Clean separation of concerns
 void ASideScrollingCharacter::ExecuteMove(FName Input)
 {
- //   UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
- //   UE_LOG(LogTemp, Warning, TEXT("🎬 [PLAYER] EXECUTE MOVE: %s"), *Input.ToString());
-  //  UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
+ // 1. Validation
+	if (!CombatStateComp || !DecisionEngine || !CombatAnimComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] Missing Components!"));
+		return;
+	}
 
-    // ═════════════════════════════════════════════════════════
-    // VALIDATION
-    // ═════════════════════════════════════════════════════════
-    if (!CombatStateComp)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] CombatStateComp is NULL!"));
-        return;
-    }
+	// 2. Build Context & Decide
+	FContextVector Context = CombatStateComp->BuildContext(Input);
+	FActionCommand Command = DecisionEngine->DecideNextMove(Context);
+	
+	// 3. Execute Animation
+	// The Component will now manage the timer and call OnHitWindowChanged
+	CombatAnimComp->ExecuteActionCommand(Command);
 
-    if (!DecisionEngine)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] DecisionEngine is NULL!"));
-        return;
-    }
-
-    if (!CombatAnimComp)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] CombatAnimComp is NULL!"));
-        return;
-    }
-
-//    UE_LOG(LogTemp, Display, TEXT("✅ [PLAYER] All components valid"));
-
-    // ═════════════════════════════════════════════════════════
-    // BUILD CONTEXT
-    // ═════════════════════════════════════════════════════════
-  //  UE_LOG(LogTemp, Display, TEXT("⚙️ [PLAYER] Building context..."));
-    FContextVector Context = CombatStateComp->BuildContext(Input);
-
-    // ═════════════════════════════════════════════════════════
-    // DECIDE MOVE
-    // ═════════════════════════════════════════════════════════
-  //  UE_LOG(LogTemp, Display, TEXT("🧠 [PLAYER] Deciding move..."));
-    FActionCommand Command = DecisionEngine->DecideNextMove(Context);
-    
- //   UE_LOG(LogTemp, Warning, TEXT("📋 [PLAYER] Action: %s | Damage: %.1f | Stun: %.1f"), 
- //          *Command.MoveIdentifier.ToString(),
-//           Command.DamageToApply,
-//           Command.StunDurationToInflict);
-//
-    // ═════════════════════════════════════════════════════════
-    // SCHEDULE DAMAGE TEST (Temporary - replaces AnimNotify)
-    // ═════════════════════════════════════════════════════════
-    UE_LOG(LogTemp, Display, TEXT("⏲️ [PLAYER] Scheduling damage test in 0.3 seconds..."));
-    
-    GetWorld()->GetTimerManager().SetTimer(
-        TempPlayerDamageTestHandle,
-        FTimerDelegate::CreateLambda([this, Command]() {
-            UE_LOG(LogTemp, Warning, TEXT("⚡ [PLAYER] DAMAGE TEST TRIGGERED!"));
-            TestPlayerDirectDamage(Command.DamageToApply);
-        }),
-        0.3f,  // Damage after 0.3 seconds (mid-animation)
-        false
-    );
-
-    // ═════════════════════════════════════════════════════════
-    // EXECUTE ANIMATION
-    // ═════════════════════════════════════════════════════════
-    CombatAnimComp->ExecuteActionCommand(Command);
-
-    // ═════════════════════════════════════════════════════════
-    // SET COOLDOWN
-    // ═════════════════════════════════════════════════════════
-    CombatStateComp->StartCooldown(Command.MoveIdentifier, 0.5f);
-    
-//    UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════"));
- //   UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] EXECUTE COMPLETE"));
- //   UE_LOG(LogTemp, Warning, TEXT("══════════════════════════════════════════════════\n"));
+	// 4. Set Cooldowns
+	CombatStateComp->StartCooldown(Command.MoveIdentifier, 0.5f);
 }
-// ═════════════════════════════════════════════════════════
-// TEST DIRECT DAMAGE (Temporary - Bypasses AnimNotify)
-// ═════════════════════════════════════════════════════════
-void ASideScrollingCharacter::TestPlayerDirectDamage(float Damage)
-{
-  //  UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
- //   UE_LOG(LogTemp, Error, TEXT("💥 [PLAYER] TestDirectDamage CALLED! Damage: %.1f"), Damage);
-   // UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════"));
 
-    // ═════════════════════════════════════════════════════════
-    // HIT DETECTION - Sphere Sweep
-    // ═════════════════════════════════════════════════════════
-    FVector Start = GetActorLocation();
-    FVector Forward = GetActorForwardVector();
-    FVector End = Start + (Forward * 150.f); // 150 units forward
-
-  //  UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace Start: %s"), *Start.ToString());
-  //  UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Trace End: %s"), *End.ToString());
-  //  UE_LOG(LogTemp, Display, TEXT("🔍 [PLAYER] Forward Vector: %s"), *Forward.ToString());
-
-    FHitResult HitResult;
-    FCollisionQueryParams QueryParams;
-    QueryParams.AddIgnoredActor(this);
-    
-    bool bHit = GetWorld()->SweepSingleByChannel(
-        HitResult,
-        Start,
-        End,
-        FQuat::Identity,
-        ECC_Pawn,
-        FCollisionShape::MakeSphere(75.f),
-        QueryParams
-    );
-
-    // ═════════════════════════════════════════════════════════
-    // DRAW DEBUG VISUALIZATION
-    // ═════════════════════════════════════════════════════════
-    if (bShowDebug)
-    {
-        // Draw sphere at hit/end location
-        DrawDebugSphere(
-            GetWorld(),
-            bHit ? HitResult.Location : End,
-            75.f,
-            12,
-            bHit ? FColor::Red : FColor::Green,
-            false,
-            2.0f,
-            0,
-            3.0f
-        );
-
-        // Draw line showing attack direction
-        DrawDebugLine(
-            GetWorld(),
-            Start,
-            End,
-            bHit ? FColor::Red : FColor::Yellow,
-            false,
-            2.0f,
-            0,
-            2.0f
-        );
-
-        // Draw hit point
-        if (bHit)
-        {
-            DrawDebugPoint(
-                GetWorld(),
-                HitResult.ImpactPoint,
-                15.0f,
-                FColor::Orange,
-                false,
-                2.0f
-            );
-        }
-    }
-
-    // ═════════════════════════════════════════════════════════
-    // PROCESS HIT RESULT
-    // ═════════════════════════════════════════════════════════
-    if (bHit && HitResult.GetActor())
-    {
-        AActor* HitActor = HitResult.GetActor();
-     //   UE_LOG(LogTemp, Warning, TEXT("✅ [PLAYER] Hit actor: %s"), *HitActor->GetName());
-
-        // Check if enemy (by tag)
-        if (HitActor->Tags.Contains(FName("Enemy.Character")))
-        {
-           // UE_LOG(LogTemp, Error, TEXT("🎯 [PLAYER] CONFIRMED HIT ON ENEMY!"));
-
-            // Apply damage through interface
-            if (IDamagable* DamagableTarget = Cast<IDamagable>(HitActor))
-            {
-                FDamageSpec DamageSpec;
-                DamageSpec.Amount = Damage;
-                DamageSpec.HitLocation = HitResult.ImpactPoint;
-                DamageSpec.HitNormal = HitResult.ImpactNormal;
-                DamageSpec.HitBone = HitResult.BoneName;
-                DamageSpec.InstigatorController = GetController();
-                DamageSpec.DamageCauser = this;
-                
-                IDamagable::Execute_ReceiveDamage(HitActor, DamageSpec);
-                
-                // ✅ NOTIFY GAME MODE
-                NotifyPlayerHit(Damage);
-                
-         //       UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 PLAYER HIT ENEMY for %.1f damage 🎯🎯🎯"), Damage);
-            }
-            else
-            {
-     //           UE_LOG(LogTemp, Error, TEXT("❌ [PLAYER] Enemy is not IDamagable!"));
-            }
-        }
-        else
-        {
-  //          UE_LOG(LogTemp, Warning, TEXT("⚠️ [PLAYER] Hit %s but not an enemy"), *HitActor->GetName());
-        }
-    }
-    else
-    {
-        // ✅ MISS - Reset combo
-        ResetPlayerCombo();
- //       UE_LOG(LogTemp, Error, TEXT("❌❌❌ PLAYER ATTACK MISSED ❌❌❌"));
-    }
-    
-//    UE_LOG(LogTemp, Error, TEXT("═══════════════════════════════════════════════════\n"));
-}
 
 
 bool ASideScrollingCharacter::IsAlive_Implementation() const

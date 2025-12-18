@@ -6,12 +6,22 @@
 #include "UObject/Interface.h"
 #include "Damagable.generated.h"
 
+// ============ ENUMS ============
 
+UENUM(BlueprintType)
+enum class EDamageType : uint8
+{
+  Physical     UMETA(DisplayName = "Physical"),
+  Fire         UMETA(DisplayName = "Fire"),
+  Ice          UMETA(DisplayName = "Ice"),
+  Electric     UMETA(DisplayName = "Electric"),
+  Poison       UMETA(DisplayName = "Poison")
+};
 USTRUCT(BlueprintType)
 struct FDamageSpec {
   GENERATED_BODY()
   UPROPERTY(EditAnywhere, BlueprintReadWrite) float Amount = 0.f;
-  UPROPERTY(EditAnywhere, BlueprintReadWrite) TSubclassOf<UDamageType> DamageType = UDamageType::StaticClass();
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) EDamageType DamageType=EDamageType::Physical;
   UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector HitLocation = FVector::ZeroVector;
   UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector HitNormal = FVector::UpVector;
   UPROPERTY(EditAnywhere, BlueprintReadWrite) FName HitBone = NAME_None;

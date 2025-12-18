@@ -75,8 +75,12 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 	// 3. START STAGE 1: INTENTION
 	UE_LOG(LogTemp, Display, TEXT("🤖 Phase 1: Analyzing Intention..."));
 	if (bIntent)
+
 	{
-		IntentionL->RequestIntention(UserPrompt, AllConcepts);
+		TArray<FString> AllMeshes=Tracker->AssetIndexer->GetAllMeshNames();
+		TArray<FString> AllTexture=Tracker->AssetIndexer->GetDiscoveredTextureNames();
+		TArray<FString> AllParticles=Tracker->AssetIndexer->GetDiscoveredParticleNames()
+;		IntentionL->RequestIntention(UserPrompt, AllMeshes, AllTexture, AllParticles);
 	}else
 	{
 		UE_LOG(LogTemp, Display, TEXT("🤖 Legacy Mode: Skipping Intention, calling all agents directly..."));
@@ -434,7 +438,8 @@ void UGenAISystem::Deinitialize()
 	PaintL->OnPaintingPlanReady.RemoveDynamic(this,&UGenAISystem::OnPaintingPlanReady);
 }
 
-void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
+void UGenAISystem::OnIntentionReady(const TArray<FString>&  RelevantMeshes,const TArray<FString>&  RelevantTextures,
+		const TArray<FString>&  RelevantParticles)
 {
 	if (bIsIntentReady)
 	{
@@ -443,7 +448,7 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
 	}
 	bIsIntentReady = true;
 	
-    UE_LOG(LogTemp, Display, TEXT("✅ Phase 1: Intention identified %d categories."), Keywords.Num());
+    //UE_LOG(LogTemp, Display, TEXT("✅ Phase 1: Intention identified %d categories."), Keywords.Num());
 	// =========================================================
 	// 1. ROBUST WORLD RECOVERY (Prevents "Invalid World" crashes)
 	// =========================================================
@@ -477,35 +482,24 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
 
     // 1. SMART EXPANSION (The New Robust Logic)
     // This splits the keywords into valid Meshes, Particles, and Textures
-    FSmartAssetSelection Selection = Tracker->AssetIndexer->ExpandKeywordsToCollection(Keywords);
 
     // 2. PREPARE PAYLOADS 
+    ActiveMeshesContext=RelevantMeshes;
+	ActiveTexturesContext=RelevantTextures;
+	ActiveParticlesContext=RelevantParticles;
     
-    // Payload A: Structural Agent needs Meshes + Particles
-    TArray<FString> MeshContextArray;
-    MeshContextArray.Append(Selection.Meshes);
-    MeshContextArray.Append(Selection.Particles);
-    FString MeshContextString = FString::Join(MeshContextArray, TEXT(", "));
-
-    // Payload B: Texture Agent needs Material Base Names ONLY
-    FString TextureContextString = FString::Join(Selection.Textures, TEXT(", "));
-
-    // 3. STORE GLOBAL CONTEXT
-    // We save the combined list so the Master Architect knows what assets were actually available
-    ActiveAssetContext = Selection.GetAll();
-
     // 4. DISPATCH TO RESOLVERS (With Specific Lists)
     UE_LOG(LogTemp, Display, TEXT("🤖 Phase 2: Dispatching Specialists..."));
-    UE_LOG(LogTemp, Display, TEXT("   • Mesh Context: %d items"), MeshContextArray.Num());
-    UE_LOG(LogTemp, Display, TEXT("   • Texture Context: %d items"), Selection.Textures.Num());
+    UE_LOG(LogTemp, Display, TEXT("   • Mesh Context: %d items"), RelevantMeshes.Num());
+    UE_LOG(LogTemp, Display, TEXT("   • Texture Context: %d items"), RelevantTextures.Num());
 
 	if (bSpeedMode)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⚡ SPEED MODE: Bypassing Specialists."));
 
 		// Inject Data Directly
-		PrunedMeshList = MeshContextString;
-		PrunedTextureList = TextureContextString;
+		PrunedMeshList = FString::Join(RelevantMeshes, TEXT(","));
+		PrunedTextureList = FString::Join(RelevantTextures, TEXT(","));
         
 		// Clear drafts to force Master to generate fresh JSON
 		DraftMeshJson = ""; 
@@ -523,9 +517,9 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
 	else
 	{
 		// --- AGENT 1: MESH RESOLVER ---
-		if (MeshContextArray.Num() > 0)
+		if (RelevantMeshes.Num() > 0)
 		{
-			MeshL->RequestPlan_Pruned(LastUserPrompt, MeshContextString, TargetWorld, CachedHistory);
+			MeshL->RequestPlan_Pruned(LastUserPrompt, PrunedMeshList, TargetWorld, CachedHistory);
 		}
 		else
 		{
@@ -534,9 +528,9 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>& Keywords)
 		}
 
 		// --- AGENT 2: TEXTURE RESOLVER ---
-		if (Selection.Textures.Num() > 0)
+		if (RelevantTextures.Num() > 0)
 		{
-			TexL->RequestPlan_Pruned(LastUserPrompt, TextureContextString, TargetWorld, CachedHistory);
+			TexL->RequestPlan_Pruned(LastUserPrompt, PrunedTextureList, TargetWorld, CachedHistory);
 		}
 		else
 		{
@@ -574,7 +568,7 @@ FString UGenAISystem::ConstructMasterPrompt(
 	FString PPMString=FString::Join(AvailablePPM, TEXT("\", \""));
     FString Payload = FString::Printf(TEXT(
         "ROLE: You are the Senior Level Architect for a high-end Unreal Engine 5 project.\n"
-        "OBJECTIVE: Review, validate, and integrate proposals from two junior specialists into a cohesive final scene plan.\n\n"
+        "OBJECTIVE: Review, validate, and integrate proposals from two/three junior specialists into a cohesive final scene plan.\n\n"
         
         "═══════════════════════════════════════════════════════════════\n"
         "CLIENT ORIGINAL REQUEST\n"
@@ -593,15 +587,16 @@ FString UGenAISystem::ConstructMasterPrompt(
         "Your interior designer has selected materials and submitted:\n"
         "%s\n\n"
         "═══════════════════════════════════════════════════════════════\n"
-	"PROPOSAL 3: LEVEL DIRECTOR (Layout Commands)\n"
-	"═══════════════════════════════════════════════════════════════\n"
-	"Your Level Director has issued these procedural commands:\n"
-	"%s\n\n"
+	    "PROPOSAL 3: LEVEL DIRECTOR (Layout Commands)\n"
+	    "═══════════════════════════════════════════════════════════════\n"
+     	"Your Level Director has issued these procedural commands:\n"
+	    "%s\n\n"
+	    
         "═══════════════════════════════════════════════════════════════\n"
         "VERIFIED ASSET CATALOG (Master Inventory)\n"
         "═══════════════════════════════════════════════════════════════\n"
         "You may ONLY use assets from this verified inventory.\n"
-        "Do NOT approve any assets not listed here.\n\n"
+        "Assets listed by junior specialists are also valid even if they are not contained in your inventory.\n\n"
         
         "Valid Static Meshes:\n"
         "[\"%s\"]\n\n"
@@ -618,14 +613,14 @@ FString UGenAISystem::ConstructMasterPrompt(
         "═══════════════════════════════════════════════════════════════\n"
         "YOUR ARCHITECTURAL RESPONSIBILITIES\n"
         "═══════════════════════════════════════════════════════════════\n\n"
-        
-        "1. VALIDATE & RESOLVE STRUCTURAL PROPOSAL\n"
-"   • Review 'SpawnRequest' items from Proposal 1 (The Draft)\n"
-"   • The Draft may use generic names (e.g., 'Tree', 'Chair')\n" // <--- NEW INSTRUCTION
-"   • Search the 'Valid Static Meshes' list for the best matching specific asset\n" // <--- NEW INSTRUCTION
-"   • REPLACE the generic AssetPath with the specific one from the list\n" // <--- NEW INSTRUCTION
-"   • If no thematic match exists, reject the item\n"
-        
+ "1. VALIDATE & RESOLVE STRUCTURAL PROPOSAL\n"
+ "   • Review 'SpawnRequest' items from Proposal 1 (The Draft)\n"
+ "   • The Draft may use generic names (e.g., 'Tree', 'Chair')\n" 
+ "   • Search the 'Valid Static Meshes' list for the best matching specific asset\n" 
+ "   • REPLACE the generic AssetPath with the specific one from the list\n"
+ "   • [NEW RULE] If the Proposal uses a specific asset name that LOOKS valid (e.g., SM_Specific_Prop) but isn't in your list, KEEP IT. Trust the Structural Engineer.\n" // <--- The Fix
+ "   • Only reject obvious hallucinations (e.g., 'StarWars_XWing' in a medieval game).\n"
+ 
         "2. VALIDATE SURFACE PROPOSAL (Critical)\n"
         "   • Review all 'Props' items from Proposal 2\n"
         "   • Verify every TagName exists in Valid Actor Tags\n"
@@ -797,8 +792,8 @@ FString UGenAISystem::ConstructMasterPrompt(
         "═══════════════════════════════════════════════════════════════\n"
         
         "STRUCTURAL VALIDATION:\n"
-        "✓ Every SpawnRequest AssetPath exists in Valid Static Meshes\n"
-        "✓ Every ParticleSpawns AssetPath exists in particle inventory\n"
+        "✓ Every SpawnRequest AssetPath exists in Valid Static Meshes or Is Given by junior specialist \n"
+        "✓ Every ParticleSpawns AssetPath exists in particle inventory or Is Given by junior specialist\n"
         "✓ No duplicate ObjectName values\n"
         "✓ All numeric values within valid ranges\n"
         "✓ Array name is 'ParticleSpawns' (with 's')\n\n"
@@ -854,10 +849,10 @@ FString UGenAISystem::ConstructMasterPrompt(
         "═══════════════════════════════════════════════════════════════\n"
         
         "• If both proposals are empty: Create minimal lighting-only scene\n"
-        "• If only meshes provided: Add default neutral lighting\n"
+        "• If only meshes provided: Create lighting according to theme\n"
         "• If only textures provided: Add atmospheric lighting matching theme\n"
         "• If client request conflicts with proposals: Prioritize client vision\n"
-        "• If theme unclear: Use balanced neutral lighting preset\n\n"
+        "• If theme unclear: Use what prompt says give anything that closely matches it\n\n"
         
         "═══════════════════════════════════════════════════════════════\n"
         "OUTPUT INSTRUCTIONS\n"
@@ -877,8 +872,7 @@ FString UGenAISystem::ConstructMasterPrompt(
         "═══════════════════════════════════════════════════════════════\n"
         
         "You are the final authority. Your output will be parsed directly by C++.\n"
-        "Invalid JSON will crash the system. Invalid asset names will cause runtime errors.\n"
-        "Validate everything. Include only verified, approved assets.\n\n"
+        "Invalid JSON will crash the system. Invalid asset names will cause runtime errors.\n\n"
         
         "GENERATE INTEGRATED MASTER SCENE PLAN NOW:"
     ),

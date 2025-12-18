@@ -592,7 +592,7 @@ if (bShowDebug)
 	}
 
 	// ✅ SIMPLE: Forward to HealthComponent
-	HealthComponent->ApplyDamage(Spec.Amount, EDamageType::Electric, Spec.HitLocation);
+	HealthComponent->ApplyDamage(Spec.Amount, EDamageType::Electric, Spec.HitLocation,Spec.DamageCauser);
 
 //	UE_LOG(LogTemp, Error, TEXT("💥 ENEMY took %.1f damage! HP: %.1f/%.1f"),
 //		   Spec.Amount,

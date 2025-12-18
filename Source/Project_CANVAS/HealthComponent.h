@@ -8,19 +8,10 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Damagable.h" 
 #include "HealthComponent.generated.h"
 
-// ============ ENUMS ============
 
-UENUM(BlueprintType)
-enum class EDamageType : uint8
-{
-    Physical     UMETA(DisplayName = "Physical"),
-    Fire         UMETA(DisplayName = "Fire"),
-    Ice          UMETA(DisplayName = "Ice"),
-    Electric     UMETA(DisplayName = "Electric"),
-    Poison       UMETA(DisplayName = "Poison")
-};
 
 UENUM(BlueprintType)
 enum class EHealthState : uint8
@@ -116,7 +107,7 @@ public:
      * @param HitLocation - World location of hit for feedback
      */
     UFUNCTION(BlueprintCallable, Category="Health|Damage")
-    void ApplyDamage(float Amount, EDamageType DamageType = EDamageType::Physical, FVector HitLocation = FVector::ZeroVector);
+    void ApplyDamage(float Amount, EDamageType DamageType, FVector HitLocation,AActor*instigator);
 
     /**
      * Heal this component
@@ -201,5 +192,27 @@ public:
     FOnDeath OnDeath;
      UFUNCTION(BlueprintCallable, Category="Health")
     void Respawn();
-    
+protected:
+    // --- POISE SYSTEM ---
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Health|Poise")
+    float MaxPoise = 100.0f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Health|Poise")
+    float CurrentPoise;
+
+    UPROPERTY(EditAnywhere, Category = "Health|Poise")
+    float PoiseRecoveryRate = 15.0f; // How much poise returns per second
+
+    UPROPERTY(EditAnywhere, Category = "Health|Poise")
+    float PoiseRecoveryDelay = 2.0f; // Seconds after hit before recovery starts
+
+private:
+    float TimeSinceLastHit = 0.0f;
+
+public:
+    /** Apply damage to Poise. Returns TRUE if guard was broken. */
+    bool DamagePoise(float Amount);
+
+    UFUNCTION(BlueprintPure, Category="Health|Poise")
+    float GetPoisePercent() const { return MaxPoise > 0.f ? CurrentPoise / MaxPoise : 0.f; }    
 };

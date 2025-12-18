@@ -123,7 +123,8 @@ protected:
     
 	/** If true, player can buffer next input during combo window */
 	bool bCanBufferInput = false;
-    
+
+	
 	/** Stores buffered input during combo window */
 	FName BufferedInput;
     
@@ -138,7 +139,13 @@ protected:
     
 	/** Timer handle for combo window duration */
 	FTimerHandle ComboWindowTimer;
-    
+
+	float BlockStartTime = 0.0f;
+	
+	UPROPERTY(BlueprintReadOnly, Category = "Combat")
+	bool bIsBlocking = false;
+
+	
 	/** Duration of combo window in seconds */
 	UPROPERTY(EditAnywhere, Category="Combat|Combo")
 	float ComboWindowDuration = 0.3f;
@@ -231,6 +238,16 @@ public:
 
 	UFUNCTION()  // ✅ ADD THIS FUNCTION
 	void OnMoveCompleted(FName CompletedMove);
+
+
+	UFUNCTION(BlueprintCallable, Category="Damage")
+	virtual void StartBlocking();
+
+	UFUNCTION(BlueprintCallable, Category="Damage")
+	virtual void StopBlocking();
+
+	UFUNCTION(BlueprintCallable, Category="Damage")
+	bool IsFacing(AActor* OtherActor);
 protected:
 
 	/** Handles advanced jump logic */
@@ -280,13 +297,23 @@ public:
 	void ResetPlayerCombo();
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Dojo Stats")
 	bool bShowDebug=false;
-
 protected:
-	/** Timer handle for temporary damage testing */
-	FTimerHandle TempPlayerDamageTestHandle;
+	// State
+	bool bIsHitboxActive = false;
+	float CurrentHitDamage = 0.f;
     
-	/** Test direct damage (temporary - until AnimNotify is added) */
-	void TestPlayerDirectDamage(float Damage);
+	// To prevent hitting the same enemy twice in one swing
+	UPROPERTY()
+	TArray<AActor*> HitActors; 
+
+	// ✅ The Trace Logic (Moved from Component to Character)
+	void PerformAttackTrace();
+
+	// ✅ The Event Listener
+	UFUNCTION()
+	void OnHitWindowChanged(bool bActive, const FActionCommand& Command);
+	virtual void Tick(float DeltaSeconds) override;
+protected:
         /** * Bridge function: C++ calls this, Blueprint executes it.
          * Implement this event in your BP_SideScrollingCharacter Event Graph.
          */

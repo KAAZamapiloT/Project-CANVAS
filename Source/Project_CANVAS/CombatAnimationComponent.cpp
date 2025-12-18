@@ -11,6 +11,9 @@ UCombatAnimationComponent::UCombatAnimationComponent()
     OwnerCharacter = nullptr;
     AnimInstance = nullptr;
     CurrentMoveIdentifier = NAME_None;
+    // ✅ ENABLE TICK so we can trace every frame during attacks
+    PrimaryComponentTick.bCanEverTick = true; 
+    PrimaryComponentTick.bStartWithTickEnabled = false;
 }
 
 void UCombatAnimationComponent::BeginPlay()
@@ -43,41 +46,47 @@ bool UCombatAnimationComponent::IsValidForExecution() const
     return AnimInstance && AnimInstance->IsValidLowLevel() && OwnerCharacter && OwnerCharacter->IsValidLowLevel();
 }
 
+// In CombatAnimationComponent.cpp
+
 void UCombatAnimationComponent::ExecuteActionCommand(const FActionCommand& Command)
 {
-    // ✅ GET OWNER TYPE FOR LOGGING
     FString OwnerType = GetOwnerType();
     
-    if (!AnimInstance || !Command.AnimationToPlay)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ [%s] ExecuteActionCommand: Invalid AnimInstance or Montage"), *OwnerType);
-        return;
-    }
+    if (!AnimInstance || !Command.AnimationToPlay) return;
     
-    // Cache action data
+    // 1. Play Animation
+    AnimInstance->Montage_Play(Command.AnimationToPlay, 1.0f);
+    
+    // Cache Data
     CurrentMoveIdentifier = Command.MoveIdentifier;
-    CachedDamage = Command.DamageToApply;
-    CachedStunDuration = Command.StunDurationToInflict;
-    MoveStartTime = GetWorld()->GetTimeSeconds();
+    CachedCommand = Command; 
 
-    // Bind montage completion
+    // 2. SCHEDULE THE HITBOX (This is the missing link!)
+    // Use the delays defined in your Data Struct
+    float Delay = FMath::Max(0.01f, Command.HitWindowDelay);
+    
+    // Timer to OPEN Hitbox
+    GetWorld()->GetTimerManager().SetTimer(
+        Timer_StartHitbox, 
+        this, 
+        &UCombatAnimationComponent::StartHitbox, 
+        Delay, 
+        false
+    );
+
+    // Timer to CLOSE Hitbox
+    GetWorld()->GetTimerManager().SetTimer(
+        Timer_StopHitbox, 
+        this, 
+        &UCombatAnimationComponent::StopHitbox, 
+        Delay + Command.HitWindowDuration, 
+        false
+    );
+
+    // 3. Bind Completion (Existing logic)
     FOnMontageEnded EndDelegate;
     EndDelegate.BindUObject(this, &UCombatAnimationComponent::OnMontageCompleted);
-    
-    // ✅ PLAY MONTAGE & LOG RESULT
-    float Duration = AnimInstance->Montage_Play(Command.AnimationToPlay, 1.0f);
     AnimInstance->Montage_SetEndDelegate(EndDelegate, Command.AnimationToPlay);
-
-    if (Duration > 0.f)
-    {
-  //      UE_LOG(LogTemp, Warning, TEXT("🎬 [%s] Playing: %s | Damage: %.1f | Stun: %.1f | Duration: %.2fs"), *OwnerType,*CurrentMoveIdentifier.ToString(), 
-   //         CachedDamage, CachedStunDuration,Duration);
-    }
-    else
-    {
-     //   UE_LOG(LogTemp, Error, TEXT("❌ [%s] Failed to play montage: %s"), 
-     //       *OwnerType,*Command.AnimationToPlay->GetName());
-    }
 }
 
 void UCombatAnimationComponent::StopCurrentAction()
@@ -115,6 +124,19 @@ float UCombatAnimationComponent::GetMoveElapsedTime() const
 {
     return CurrentMoveIdentifier.IsNone() ? 0.f : GetWorld()->GetTimeSeconds() - MoveStartTime;
 }
+
+void UCombatAnimationComponent::StartHitbox()
+{
+    OnHitWindowChanged.Broadcast(true, CachedCommand);
+    // UE_LOG(LogTemp, Log, TEXT("⚔️ Hitbox OPEN"));
+}
+
+void UCombatAnimationComponent::StopHitbox()
+{
+    OnHitWindowChanged.Broadcast(true, CachedCommand);
+    // UE_LOG(LogTemp, Log, TEXT("🛡️ Hitbox CLOSED"));
+}
+
 
 void UCombatAnimationComponent::HandleHitNotify()
 {

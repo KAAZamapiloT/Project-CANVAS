@@ -186,5 +186,15 @@ struct FActionCommand
     /** Movement impulse to apply (e.g., for dash attacks) */
     UPROPERTY(BlueprintReadWrite, Category = "Action")
     FVector MovementToApply = FVector::ZeroVector;
+
+    // ✅ ADD THESE TWO FIELDS
+    // How many seconds after start to activate hitbox? (e.g., 0.1s)
+    UPROPERTY(BlueprintReadWrite, Category = "Action")
+    float HitWindowDelay = 0.2f; 
+
+    // How long does the hitbox stay active? (e.g., 0.3s)
+    UPROPERTY(BlueprintReadWrite, Category = "Action")
+    float HitWindowDuration = 0.1f;
+    
 };
 

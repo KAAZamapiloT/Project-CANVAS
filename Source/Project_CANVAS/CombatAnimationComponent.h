@@ -12,6 +12,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatMontageEnded, FName, Comple
 
 // Delegate fired when AnimNotify_CombatHit is triggered during montage
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHitWindowActive, float, Damage, float, Stun);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHitWindowChanged, bool, bActive, const FActionCommand&, CurrentCommand);
 
 UCLASS(ClassGroup=(Combat), meta=(BlueprintSpawnableComponent))
 class PROJECT_CANVAS_API UCombatAnimationComponent : public UActorComponent
@@ -82,11 +83,34 @@ protected:
     /** Callback bound to montage end delegate; state cleanup and broadcast */
     UFUNCTION()
     void OnMontageCompleted(UAnimMontage* Montage, bool bInterrupted);
+protected:
+    // ... existing variables ...
 
+    // ✅ HITBOX STATE
+    bool bIsHitboxActive = false;
+    FTimerHandle Timer_StartHitbox;
+    FTimerHandle Timer_StopHitbox;
+    
+    // To prevent hitting the same enemy 60 times in one punch
+    UPROPERTY()
+    TArray<AActor*> ActorsHitThisMove; 
+
+    // Current move properties for the active hitbox
+    float CurrentDamage = 0.f;
+    float CurrentStun = 0.f;
+
+    // ✅ FUNCTIONS
+    void StartHitbox();
+    void StopHitbox();
+    FActionCommand CachedCommand;
+  
 public:
     /** Called by AnimNotify_CombatHit during montage playback */
     UFUNCTION()
     void HandleHitNotify();
+    // ✅ The Bridge: Tells the Character when to start/stop swinging
+    UPROPERTY(BlueprintAssignable, Category="Combat")
+    FOnHitWindowChanged OnHitWindowChanged;
 
 private:
     /** Helper function to determine if this is Player or Enemy (for logging for now) */

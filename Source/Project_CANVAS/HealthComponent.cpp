@@ -14,6 +14,7 @@ UHealthComponent::UHealthComponent()
     // ✅ Enable tick for stun/invincibility countdown (IMPORTANT!)
     PrimaryComponentTick.bCanEverTick = true;
     PrimaryComponentTick.TickInterval = 0.01f; // 10ms updates for smooth countdown
+    CurrentPoise=MaxPoise;
 }
 
 void UHealthComponent::BeginPlay()
@@ -54,9 +55,17 @@ void UHealthComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
     {
         TickInvincibility(DeltaTime);
     }
+    // --- POISE REGEN LOGIC ---
+    // Only recover if NOT stunned and NOT taking damage recently
+    if (!IsStunned() && TimeSinceLastHit > PoiseRecoveryDelay)
+    {
+        CurrentPoise = FMath::Min(CurrentPoise + (PoiseRecoveryRate * DeltaTime), MaxPoise);
+    }
+    
+    TimeSinceLastHit += DeltaTime;
 }
 
-void UHealthComponent::ApplyDamage(float Amount, EDamageType DamageType, FVector HitLocation)
+void UHealthComponent::ApplyDamage(float Amount, EDamageType DamageType, FVector HitLocation,AActor*instigator)
 {
     // ✅ SAFETY CHECK 1: Validate component state
     if (!IsValidForOperations())
@@ -111,7 +120,6 @@ void UHealthComponent::ApplyDamage(float Amount, EDamageType DamageType, FVector
                     UE_LOG(LogTemp, Display, TEXT("🥋 Dojo: Player landed hit on enemy"));
                 }
             }
-        
             // Still broadcast for UI/animation feedback
             OnDamageTaken.Broadcast(ActualDamage, HitLocation);
            
@@ -294,9 +302,30 @@ void UHealthComponent::Respawn()
     Health = MaxHealth;
     StunDuration = 0.0f;
     InvincibilityTimer = 0.0f;
-
+    CurrentPoise = MaxPoise;
     UE_LOG(LogTemp, Warning, TEXT("✨ %s respawned to full health"), *GetOwner()->GetName());
 
     OnHealthChanged.Broadcast(Health, MaxHealth);
     
+}
+
+bool UHealthComponent::DamagePoise(float Amount)
+{
+    if (IsStunned()) return false; // Already broken
+
+    CurrentPoise -= Amount;
+    TimeSinceLastHit = 0.0f; // Reset regen timer
+
+    // CHECK FOR GUARD BREAK
+    if (CurrentPoise <= 0.0f)
+    {
+        CurrentPoise = 0.0f;
+        
+        // Trigger the Stun State immediately
+        StunDuration = 3.0f; // 3 Seconds to punish
+        // You might want to broadcast a delegate here like OnGuardBroken
+        return true; // Guard Broken!
+    }
+
+    return false; // Still standing
 }
