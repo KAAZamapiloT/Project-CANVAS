@@ -484,9 +484,9 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>&  RelevantMeshes,const
     // This splits the keywords into valid Meshes, Particles, and Textures
 
     // 2. PREPARE PAYLOADS 
-    ActiveMeshesContext=RelevantMeshes;
-	ActiveTexturesContext=RelevantTextures;
-	ActiveParticlesContext=RelevantParticles;
+    PrunedMeshesContext=RelevantMeshes;
+	PrunedTexturesContext=RelevantTextures;
+	PrunedParticlesContext=RelevantParticles;
     
     // 4. DISPATCH TO RESOLVERS (With Specific Lists)
     UE_LOG(LogTemp, Display, TEXT("🤖 Phase 2: Dispatching Specialists..."));

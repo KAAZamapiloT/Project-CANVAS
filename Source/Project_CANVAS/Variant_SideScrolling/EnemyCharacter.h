@@ -365,7 +365,18 @@ public:
     void ResetEnemyCombo();
 UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Dojo Stats")
     bool bShowDebug=false;
-    void TestDirectDamage(float Damage);
+    // ✅ ADD THESE (The New System)
+    bool bIsHitboxActive = false;
+    float CurrentHitDamage = 0.f;
+    
+    // Prevents multi-hits per swing
+    UPROPERTY()
+    TArray<AActor*> HitActors; 
 
-    FTimerHandle TempDamageTestHandle;
+    // Frame-perfect trace function
+    void PerformAttackTrace();
+
+    // Delegate Listener
+    UFUNCTION()
+    void OnHitWindowChanged(bool bActive, const FActionCommand& Command);
 };

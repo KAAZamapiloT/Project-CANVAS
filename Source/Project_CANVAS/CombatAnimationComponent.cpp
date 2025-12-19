@@ -133,7 +133,7 @@ void UCombatAnimationComponent::StartHitbox()
 
 void UCombatAnimationComponent::StopHitbox()
 {
-    OnHitWindowChanged.Broadcast(true, CachedCommand);
+    OnHitWindowChanged.Broadcast(false, CachedCommand);
     // UE_LOG(LogTemp, Log, TEXT("🛡️ Hitbox CLOSED"));
 }
 

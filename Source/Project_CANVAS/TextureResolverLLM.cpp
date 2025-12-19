@@ -10,6 +10,7 @@
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "AssetIndexer.h"
+#include "GenAIUtils.h"
 #include "SceneStateTracker.h"
 #include"RandomAssetSelector.h"
 #include"API_KEY.h"
@@ -575,16 +576,17 @@ void UTextureResolverLLM::OnResponseReceived(FHttpRequestPtr Request, FHttpRespo
 		}
 
 		// 7. Prune & Broadcast
+		FString CleanJSON=UGenAIUtils::CleanLLMResponse(LLMResponseString);
 		USceneStateTracker* Tracker = UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<USceneStateTracker>();
 		if (Tracker && Tracker->AssetIndexer)
 		{
 			FString Pruned = URandomAssetSelector::PruneTextureAssets(LLMResponseString, Tracker->AssetIndexer);
 			UE_LOG(LogTemp, Log, TEXT("TextureResolver: Success! Pruned Context size: %d"), Pruned.Len());
-			OnTexturePlanReady.Broadcast(LLMResponseString, Pruned);
+			OnTexturePlanReady.Broadcast(CleanJSON, Pruned);
 		}
 		else
 		{
-			OnTexturePlanReady.Broadcast(LLMResponseString, "");
+			OnTexturePlanReady.Broadcast(CleanJSON, "");
 		}
 	}
 	else

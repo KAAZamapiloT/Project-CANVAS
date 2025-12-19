@@ -71,29 +71,30 @@ void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FS
 
 void UIntentionResolverLLM::OnResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
-    // 1. Declare output arrays
+    // 1. Prepare Output Arrays
     TArray<FString> MeshKeywords;
     TArray<FString> TextureKeywords;
     TArray<FString> ParticleKeywords;
 
-    // 2. HTTP Validation
+    // 2. Network & Validity Checks
     if (!bWasSuccessful || !Response.IsValid())
     {
-        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: HTTP Request failed"));
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: HTTP Request Failed or Response Invalid."));
+        // Broadcast empty to unblock any waiting listeners
         OnIntentionReady.Broadcast(MeshKeywords, TextureKeywords, ParticleKeywords);
         return;
     }
 
     FString ResponseString = Response->GetContentAsString();
-    FString LLMResponseString = "";
+    FString ExtractedContent = "";
 
-    // 3. Parse API Response (Groq/OpenAI/Gemini Standard)
+    // 3. Parse the Outer JSON (API Wrapper for Groq/OpenAI/Gemini)
     TSharedPtr<FJsonObject> JsonObj;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseString);
 
     if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
     {
-        // TRY GROQ / OPENAI FORMAT
+        // --- STRATEGY A: OpenAI / Groq Format ---
         const TArray<TSharedPtr<FJsonValue>>* Choices;
         if (JsonObj->TryGetArrayField(TEXT("choices"), Choices) && Choices->Num() > 0)
         {
@@ -103,90 +104,104 @@ void UIntentionResolverLLM::OnResponseReceived(FHttpRequestPtr Request, FHttpRes
                 TSharedPtr<FJsonObject> Message = FirstChoice->GetObjectField(TEXT("message"));
                 if (Message.IsValid())
                 {
-                    LLMResponseString = Message->GetStringField(TEXT("content"));
+                    ExtractedContent = Message->GetStringField(TEXT("content"));
                 }
             }
         }
-        // TRY GEMINI FORMAT
+        // --- STRATEGY B: Google Gemini Format ---
         else 
         {
             const TArray<TSharedPtr<FJsonValue>>* Candidates;
             if (JsonObj->TryGetArrayField(TEXT("candidates"), Candidates) && Candidates->Num() > 0)
             {
-                TSharedPtr<FJsonObject> ContentObj = (*Candidates)[0]->AsObject()->GetObjectField(TEXT("content"));
-                const TArray<TSharedPtr<FJsonValue>>* Parts;
-                if (ContentObj->TryGetArrayField(TEXT("parts"), Parts) && Parts->Num() > 0)
+                TSharedPtr<FJsonObject> CandidateObj = (*Candidates)[0]->AsObject();
+                if (CandidateObj.IsValid())
                 {
-                    LLMResponseString = (*Parts)[0]->AsObject()->GetStringField(TEXT("text"));
+                    TSharedPtr<FJsonObject> ContentObj = CandidateObj->GetObjectField(TEXT("content"));
+                    if (ContentObj.IsValid())
+                    {
+                        const TArray<TSharedPtr<FJsonValue>>* Parts;
+                        if (ContentObj->TryGetArrayField(TEXT("parts"), Parts) && Parts->Num() > 0)
+                        {
+                            ExtractedContent = (*Parts)[0]->AsObject()->GetStringField(TEXT("text"));
+                        }
+                    }
                 }
             }
         }
     }
 
-    // 4. Validate Extraction
-    if (LLMResponseString.IsEmpty())
+    // 4. Content Validation
+    if (ExtractedContent.IsEmpty())
     {
-        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Failed to extract content from API Response"));
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Failed to extract valid content string from API response."));
+        UE_LOG(LogTemp, Warning, TEXT("Raw Response: %s"), *ResponseString);
         OnIntentionReady.Broadcast(MeshKeywords, TextureKeywords, ParticleKeywords);
         return;
     }
 
-    // 5. Clean JSON String (Find outer braces '{' and '}')
+    // 5. Clean Markdown & Extract Inner JSON
+    // LLMs often wrap output in ```json ... ``` or add preamble text.
+    // We strictly look for the first '{' and the last '}'.
     int32 StartIdx = -1; 
     int32 EndIdx = -1;
 
-    // [CHANGED] Search for '{' instead of '['
-    bool bFoundStart = LLMResponseString.FindChar(TEXT('{'), StartIdx);
-    bool bFoundEnd = LLMResponseString.FindLastChar(TEXT('}'), EndIdx);
+    bool bFoundStart = ExtractedContent.FindChar(TEXT('{'), StartIdx);
+    bool bFoundEnd = ExtractedContent.FindLastChar(TEXT('}'), EndIdx);
 
     if (bFoundStart && bFoundEnd && EndIdx > StartIdx)
     {
-        LLMResponseString = LLMResponseString.Mid(StartIdx, (EndIdx - StartIdx) + 1);
+        ExtractedContent = ExtractedContent.Mid(StartIdx, (EndIdx - StartIdx) + 1);
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Could not find valid JSON Object in text: %s"), *LLMResponseString);
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Content did not contain valid JSON brackets. Content: %s"), *ExtractedContent);
         OnIntentionReady.Broadcast(MeshKeywords, TextureKeywords, ParticleKeywords);
         return;
     }
 
-    // 6. Deserialize the JSON Object
+    // 6. Parse Inner JSON (The actual Keywords)
     TSharedPtr<FJsonObject> ResultObject;
-    TSharedRef<TJsonReader<>> ObjectReader = TJsonReaderFactory<>::Create(LLMResponseString);
+    TSharedRef<TJsonReader<>> InnerReader = TJsonReaderFactory<>::Create(ExtractedContent);
 
-    if (FJsonSerializer::Deserialize(ObjectReader, ResultObject) && ResultObject.IsValid())
+    if (FJsonSerializer::Deserialize(InnerReader, ResultObject) && ResultObject.IsValid())
     {
-        // Helper Lambda to safely extract arrays
-        auto ExtractKeywords = [&](const FString& FieldName, TArray<FString>& TargetArray)
+        // Helper Lambda: Extracts and Sanitizes (Trims whitespace)
+        auto ExtractCleanKeywords = [&](const FString& JsonKey, TArray<FString>& OutArray)
         {
             const TArray<TSharedPtr<FJsonValue>>* JsonArray;
-            if (ResultObject->TryGetArrayField(FieldName, JsonArray))
+            if (ResultObject->TryGetArrayField(JsonKey, JsonArray))
             {
                 for (const auto& Val : *JsonArray)
                 {
-                    FString Keyword = Val->AsString();
-                    if (!Keyword.IsEmpty())
+                    FString RawStr = Val->AsString();
+                    RawStr.TrimStartAndEndInline(); // Remove " space "
+                    if (!RawStr.IsEmpty())
                     {
-                        TargetArray.Add(Keyword);
+                        OutArray.Add(RawStr);
                     }
                 }
             }
         };
 
-        // Extract using keys from your new prompt schema
-        ExtractKeywords(TEXT("MeshKeywords"), MeshKeywords);
-        ExtractKeywords(TEXT("TextureKeywords"), TextureKeywords);
-        ExtractKeywords(TEXT("ParticleKeywords"), ParticleKeywords);
-        
-        UE_LOG(LogTemp, Log, TEXT("IntentionResolver: Success! Found Meshes: %d, Textures: %d, Particles: %d"), 
-            MeshKeywords.Num(), TextureKeywords.Num(), ParticleKeywords.Num());
+        // Extract using the exact keys defined in your Prompt
+        ExtractCleanKeywords(TEXT("MeshKeywords"), MeshKeywords);
+        ExtractCleanKeywords(TEXT("TextureKeywords"), TextureKeywords);
+        ExtractCleanKeywords(TEXT("ParticleKeywords"), ParticleKeywords);
 
-        // 7. Broadcast with 3 Params
+        // Success Log
+        UE_LOG(LogTemp, Log, TEXT("IntentionResolver: ✅ Parsed Successfully.")); 
+        UE_LOG(LogTemp, Log, TEXT("   - Meshes: %d"), MeshKeywords.Num());
+        UE_LOG(LogTemp, Log, TEXT("   - Textures: %d"), TextureKeywords.Num());
+        UE_LOG(LogTemp, Log, TEXT("   - Particles: %d"), ParticleKeywords.Num());
+
+        // 7. Broadcast Success
         OnIntentionReady.Broadcast(MeshKeywords, TextureKeywords, ParticleKeywords);
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Failed to deserialize final JSON Object: %s"), *LLMResponseString);
+        UE_LOG(LogTemp, Error, TEXT("IntentionResolver: Failed to deserialize Inner JSON. Bad format?"));
+        UE_LOG(LogTemp, Warning, TEXT("Cleaned Content: %s"), *ExtractedContent);
         OnIntentionReady.Broadcast(MeshKeywords, TextureKeywords, ParticleKeywords);
     }
 }

@@ -5,6 +5,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Json.h"
 #include "JsonUtilities.h"
+#include "GenAIUtils.h"
 #include"API_KEY.h"
 void UPaintingResolverLLM::RequestPaintingPlan(FString UserPrompt, UWorld* World, UAssetIndexer* Indexer)
 {
@@ -110,16 +111,17 @@ void UPaintingResolverLLM::OnPlanReceived(FHttpRequestPtr Request, FHttpResponse
             ContentStr = (*Choices)[0]->AsObject()->GetObjectField(TEXT("message"))->GetStringField(TEXT("content"));
         }
     }
-
+    FString CleanString=UGenAIUtils::CleanLLMResponse(ContentStr);
     // 2. Validate it has 'PaintingCommands'
-    if (ContentStr.Contains("PaintingCommands"))
+    if (CleanString.Contains("PaintingCommands"))
     {
         // Broadcast the raw JSON (GenAISystem will merge this into the Master Plan)
-        OnPaintingPlanReady.Broadcast(ContentStr, "Success");
+        OnPaintingPlanReady.Broadcast(CleanString, "Success");
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("PaintingResolver: Invalid JSON received: %s"), *ContentStr);
+        UE_LOG(LogTemp, Warning, TEXT("PaintingResolver: Invalid JSON received: %s"), *CleanString);
         OnPaintingPlanReady.Broadcast("{}", "Invalid Format");
     }
 }
+

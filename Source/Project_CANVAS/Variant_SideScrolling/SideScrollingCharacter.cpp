@@ -800,7 +800,7 @@ void ASideScrollingCharacter::PerformAttackTrace()
 {
 	FVector Start = GetActorLocation();
 	FVector Forward = GetActorForwardVector();
-	FVector End = Start + (Forward * 120.f); // 120 units forward reach
+	FVector End = Start + (Forward * 80.f); // 120 units forward reach
 
 	
 	TArray<FHitResult> OutHits;
@@ -812,7 +812,7 @@ void ASideScrollingCharacter::PerformAttackTrace()
 		GetWorld(), 
 		Start, 
 		End, 
-		60.f, // Radius
+		63.f, // Radius
 		UEngineTypes::ConvertToTraceType(ECC_Pawn),
 		false, 
 		Ignored,

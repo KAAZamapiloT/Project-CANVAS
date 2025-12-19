@@ -89,7 +89,11 @@ void AEnemyCharacter::BeginPlay()
 		CombatStateComponent->SetEnemy(PlayerCharacter);
 		UE_LOG(LogTemp, Display, TEXT("✅ [ENEMY %s] Opponent set: %s"), *GetName(), *PlayerCharacter->GetName());
 	}
-
+	
+		if (CombatAnimationComponent)
+		{
+			CombatAnimationComponent->OnHitWindowChanged.AddDynamic(this, &AEnemyCharacter::OnHitWindowChanged);
+		}
 	StartCombatBehavior();
 	UE_LOG(LogTemp, Warning, TEXT("✅ [ENEMY %s] Combat started (Pure C++ Mode)"), *GetName());
 }
@@ -103,6 +107,10 @@ void AEnemyCharacter::Tick(float DeltaTime)
 		return;
 	}
 	UpdateFacing(DeltaTime);
+	if (bIsHitboxActive)
+	{
+		PerformAttackTrace();
+	}
 }
 void AEnemyCharacter::UpdateFacing(float DeltaTime)
 {
@@ -676,20 +684,8 @@ void AEnemyCharacter::ExecuteMove(FName MoveName)
     // ═════════════════════════════════════════════════════════
   //  UE_LOG(LogTemp, Display, TEXT("⏲️ [ENEMY] Scheduling damage test in 0.4 seconds..."));
     
-    GetWorld()->GetTimerManager().SetTimer(
-        TempDamageTestHandle,
-        FTimerDelegate::CreateLambda([this, Command]() {
-            UE_LOG(LogTemp, Warning, TEXT("⚡ [ENEMY] DAMAGE TEST TRIGGERED!"));
-            TestDirectDamage(Command.DamageToApply);  // ✅ CORRECT FIELD NAME
-        }),
-        0.4f,  // Damage after 0.4 seconds (mid-animation)
-        false
-    );
-
-    // ═════════════════════════════════════════════════════════
-    // EXECUTE ANIMATION
-    // ═════════════════════════════════════════════════════════
-    CombatAnimationComponent->ExecuteActionCommand(Command);
+	CombatAnimationComponent->ExecuteActionCommand(Command);
+	
 
     // ═════════════════════════════════════════════════════════
     // SET COOLDOWN
@@ -702,90 +698,7 @@ void AEnemyCharacter::ExecuteMove(FName MoveName)
 }
 
 
-void AEnemyCharacter::TestDirectDamage(float Damage)
-{
-    if (!PlayerCharacter)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ [ENEMY] TestDirectDamage: No player"));
-        return;
-    }
 
-    // Hit detection
-    FVector Start = GetActorLocation();
-    FVector Forward = GetActorForwardVector();
-    FVector End = Start + (Forward * 200.f); // 200 units forward
-
-    FHitResult HitResult;
-    FCollisionQueryParams QueryParams;
-    QueryParams.AddIgnoredActor(this);
-    
-    bool bHit = GetWorld()->SweepSingleByChannel(
-        HitResult,
-        Start,
-        End,
-        FQuat::Identity,
-        ECC_Pawn,
-        FCollisionShape::MakeSphere(75.f),
-        QueryParams
-    );
-
-    if (bShowDebug)
-    {
-        // ✅ DRAW DEBUG SPHERE
-        DrawDebugSphere(
-            GetWorld(),
-            bHit ? HitResult.Location : End,
-            75.f,
-            12,
-            bHit ? FColor::Red : FColor::Green,
-            false,
-            2.0f,
-            0,
-            3.0f
-        );
-
-        // ✅ DRAW DEBUG LINE
-        DrawDebugLine(
-            GetWorld(),
-            Start,
-            End,
-            bHit ? FColor::Red : FColor::Yellow,
-            false,
-            2.0f,
-            0,
-            2.0f
-        );
-    }
-
-    if (bHit && HitResult.GetActor() == PlayerCharacter)
-    {
-        // ✅ HIT PLAYER!
-        if (IDamagable* DamagableTarget = Cast<IDamagable>(PlayerCharacter))
-        {
-            FDamageSpec DamageSpec;
-            DamageSpec.Amount = Damage;
-            DamageSpec.HitLocation = HitResult.ImpactPoint;
-            DamageSpec.HitNormal = HitResult.ImpactNormal;
-            DamageSpec.HitBone = HitResult.BoneName;
-            DamageSpec.InstigatorController = GetController();
-            DamageSpec.DamageCauser = this;
-            
-            IDamagable::Execute_ReceiveDamage(PlayerCharacter, DamageSpec);
-            
-            // ✅ NOTIFY GAME MODE
-        	
-            NotifyEnemyHit(Damage);
-            
-         //   UE_LOG(LogTemp, Error, TEXT("🎯🎯🎯 ENEMY HIT PLAYER for %.1f damage 🎯🎯🎯"), Damage);
-        }
-    }
-    else
-    {
-        // ✅ MISS
-        ResetEnemyCombo();
-        //UE_LOG(LogTemp, Error, TEXT("❌❌❌ ENEMY ATTACK MISSED ❌❌❌"));
-    }
-}
 //==============================================================================================
 // MONTAGE ENDED HANDLER
 //==============================================================================================
@@ -865,6 +778,68 @@ void AEnemyCharacter::ResetEnemyCombo()
 		if (ResetFunc)
 		{
 			GameMode->ProcessEvent(ResetFunc, nullptr);
+		}
+	}
+}
+
+// 1. Handle the Signal
+void AEnemyCharacter::OnHitWindowChanged(bool bActive, const FActionCommand& Command)
+{
+	bIsHitboxActive = bActive;
+
+	if (bActive)
+	{
+		CurrentHitDamage = Command.DamageToApply;
+		HitActors.Empty(); // Reset for new swing
+	}
+}
+
+// 2. Perform the Trace
+void AEnemyCharacter::PerformAttackTrace()
+{
+	FVector Start = GetActorLocation();
+	FVector Forward = GetActorForwardVector();
+	FVector End = Start + (Forward * 70.f); // slightly shorter reach than player?
+
+	TArray<FHitResult> OutHits;
+	TArray<AActor*> Ignored;
+	Ignored.Add(this); // Don't hit self
+
+	// Sphere Trace
+	bool bHit = UKismetSystemLibrary::SphereTraceMulti(
+		GetWorld(), Start, End, 35.f,
+		UEngineTypes::ConvertToTraceType(ECC_Pawn),
+		false, Ignored,
+		bShowDebug ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None,
+		OutHits, true
+	);
+
+	if (bHit)
+	{
+		for (const FHitResult& Hit : OutHits)
+		{
+			AActor* Target = Hit.GetActor();
+            
+			// Hit Player? Has Interface? Not hit yet?
+			if (Target && Target->Implements<UDamagable>() && !HitActors.Contains(Target))
+			{
+				// Verify it's not another enemy (friendly fire off)
+				if (Target->ActorHasTag("Enemy.Character")) continue;
+
+				HitActors.Add(Target);
+
+				// Apply Damage
+				FDamageSpec Spec;
+				Spec.Amount = CurrentHitDamage;
+				Spec.HitLocation = Hit.ImpactPoint;
+				Spec.HitNormal = Hit.ImpactNormal;
+				Spec.DamageCauser = this;
+				Spec.InstigatorController = GetController();
+
+				IDamagable::Execute_ReceiveDamage(Target, Spec);
+                
+				NotifyEnemyHit(CurrentHitDamage); 
+			}
 		}
 	}
 }
