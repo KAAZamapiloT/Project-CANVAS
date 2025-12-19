@@ -34,7 +34,15 @@ struct FParsedTextureInfo
     FString BaseName;
     ETextureMapType Type;
 };
+USTRUCT(BlueprintType)
+struct FDatabaseVocabulary
+{
+    GENERATED_BODY()
 
+    UPROPERTY(BlueprintReadOnly) TArray<FString> MeshTags;
+    UPROPERTY(BlueprintReadOnly) TArray<FString> TextureTags;
+    UPROPERTY(BlueprintReadOnly) TArray<FString> ParticleTags;
+};
 USTRUCT(BlueprintType)
 struct FSmartAssetSelection
 {
@@ -265,8 +273,10 @@ public:
 
 
     FParsedMeshInfo AnalyzeMeshName(const FString& MeshName);
-
-    FSmartAssetSelection ExpandKeywordsToCollection(const TArray<FString>& Keywords);
+    TArray<FString> FindTopKAssets(const TArray<FString>& SourceList, const TArray<FString>& Queries, int32 K);
+    FSmartAssetSelection ExpandKeywordsToCollection(const TArray<FString>& MeshKeywords, 
+    const TArray<FString>& TextureKeywords,
+    const TArray<FString>& ParticleKeywords,int num);
     /**
      * @brief Gets the names of all base materials found.
      * @return TArray of base material names.
@@ -442,6 +452,13 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "AssetIndexer|Debug")
     void PrintMeshVariants() const;
+
+    /**
+     * Extracts unique semantic tags separated by category.
+     * Used to build the "Menu" for the Intention Resolver LLM.
+     */
+    UFUNCTION(BlueprintCallable, Category = "GenAI|Indexing")
+    FDatabaseVocabulary GetCategorizedVocabulary();
     
     // ========================================
     // STATE
@@ -476,7 +493,8 @@ private:
     UPROPERTY()
     TArray<FString> MeshNameCache;
    
-    
+    // Helper to process a specific list
+    TArray<FString> ExtractKeywordsFromList(const TArray<FString>& AssetPaths, const TArray<FString>& PrefixesToRemove);
     // ========================================
     // OTHER ASSET STORAGE (EXISTING)
     // ========================================

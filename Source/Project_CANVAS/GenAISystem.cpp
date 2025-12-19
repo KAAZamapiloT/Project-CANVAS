@@ -57,10 +57,11 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 	CachedHistory = HistoryManager;
 
 // RESET
+	bHasSynthesized = false; 
 	bIsMeshReady = false;
-	
 	bIsTexReady = false;
 	bIsPaintingReady = false;
+	bIsIntentReady = false;
 	
 	DraftPaintingJson = "";
 	DraftMeshJson = "";
@@ -77,10 +78,11 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 	if (bIntent)
 
 	{
-		TArray<FString> AllMeshes=Tracker->AssetIndexer->GetAllMeshNames();
-		TArray<FString> AllTexture=Tracker->AssetIndexer->GetDiscoveredTextureNames();
-		TArray<FString> AllParticles=Tracker->AssetIndexer->GetDiscoveredParticleNames()
-;		IntentionL->RequestIntention(UserPrompt, AllMeshes, AllTexture, AllParticles);
+		FDatabaseVocabulary Vocabulary=Tracker->AssetIndexer->GetCategorizedVocabulary();
+		TArray<FString> AllMeshes=Vocabulary.MeshTags;
+		TArray<FString> AllTexture=Vocabulary.TextureTags;
+		TArray<FString> AllParticles=Vocabulary.ParticleTags;
+		IntentionL->RequestIntention(UserPrompt, AllMeshes, AllTexture, AllParticles);
 	}else
 	{
 		UE_LOG(LogTemp, Display, TEXT("🤖 Legacy Mode: Skipping Intention, calling all agents directly..."));
@@ -98,6 +100,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 			// If Painting Resolver is disabled, mark ready immediately to unblock synthesis
 			bIsPaintingReady = true; 
 		}
+		
 	}
 	
 	
@@ -225,34 +228,44 @@ void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponseP
 
 void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, USceneHistoryManager* HistoryManager)
 {
-	// 1. Safety Check: Gates
-	if (!bIsMeshReady)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: MESH FALSE!"));
-		return;
-	}
-	if (!bIsTexReady)
-	{
-		UE_LOG(LogTemp, Error, TEXT("❌ AttemptSynthesis Aborted: TEXTURE FALSE!"));
-		return;
-	}
-	// NEW: Wait for Painting
-	if (!bIsPaintingReady) 
-	{
-		// Optional: Log that we are waiting
-		UE_LOG(LogTemp, Display, TEXT("⏳ Waiting for Painting Agent..."));
-		return;
-	}
-	// 🆕 2. CHECK THE LATCH (Prevent Double-Firing)
+	// [FIX 1] The Gatekeeper: If we already built this request, STOP.
 	if (bHasSynthesized) 
 	{
-		UE_LOG(LogTemp, Warning, TEXT("🛑 GenAI: Synthesis blocked (Already running for this request)."));
+		UE_LOG(LogTemp, Warning, TEXT("🛑 GenAISystem: Synthesis triggered, but plan already built. Ignoring."));
 		return;
 	}
 
-	// 🆕 3. LOCK THE LATCH
-	bHasSynthesized = true;
+	// 2. Check Flags (Wait for everyone)
+	// Note: If you want Speed Mode to be "First Come First Served", keep your current logic.
+	// But for a stable scene, you MUST wait.
+	if (!bIsMeshReady)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⏳ Waiting for Mesh Agent..."));
+		return; 
+	}
 
+	if (!bIsTexReady)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⏳ Waiting for Texture Agent..."));
+		return; 
+	}
+
+	// 3. Optional: Painting Check
+	if (bPaintL && !bIsPaintingReady)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("⏳ Waiting for Painting Agent..."));
+		return;
+	}
+
+	// ==========================================
+	// 🚀 EXECUTION START
+	// ==========================================
+    
+	// [FIX 2] Close the Gate immediately
+	bHasSynthesized = true; 
+
+	UE_LOG(LogTemp, Log, TEXT("🚀 ALL SYSTEMS READY. Triggering Single Master Build..."));
+	
 	
 	// 2. Safety Check: World Context
 	// If the passed world is null, try to fall back to the System's world
@@ -280,11 +293,11 @@ void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, US
 	}
 	FString MasterPrompt;
 	// 4. Proceed
-	if (bSpeedMode){
+	if (!bSpeedMode){
 		MasterPrompt = ConstructMasterPrompt(UserPrompt, Tracker->AssetIndexer);
 	}else
 	{
-	MasterPrompt=ConstructPrunedMasterPrompt(UserPrompt,Tracker->AssetIndexer);
+		MasterPrompt=ConstructPrunedMasterPrompt(UserPrompt,Tracker->AssetIndexer);
 	}
 	
 	
@@ -441,9 +454,10 @@ void UGenAISystem::Deinitialize()
 void UGenAISystem::OnIntentionReady(const TArray<FString>&  RelevantMeshes,const TArray<FString>&  RelevantTextures,
 		const TArray<FString>&  RelevantParticles)
 {
+	// [ADD THIS LATCH]
 	if (bIsIntentReady)
 	{
-		UE_LOG(LogTemp, Display, TEXT("<UNK> OnIntentionReady: MULTIPLE INTETIONS"));
+		UE_LOG(LogTemp, Warning, TEXT("🛑 Duplicate Intention received. Dropping."));
 		return;
 	}
 	bIsIntentReady = true;
@@ -482,24 +496,26 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>&  RelevantMeshes,const
 
     // 1. SMART EXPANSION (The New Robust Logic)
     // This splits the keywords into valid Meshes, Particles, and Textures
-
+	FSmartAssetSelection PrunedContext = Tracker->AssetIndexer->ExpandKeywordsToCollection(RelevantMeshes
+		, RelevantTextures, RelevantParticles,100);
     // 2. PREPARE PAYLOADS 
-    PrunedMeshesContext=RelevantMeshes;
-	PrunedTexturesContext=RelevantTextures;
-	PrunedParticlesContext=RelevantParticles;
+    PrunedMeshesContext=PrunedContext.Meshes;
+	PrunedTexturesContext=PrunedContext.Textures;
+	PrunedParticlesContext=PrunedContext.Particles;
     
     // 4. DISPATCH TO RESOLVERS (With Specific Lists)
     UE_LOG(LogTemp, Display, TEXT("🤖 Phase 2: Dispatching Specialists..."));
     UE_LOG(LogTemp, Display, TEXT("   • Mesh Context: %d items"), RelevantMeshes.Num());
     UE_LOG(LogTemp, Display, TEXT("   • Texture Context: %d items"), RelevantTextures.Num());
-
+	// Inject Data Directly
+	PrunedMeshList = FString::Join( PrunedMeshesContext, TEXT(","));
+	PrunedTextureList = FString::Join(PrunedTexturesContext, TEXT(","));
+	
 	if (bSpeedMode)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("⚡ SPEED MODE: Bypassing Specialists."));
 
-		// Inject Data Directly
-		PrunedMeshList = FString::Join(RelevantMeshes, TEXT(","));
-		PrunedTextureList = FString::Join(RelevantTextures, TEXT(","));
+		
         
 		// Clear drafts to force Master to generate fresh JSON
 		DraftMeshJson = ""; 
@@ -1256,6 +1272,7 @@ FString UGenAISystem::ConstructPrunedMasterPrompt(FString UserPrompt, class UAss
         "═══════════════════════════════════════════════════════════════\n\n"
         
         "Your JSON will be directly parsed by C++ into FEnhancedScenePlan.\n"
+        "Try to Apply Texture modifications plans to all tags discovered\n"
         "Invalid JSON = system crash. Invalid assets = runtime errors.\n"
         "Precision and validation are critical.\n\n"
         

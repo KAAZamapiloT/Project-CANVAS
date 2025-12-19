@@ -253,7 +253,7 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
 		return;
 	}
     USceneStateTracker* Tracker=GameInstance->GetSubsystem<USceneStateTracker>();
-	if (!Tracker&&!Tracker->GenAISystem)
+	if (!Tracker||Tracker->GenAISystem)
 	{
 		UE_LOG(LogTemp, Error, TEXT("PlayerController: GenAISystem is NULL!"));
 		return;

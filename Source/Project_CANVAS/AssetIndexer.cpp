@@ -1009,6 +1009,74 @@ FString UAssetIndexer::ResolveMeshToFullPath(const FString& SearchName)
     return TEXT("");
 }
 
+// AssetIndexer.cpp
+
+// 1. The Helper Function (clean logic)
+TArray<FString> UAssetIndexer::ExtractKeywordsFromList(const TArray<FString>& AssetPaths, const TArray<FString>& PrefixesToRemove)
+{
+    TSet<FString> UniqueWords;
+
+    for (const FString& Path : AssetPaths)
+    {
+        FString Name = FPaths::GetBaseFilename(Path);
+
+        // A. Remove Prefixes
+        for (const FString& Prefix : PrefixesToRemove)
+        {
+            if (Name.StartsWith(Prefix))
+            {
+                Name.RemoveFromStart(Prefix);
+                break; 
+            }
+        }
+
+        // B. Tokenize by Underscore
+        TArray<FString> Tokens;
+        Name.ParseIntoArray(Tokens, TEXT("_"), true);
+
+        // C. Filter and Format
+        for (FString& Token : Tokens)
+        {
+            if (Token.IsNumeric()) continue;
+            if (Token.Len() < 3) continue;
+            
+            // Skip resolution/LOD tags
+            if (Token.Contains("4k") || Token.Contains("LOD") || Token.Contains("Low") || Token.Contains("Poly")) continue;
+
+            // Convert to TitleCase (e.g. "scifi" -> "SciFi")
+            FString ProperWord = Token.Left(1).ToUpper() + Token.Mid(1).ToLower();
+            UniqueWords.Add(ProperWord);
+        }
+    }
+
+    TArray<FString> Result = UniqueWords.Array();
+    Result.Sort();
+    return Result;
+}
+
+// 2. The Main Function
+FDatabaseVocabulary UAssetIndexer::GetCategorizedVocabulary()
+{
+    FDatabaseVocabulary Vocab;
+
+    // --- Meshes ---
+    // Remove SM_ (Static Mesh), SK_ (Skeletal), S_ (Static)
+    Vocab.MeshTags = ExtractKeywordsFromList(DiscoveredStaticMeshNames, { TEXT("SM_"), TEXT("SK_"), TEXT("S_") });
+
+    // --- Textures ---
+    // Remove T_ (Texture), M_ (Material), MI_ (Instance)
+    // Note: Use DiscoveredTextureNames or MaterialDatabase keys
+    Vocab.TextureTags = ExtractKeywordsFromList(DiscoveredTextureNames, { TEXT("T_"), TEXT("M_"), TEXT("MI_"), TEXT("Tex_") });
+
+    // --- Particles ---
+    // Remove P_ (Particle), NS_ (Niagara System), FX_
+    Vocab.ParticleTags = ExtractKeywordsFromList(DiscoveredParticleNames, { TEXT("P_"), TEXT("NS_"), TEXT("FX_") });
+
+    UE_LOG(LogTemp, Log, TEXT("AssetIndexer: Extracted Vocab -> Meshes: %d, Textures: %d, FX: %d"), 
+        Vocab.MeshTags.Num(), Vocab.TextureTags.Num(), Vocab.ParticleTags.Num());
+
+    return Vocab;
+}
 
 TArray<FString> UAssetIndexer::GetSmartMeshList() const
 {
@@ -1158,48 +1226,77 @@ TArray<FString> UAssetIndexer::ExpandKeywordsToPaths(const TArray<FString>& Keyw
     return Result;
 }
 
-FSmartAssetSelection UAssetIndexer::ExpandKeywordsToCollection(const TArray<FString>& Keywords)
+FSmartAssetSelection UAssetIndexer::ExpandKeywordsToCollection(
+    const TArray<FString>& MeshKeywords, 
+    const TArray<FString>& TextureKeywords,
+    const TArray<FString>& ParticleKeywords,
+    int32 MaxResultsPerCategory)
 {
     FSmartAssetSelection Selection;
-    TSet<FString> MeshSet;
-    TSet<FString> ParticleSet;
-    TSet<FString> TextureSet;
 
-    for (const FString& RawKeyword : Keywords)
+    // 1. Resolve Meshes 
+    // We iterate through the list properly instead of joining with "/"
+    Selection.Meshes = FindTopKAssets(DiscoveredStaticMeshNames, MeshKeywords, MaxResultsPerCategory);
+
+    // 2. Resolve Textures
+    // Note: LLM needs Material Base Names (e.g., "M_Concrete") to put in the JSON
+    TArray<FString> AllMaterialKeys;
+    MaterialDatabase.GetKeys(AllMaterialKeys);
+    Selection.Textures = FindTopKAssets(AllMaterialKeys, TextureKeywords, MaxResultsPerCategory);
+
+    // 3. Resolve Particles
+    Selection.Particles = FindTopKAssets(DiscoveredParticleNames, ParticleKeywords, MaxResultsPerCategory);
+
+    UE_LOG(LogTemp, Log, TEXT("🎯 Indexer expanded %d categories into [%d Meshes, %d Textures, %d FX]"), 
+        MeshKeywords.Num(), Selection.Meshes.Num(), Selection.Textures.Num(), Selection.Particles.Num());
+
+    return Selection;
+}
+
+TArray<FString> UAssetIndexer::FindTopKAssets(const TArray<FString>& SourceList, const TArray<FString>& Queries, int32 K)
+{
+    if (Queries.Num() == 0) return {};
+
+    struct FScoredAsset {
+        FString Path;
+        int32 Score;
+        bool operator<(const FScoredAsset& Other) const { return Score > Other.Score; } // Sort descending
+    };
+
+    TArray<FScoredAsset> Candidates;
+
+    for (const FString& AssetPath : SourceList)
     {
-        FString Key = RawKeyword.ToLower().TrimStartAndEnd();
-        if (Key.IsEmpty()) continue;
+        FString Name = FPaths::GetBaseFilename(AssetPath).ToLower();
+        int32 TotalScore = 0;
 
-        // A. MESHES: Get FULL PATHS (Resolver needs specific assets to spawn)
-        if (VariantGroups.Contains(Key))
+        for (const FString& Query : Queries)
         {
-            MeshSet.Append(VariantGroups[Key].VariantPaths);
-        }
-        
-        // B. PARTICLES: Get FULL PATHS
-        for (const FString& PPath : DiscoveredParticleNames)
-        {
-            if (FPaths::GetBaseFilename(PPath).ToLower().Contains(Key))
-                ParticleSet.Add(PPath);
+            FString LowQuery = Query.ToLower().TrimStartAndEnd();
+            if (LowQuery.IsEmpty()) continue;
+
+            // WEIGHTING SYSTEM
+            if (Name.Equals(LowQuery)) TotalScore += 100;       // Exact match (highest priority)
+            else if (Name.StartsWith(LowQuery)) TotalScore += 40; // Prefix match
+            else if (Name.Contains(LowQuery)) TotalScore += 20;   // Substring match
         }
 
-        // C. TEXTURES: Get BASE NAMES ONLY (Resolver needs "Wood", not "/Game/Textures/Wood_N")
-        if (TextureVariantGroups.Contains(Key))
+        if (TotalScore > 0)
         {
-            // If it's a family like "Wood", add specific bases "Wood_Oak", "Wood_Pine"
-            TextureSet.Append(TextureVariantGroups[Key].MaterialBaseNames);
-        }
-        else
-        {
-            // If it's a direct base name match
-            if (MaterialDatabase.Contains(Key)) TextureSet.Add(Key);
+            // Brevity Bonus: Prefer "SM_Door" over "SM_Door_Frame_Extra_Long_01"
+            TotalScore -= (Name.Len() / 2); 
+            Candidates.Add({AssetPath, TotalScore});
         }
     }
 
-    Selection.Meshes = MeshSet.Array();
-    Selection.Particles = ParticleSet.Array();
-    Selection.Textures = TextureSet.Array();
-    return Selection;
+    Candidates.Sort();
+
+    TArray<FString> Results;
+    for (int32 i = 0; i < FMath::Min(Candidates.Num(), K); i++)
+    {
+        Results.Add(Candidates[i].Path);
+    }
+    return Results;
 }
 bool UAssetIndexer::IsNumberedVariant(const FString& Name, int32& OutVariantNumber)
 {

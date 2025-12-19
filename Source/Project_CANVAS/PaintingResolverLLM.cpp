@@ -13,7 +13,7 @@ void UPaintingResolverLLM::RequestPaintingPlan(FString UserPrompt, UWorld* World
 
     // 1. Get Spatial Context (The Canvas)
     USceneStateTracker* Tracker = UGameplayStatics::GetGameInstance(World)->GetSubsystem<USceneStateTracker>();
-    FString BoundsContext = "Default 2000x2000"; 
+    FString BoundsContext = "Default 5000x5000"; 
     
     if (Tracker && Tracker->LocationEngine)
     {

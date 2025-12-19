@@ -4,6 +4,7 @@
 #include "Interfaces/IHttpResponse.h"
 #include "Json.h"
 #include "JsonUtilities.h"
+#include"GenAIUtils.h"
 #include "API_KEY.h"
 
 void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FString>& AllMeshes,const TArray<FString>& AllTextures
@@ -16,7 +17,7 @@ void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FS
     FString ParticleString = FString::Join(AllParticles, TEXT(", "));
     // STRICT JSON PROMPT
     FString Prompt = FString::Printf(TEXT(
-        "ROLE: Semantic Asset Filter.\n"
+        "ROLE: Semantic Asset Tags Filter.\n"
         "TASK: Analyze the USER REQUEST and select the most relevant asset categories from the AVAILABLE LIST.\n"
         "OUTPUT FORMAT: A JSON object with a single key 'categories' containing the list of strings.\n\n"
         
@@ -54,7 +55,7 @@ void UIntentionResolverLLM::RequestIntention(FString UserPrompt, const TArray<FS
     // ✅ FIX: Added response_format and improved string escaping logic
     FString JsonPayload = FString::Printf(TEXT(
         "{"
-        "\"model\": \"llama-3.3-70b-versatile\","
+        "\"model\": \"openai/gpt-oss-120b\","
         "\"messages\": ["
         "  {\"role\": \"system\", \"content\": \"You are a strict JSON API. Output only valid JSON.\"},"
         "  {\"role\": \"user\", \"content\": \"%s\"}"
@@ -82,6 +83,7 @@ void UIntentionResolverLLM::OnResponseReceived(FHttpRequestPtr Request, FHttpRes
         UE_LOG(LogTemp, Error, TEXT("IntentionResolver: HTTP Request Failed or Response Invalid."));
         // Broadcast empty to unblock any waiting listeners
         OnIntentionReady.Broadcast(MeshKeywords, TextureKeywords, ParticleKeywords);
+        
         return;
     }
 
@@ -159,6 +161,7 @@ void UIntentionResolverLLM::OnResponseReceived(FHttpRequestPtr Request, FHttpRes
         OnIntentionReady.Broadcast(MeshKeywords, TextureKeywords, ParticleKeywords);
         return;
     }
+    
 
     // 6. Parse Inner JSON (The actual Keywords)
     TSharedPtr<FJsonObject> ResultObject;

@@ -116,7 +116,7 @@ private:
 	UPROPERTY(EditAnywhere)
 	bool bPaintL=true;
 	UPROPERTY(EditAnywhere)
-	bool bIntent=false;
+	bool bIntent=true;
 
 	UPROPERTY(EditAnywhere)
 	bool bIsIntentReady=false;

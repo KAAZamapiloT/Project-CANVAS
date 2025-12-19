@@ -24,14 +24,6 @@ class PROJECT_CANVAS_API UJsonParser : public UObject
     GENERATED_BODY()
     
 public:
-    /**
-     * Validate JSON schema before parsing
-     * 
-     * @param JsonContext - Raw JSON string to validate
-     * @return true if schema is valid, false otherwise
-     */
-    UFUNCTION(BlueprintCallable)
-    static bool bScehmaValidation(FString& JsonContext);
     
     /**
      * Parse JSON string into FEnhancedScenePlan
