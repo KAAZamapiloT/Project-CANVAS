@@ -31,49 +31,46 @@ FEnhancedScenePlan UJsonParser::CreatePlan(FString JsonContext)
             UE_LOG(LogTemp, Display, TEXT("PARSER: ThemeName: %s"), *Plan.ThemeName);
         }
 
-        if (JsonObject->HasField(TEXT("LayoutCommands")))
+        // Identify which key the LLM used (Handles 'Layout' and legacy 'Painting' keys)
+        FString LayoutKey = JsonObject->HasField(TEXT("LayoutCommands")) ? TEXT("LayoutCommands") : TEXT("PaintingCommands");
+
+        if (JsonObject->HasField(LayoutKey))
         {
             const TArray<TSharedPtr<FJsonValue>>* LayoutArray;
-            if (JsonObject->TryGetArrayField(TEXT("LayoutCommands"), LayoutArray))
+            if (JsonObject->TryGetArrayField(LayoutKey, LayoutArray))
             {
                 for (const TSharedPtr<FJsonValue>& Val : *LayoutArray)
                 {
-                    const TSharedPtr<FJsonObject>* CmdObj;
-                    if (Val->TryGetObject(CmdObj))
+                    TSharedPtr<FJsonObject> CmdObj = Val->AsObject();
+                    if (CmdObj.IsValid())
                     {
                         FPaintingCommand Cmd;
-                        
-                        // 1. Basic Identifiers
-                        Cmd.Tool = (*CmdObj)->GetStringField(TEXT("Tool"));
-                        Cmd.TargetZone = (*CmdObj)->GetStringField(TEXT("TargetZone"));
-                        Cmd.Archetype = (*CmdObj)->GetStringField(TEXT("Archetype")); // e.g. "Wall"
-                        
-                        // 2. Style Object (Visuals)
+                        CmdObj->TryGetStringField(TEXT("Tool"), Cmd.Tool);
+                        CmdObj->TryGetStringField(TEXT("TargetZone"), Cmd.TargetZone);
+                        CmdObj->TryGetStringField(TEXT("Archetype"), Cmd.Archetype);
+
                         const TSharedPtr<FJsonObject>* StyleObj;
-                        if ((*CmdObj)->TryGetObjectField(TEXT("Style"), StyleObj))
+                        if (CmdObj->TryGetObjectField(TEXT("Style"), StyleObj))
                         {
-                            Cmd.Style.MeshKeyword = (*StyleObj)->GetStringField(TEXT("MeshKeyword"));
-                            Cmd.Style.MaterialKeyword = (*StyleObj)->GetStringField(TEXT("MaterialKeyword"));
+                            (*StyleObj)->TryGetStringField(TEXT("MeshKeyword"), Cmd.Style.MeshKeyword);
+                            (*StyleObj)->TryGetStringField(TEXT("MaterialKeyword"), Cmd.Style.MaterialKeyword);
                         }
 
-                        // 3. Settings Map (Dynamic Parameters)
                         const TSharedPtr<FJsonObject>* SettingsObj;
-                        if ((*CmdObj)->TryGetObjectField(TEXT("Settings"), SettingsObj))
+                        if (CmdObj->TryGetObjectField(TEXT("Settings"), SettingsObj))
                         {
                             for (auto& Elem : (*SettingsObj)->Values)
                             {
-                                // Only accept numbers for settings
                                 if (Elem.Value->Type == EJson::Number)
                                 {
                                     Cmd.Settings.Add(Elem.Key, Elem.Value->AsNumber());
                                 }
                             }
                         }
-                        
                         Plan.LayoutCommands.Add(Cmd);
                     }
                 }
-                UE_LOG(LogTemp, Display, TEXT("PARSER: Parsed %d Layout Commands"), Plan.LayoutCommands.Num());
+                UE_LOG(LogTemp, Display, TEXT("PARSER: Parsed %d commands from key '%s'"), Plan.LayoutCommands.Num(), *LayoutKey);
             }
         }
         // Parse Environment object

@@ -67,6 +67,29 @@ FString URandomAssetSelector::PruneMeshAssets(const FString& JsonPlan, UAssetInd
                 }
             }
         }
+
+    	// ✅ FIX: Scan LayoutCommands for MeshKeywords
+    	const TArray<TSharedPtr<FJsonValue>>* Layouts;
+    	if (JsonObj->TryGetArrayField(TEXT("LayoutCommands"), Layouts))
+    	{
+    		for (const auto& Val : *Layouts)
+    		{
+    			TSharedPtr<FJsonObject> Item = Val->AsObject();
+    			if (Item.IsValid())
+    			{
+    				const TSharedPtr<FJsonObject>* StyleObj;
+    				if (Item->TryGetObjectField(TEXT("Style"), StyleObj))
+    				{
+    					FString MeshKey;
+    					if ((*StyleObj)->TryGetStringField(TEXT("MeshKeyword"), MeshKey))
+    					{
+    						TArray<FString> RealMeshes = Indexer->GetTopKMeshesForQuery(MeshKey, 5);
+    						ValidatedAssets.Append(RealMeshes);
+    					}
+    				}
+    			}
+    		}
+    	}
     }
     
     return FString::Join(ValidatedAssets.Array(), TEXT("\", \""));
@@ -107,6 +130,29 @@ FString URandomAssetSelector::PruneTextureAssets(const FString& JsonPlan, UAsset
                                 if (Mat.Contains(TEXT("Grid")) || Mat.Contains(TEXT("_Normal"))) continue;
 								ValidatedMaterials.Add(Mat);
 							}
+						}
+					}
+				}
+			}
+		}
+
+		// ✅ FIX: Scan LayoutCommands for MaterialKeywords
+		const TArray<TSharedPtr<FJsonValue>>* Layouts;
+		if (JsonObj->TryGetArrayField(TEXT("LayoutCommands"), Layouts))
+		{
+			for (const auto& Val : *Layouts)
+			{
+				TSharedPtr<FJsonObject> Item = Val->AsObject();
+				if (Item.IsValid())
+				{
+					const TSharedPtr<FJsonObject>* StyleObj;
+					if (Item->TryGetObjectField(TEXT("Style"), StyleObj))
+					{
+						FString MatKey;
+						if ((*StyleObj)->TryGetStringField(TEXT("MaterialKeyword"), MatKey))
+						{
+							TArray<FString> RealMats = Indexer->GetTopKTexturesForQuery(MatKey, 5);
+							ValidatedMaterials.Append(RealMats);
 						}
 					}
 				}

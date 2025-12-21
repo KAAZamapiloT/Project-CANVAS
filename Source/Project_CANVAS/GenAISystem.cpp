@@ -19,9 +19,30 @@
 #include "ToolContextInterfaces.h"
 #include "Components/Image.h"
 
+// Top of GenAISystem.cpp
+TWeakObjectPtr<UGenAISystem> UGenAISystem::GlobalActiveAuthority = nullptr;
+bool UGenAISystem::bIsGlobalPipelineBusy = false;
+int32 UGenAISystem::GlobalSequenceNonce = 0;
 
 void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,USceneHistoryManager* HistoryManager)
 {
+	// 1. Check Global Busy Flag (Shared by everyone)
+	if (bIsGlobalPipelineBusy) {
+		UE_LOG(LogTemp, Warning, TEXT("🛑 GenAI BLOCKED: Another build is already in progress."));
+		return;
+	}
+
+	// 2. Claim Authority
+	// The first instance to hit this line becomes the 'Alpha'
+	GlobalActiveAuthority = this;
+	bIsGlobalPipelineBusy = true;
+    
+	// 3. Update Sequence (The Nonce)
+	GlobalSequenceNonce++;
+	MyActiveRequestID = GlobalSequenceNonce;
+
+	UE_LOG(LogTemp, Warning, TEXT("🚀 GenAI START: Instance [%p] taking Authority. ID: %d"), this, MyActiveRequestID);
+
 	
 	UWorld* SafeWorld = WorldContext;
 	if (!SafeWorld)
@@ -110,12 +131,18 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 
 void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
+
+	bIsGlobalPipelineBusy = false;
 	if (!bWasSuccessful || !Response.IsValid())
     {
         UE_LOG(LogTemp, Error, TEXT("Ollama request failed!"));
         return;
     }
-    
+	
+
+	UE_LOG(LogTemp, Display, TEXT("🔓 GenAI: Pipeline Released. Ready for next command."));
+
+	
 	FString ResponseString = Response->GetContentAsString();
 	UE_LOG(LogTemp, Warning, TEXT("GenAI: RAW GROQ RESPONSE:\n%s"), *ResponseString);
     
@@ -200,21 +227,28 @@ void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponseP
 		FEnhancedScenePlan MasterPlan = UJsonParser::CreatePlan(LlmResponseString);
 
 		// =========================================================
-		// 🛡️ FALLBACK LOGIC (The Fix)
+		// 🛡️ REFINED VALIDATION LOGIC
 		// =========================================================
-    
-		// Logic: If the Master returned 0 spawns, but we KNOW the Mesh Agent found some...
-		// Then the Master failed (hallucinated "nothing to do").
-		bool bMasterFailed = (MasterPlan.SpawnRequest.Num() == 0 && !DraftMeshJson.IsEmpty() && DraftMeshJson.Len() > 10);
+
+		// A plan is valid if it has manual spawns OR procedural layout commands.
+		bool bMasterHasContent = (MasterPlan.SpawnRequest.Num() > 0 || MasterPlan.LayoutCommands.Num() > 0);
+
+		// We only consider it a failure if the Master returned nothing but our agents had ideas.
+		bool bMasterFailed = (!bMasterHasContent && (!DraftMeshJson.IsEmpty() || !DraftPaintingJson.IsEmpty()));
 
 		if (bMasterFailed)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("⚠️ GenAI: Master returned EMPTY spawns! Reverting to Draft Plans..."));
+			UE_LOG(LogTemp, Warning, TEXT("⚠️ GenAI: Master returned no content! Reverting to Draft Plans..."));
 			ExecuteFallbackPlan();
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("✅ GenAI: Master Success! Spawning %d items."), MasterPlan.SpawnRequest.Num());
+			// Auto-enable spawning if we have layout commands
+			if (MasterPlan.LayoutCommands.Num() > 0) MasterPlan.bSpawnActors = true;
+
+			UE_LOG(LogTemp, Warning, TEXT("✅ GenAI: Master Success! Spawning %d items, %d Layout Cmds."), 
+				MasterPlan.SpawnRequest.Num(), MasterPlan.LayoutCommands.Num());
+        
 			OnThemeDataReady.Broadcast(MasterPlan, LastUserPrompt);
 		}
     }
@@ -341,6 +375,7 @@ void UGenAISystem::AttemptSynthesis(FString UserPrompt, UWorld* WorldContext, US
 
 void UGenAISystem::OnMeshPlanReady(FString Plan, FString Choices)
 {
+	if (!IsAuthorized()) return; // ✅ CRITICAL LATCH
 	if (bIsMeshReady) return;
 	DraftMeshJson = Plan;
 	PrunedMeshList = Choices;
@@ -368,6 +403,7 @@ void UGenAISystem::OnMeshPlanReady(FString Plan, FString Choices)
 
 void UGenAISystem::OnTexturePlanReady(FString TexturePlan, FString Choices)
 {
+	if (!IsAuthorized()) return; // ✅ CRITICAL LATCH
 	if (bIsTexReady) return;
 	DraftTexJson = TexturePlan;
 	PrunedTextureList = Choices;
@@ -393,6 +429,7 @@ void UGenAISystem::OnTexturePlanReady(FString TexturePlan, FString Choices)
 
 void UGenAISystem::OnPaintingPlanReady(FString Plan, FString Summary)
 {
+	if (!IsAuthorized()) return; // ✅ CRITICAL LATCH
 	if (bIsPaintingReady){
 		return;
 	}
@@ -454,6 +491,9 @@ void UGenAISystem::Deinitialize()
 void UGenAISystem::OnIntentionReady(const TArray<FString>&  RelevantMeshes,const TArray<FString>&  RelevantTextures,
 		const TArray<FString>&  RelevantParticles)
 {
+	// [THE LATCH] Only the Alpha instance with the correct ID proceeds.
+	if (!IsAuthorized()) return;
+	
 	// [ADD THIS LATCH]
 	if (bIsIntentReady)
 	{
@@ -484,12 +524,14 @@ void UGenAISystem::OnIntentionReady(const TArray<FString>&  RelevantMeshes,const
 
 	if (!TargetWorld)
 	{
+		bIsGlobalPipelineBusy = false; // ✅ UNLOCK ON FAILURE
 		UE_LOG(LogTemp, Error, TEXT("❌ GenAISystem: CRITICAL - Lost World Context. Aborting Pipeline."));
 		return;
 	}
     USceneStateTracker* Tracker = UGameplayStatics::GetGameInstance(GetWorld())->GetSubsystem<USceneStateTracker>();
     if (!Tracker || !Tracker->AssetIndexer)
     {
+    	bIsGlobalPipelineBusy = false; // ✅ UNLOCK ON FAILURE
         UE_LOG(LogTemp, Error, TEXT("GenAISystem: Tracker/Indexer invalid in OnIntentionReady"));
         return;
     }
@@ -1325,16 +1367,19 @@ void UGenAISystem::ExecuteFallbackPlan()
 	// 3. NEW: Recover Painting Data
 	if (!DraftPaintingJson.IsEmpty())
 	{
-		FEnhancedScenePlan PaintP = UJsonParser::CreatePlan(DraftPaintingJson);
-		BackupPlan.LayoutCommands = PaintP.LayoutCommands;
-		UE_LOG(LogTemp, Display, TEXT("   + Recovered %d Layout Commands"), BackupPlan.LayoutCommands.Num());
+		// We use the parser to convert the specialist's JSON into a plan struct
+		FEnhancedScenePlan PaintingDraft = UJsonParser::CreatePlan(DraftPaintingJson);
+		BackupPlan.LayoutCommands = PaintingDraft.LayoutCommands;
+		UE_LOG(LogTemp, Display, TEXT("   + Recovered %d Layout Commands from Draft"), BackupPlan.LayoutCommands.Num());
 	}
 	// 4. ✅ APPLY SMART RANDOM LIGHTING
 	// This makes the fallback feel like a feature, not a bug.
 	ApplySmartFallbackLighting(BackupPlan, LastUserPrompt);
 	
-	BackupPlan.ThemeName = "Fallback: " + LastUserPrompt;
+	// Set flags so the SceneStateTracker knows there is work to do
 	BackupPlan.bSpawnActors = (BackupPlan.SpawnRequest.Num() > 0 || BackupPlan.LayoutCommands.Num() > 0);
+	BackupPlan.bModifyEnvironment = true; 
+	BackupPlan.bModifyProps = (BackupPlan.Props.Num() > 0);
     
 	// Broadcast the Frankenstein plan
 	OnThemeDataReady.Broadcast(BackupPlan, LastUserPrompt);
@@ -1421,4 +1466,15 @@ void UGenAISystem::ApplySmartFallbackLighting(FEnhancedScenePlan& Plan, const FS
     }
 
     UE_LOG(LogTemp, Display, TEXT("🎨 GenAI: Applied Fallback Lighting Theme: %d"), (int32)SelectedTheme);
+}
+
+bool UGenAISystem::IsAuthorized() 
+{
+	// 1. If I'm not the designated Alpha, I am not authorized.
+	if (GlobalActiveAuthority.Get() != this) return false;
+    
+	// 2. If my ID doesn't match the latest global sequence, I am a 'Ghost'.
+	if (MyActiveRequestID != GlobalSequenceNonce) return false;
+
+	return true;
 }

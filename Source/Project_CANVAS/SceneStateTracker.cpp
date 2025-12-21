@@ -12,6 +12,11 @@ void USceneStateTracker::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize( Collection);
 
+    // 2. LATCH: Ensure we don't run twice for the same game session.
+    static bool bIsLogicActive = false;
+    if (bIsLogicActive) return;
+    bIsLogicActive = true;
+    
     UE_LOG(LogTemp, Warning, TEXT(""));
     UE_LOG(LogTemp, Warning, TEXT("╔═══════════════════════════════════════════╗"));
     UE_LOG(LogTemp, Warning, TEXT("║  🚀 SceneStateTracker::Init()             ║"));
@@ -98,7 +103,7 @@ void USceneStateTracker::Initialize(FSubsystemCollectionBase& Collection)
             LocationEngine->ConfigureLLMFallback(
                 Endpoint,
                 TEXT(""), // No Auth Header for Gemini
-                TEXT("gemini-2.5-flash-lite")
+                TEXT("gemini-2.5-flash")
             );
 
         }
@@ -470,17 +475,19 @@ void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResul
         }
         
         // B. Emergency Fallback
+        // 1. If AI failed (404), use the Semantic Zone but add HEAVY JITTER
         if (Req.SpawnLocation.IsNearlyZero())
         {
-            FSpawnLocation FallbackLoc = LocationEngine->FindValidSpawnLocation(
-                Req.LocationName, 
-                Req.ClearanceRadius
-            );
+            FSpawnLocation Zone = LocationEngine->FindValidSpawnLocation(Req.LocationName, Req.ClearanceRadius);
+            Req.SpawnLocation = Zone.WorldPosition;
+
+            // ✅ THE STACKING FIX: Add a random offset based on the object's size
+            float Jitter = FMath::Max(Req.ClearanceRadius, 200.0f);
+            Req.SpawnLocation.X += FMath::RandRange(-Jitter, Jitter);
+            Req.SpawnLocation.Y += FMath::RandRange(-Jitter, Jitter);
             
-            Req.SpawnLocation = FallbackLoc.WorldPosition;
-            // Jitter
-            Req.SpawnLocation.X += FMath::RandRange(-50.0f, 50.0f);
-            Req.SpawnLocation.Y += FMath::RandRange(-50.0f, 50.0f);
+            // ✅ THE ROTATION FIX: Give everything a random yaw so they don't look like clones
+            Req.Rotation.Yaw = FMath::RandRange(0.f, 360.f);
         }
 
         // Mark location as used

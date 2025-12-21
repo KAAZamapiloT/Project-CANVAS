@@ -69,7 +69,7 @@ FString UPaintingResolverLLM::CreateDirectorPayload(FString UserPrompt, UAssetIn
         
         "--- OUTPUT SCHEMA (JSON) ---\\n"
         "{\\n"
-        "  \\\"PaintingCommands\\\": [\\n"
+        "  \\\"LayoutCommands\\\": [\\n"
         "    {\\n"
         "      \\\"Tool\\\": \\\"SCATTER_CLUSTER\\\",\\n"
         "      \\\"Archetype\\\": \\\"Prop\\\",\\n"
@@ -111,11 +111,12 @@ void UPaintingResolverLLM::OnPlanReceived(FHttpRequestPtr Request, FHttpResponse
             ContentStr = (*Choices)[0]->AsObject()->GetObjectField(TEXT("message"))->GetStringField(TEXT("content"));
         }
     }
-    FString CleanString=UGenAIUtils::CleanLLMResponse(ContentStr);
-    // 2. Validate it has 'PaintingCommands'
-    if (CleanString.Contains("PaintingCommands"))
+    // PaintingResolverLLM.cpp - OnPlanReceived
+    FString CleanString = UGenAIUtils::CleanLLMResponse(ContentStr);
+
+    // ✅ FIX: Change "PaintingCommands" to "LayoutCommands"
+    if (CleanString.Contains("LayoutCommands")) 
     {
-        // Broadcast the raw JSON (GenAISystem will merge this into the Master Plan)
         OnPaintingPlanReady.Broadcast(CleanString, "Success");
     }
     else

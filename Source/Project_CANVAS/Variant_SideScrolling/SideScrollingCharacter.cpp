@@ -485,6 +485,7 @@ void ASideScrollingCharacter::StartBlocking()
 		bIsBlocking = true;
 		BlockStartTime = GetWorld()->GetTimeSeconds();
 		// Optional: Play "Hold Block" animation here
+		
 	}
 }
 

@@ -165,76 +165,36 @@ void ASideScrollingPlayerController::OnPawnDestroyed(AActor* DestroyedActor)
 
 void ASideScrollingPlayerController::TogglePromptUI()
 {
-	UE_LOG(LogProject_CANVAS, Warning, TEXT("TogglePromptUI Function Called"));
-
-	// --- HIDE ---
-	if (PromptWidgetInstance && PromptWidgetInstance->IsInViewport())
+	// 1. Create once, bind once
+	if (!PromptWidgetInstance)
 	{
-		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Hiding widget."));
-		PromptWidgetInstance->RemoveFromParent();
-		FInputModeGameOnly InputMode;
-		SetInputMode(InputMode);
-		bShowMouseCursor = false;
-		UGameplayStatics::SetGamePaused(GetWorld(), false);
-		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Game Unpaused."));
-		PromptWidgetInstance = nullptr;
-	}
-	// --- SHOW ---
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Showing widget."));
-		if (!PromptWidgetClass)
-		{
-			UE_LOG(LogTemp, Error, TEXT("TogglePromptUI: PromptWidgetClass is NULL! Check Player Controller Blueprint defaults."));
-			return;
-		}
-
 		PromptWidgetInstance = CreateWidget<UUserWidget>(this, PromptWidgetClass);
-		if (!PromptWidgetInstance)
-		{
-			UE_LOG(LogTemp, Error, TEXT("TogglePromptUI: CreateWidget FAILED!"));
-			return;
-		}
-
+		if (!PromptWidgetInstance) return;
 		PromptWidgetInstance->AddToViewport();
-		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Widget added to viewport."));
 
-		FInputModeUIOnly InputMode;
-		SetInputMode(InputMode);
-		bShowMouseCursor = true;
-		UGameplayStatics::SetGamePaused(GetWorld(), true);
-		UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Game Paused."));
-
-		// Bind UI Event
+		// BIND ONLY HERE - inside the creation block
 		FMulticastDelegateProperty* DispatcherProp = FindFieldChecked<FMulticastDelegateProperty>(
-			PromptWidgetInstance->GetClass(), FName("OnPromptSubmitted")
-		);
-		if (DispatcherProp)
-		{
+			PromptWidgetInstance->GetClass(), FName("OnPromptSubmitted"));
+		if (DispatcherProp) {
 			FScriptDelegate Delegate;
 			Delegate.BindUFunction(this, FName("OnPromptSubmitted"));
 			DispatcherProp->AddDelegate(Delegate, PromptWidgetInstance);
-			UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Successfully bound OnPromptSubmitted event."));
 		}
-		else
-		{
-			UE_LOG(LogProject_CANVAS, Error, TEXT("TogglePromptUI: Could not find Event Dispatcher 'OnPromptSubmitted' on widget class %s"), *PromptWidgetClass->GetName());
-		}
+	}
 
-		// Set Focus
-		if (UEditableText* TextBox = Cast<UEditableText>(PromptWidgetInstance->GetWidgetFromName(TEXT("InputTextBox"))))
-		{
-			UE_LOG(LogTemp, Log, TEXT("TogglePromptUI: Setting keyboard focus to InputTextBox."));
-			TextBox->SetKeyboardFocus();
-			InputMode.SetWidgetToFocus(TextBox->TakeWidget());
-			SetInputMode(InputMode);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("TogglePromptUI: Could not find EditableText named 'InputTextBox'."));
-			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-			SetInputMode(InputMode);
-		}
+	// 2. Simply Toggle Visibility
+	ESlateVisibility NewVisibility = PromptWidgetInstance->IsVisible() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible;
+	PromptWidgetInstance->SetVisibility(NewVisibility);
+    
+	// 3. Update Input Mode
+	if (NewVisibility == ESlateVisibility::Visible) {
+		SetInputMode(FInputModeUIOnly());
+		bShowMouseCursor = true;
+		UGameplayStatics::SetGamePaused(GetWorld(), true);
+	} else {
+		SetInputMode(FInputModeGameOnly());
+		bShowMouseCursor = false;
+		UGameplayStatics::SetGamePaused(GetWorld(), false);
 	}
 }
 
@@ -253,7 +213,7 @@ void ASideScrollingPlayerController::OnPromptSubmitted(const FString& PromptText
 		return;
 	}
     USceneStateTracker* Tracker=GameInstance->GetSubsystem<USceneStateTracker>();
-	if (!Tracker||Tracker->GenAISystem)
+	if (!Tracker||!Tracker->GenAISystem)
 	{
 		UE_LOG(LogTemp, Error, TEXT("PlayerController: GenAISystem is NULL!"));
 		return;

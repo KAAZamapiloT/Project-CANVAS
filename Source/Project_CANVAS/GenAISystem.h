@@ -125,11 +125,29 @@ private:
 	 * A way to bypass mutistage sytem and go to a legacy one with minor optmizations
 	 */
 	UPROPERTY(EditAnywhere)
-	bool bSpeedMode=false;
+	bool bSpeedMode=true;
 public:
 
 FORCEINLINE void SetSpeedMode(bool SpeedMode){ bSpeedMode=SpeedMode; }
 
 FORCEINLINE bool GetSpeedMode() const{ return bSpeedMode;}
-	
+
+private:
+	// --- THE GLOBAL LOCKS (Static = Shared by all instances) ---
+	/** Only ONE instance can be the 'Alpha'. Others will stay silent. */
+	static TWeakObjectPtr<UGenAISystem> GlobalActiveAuthority;
+    
+	/** Prevents any instance from starting a new build if one is running. */
+	static bool bIsGlobalPipelineBusy;
+    
+	/** Incremented every prompt. Kills late-arriving 'Ghost' responses. */
+	static int32 GlobalSequenceNonce;
+
+	// --- INSTANCE DATA (Unique to each object) ---
+    
+	/** The ID of the request this specific object is currently handling. */
+	int32 MyActiveRequestID = -1;
+
+	/** Internal check to see if this instance is allowed to speak. */
+	bool IsAuthorized();
 };
