@@ -150,4 +150,6 @@ private:
 
 	/** Internal check to see if this instance is allowed to speak. */
 	bool IsAuthorized();
-};
+public:
+   void ResetPipeline();
+}

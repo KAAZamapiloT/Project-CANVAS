@@ -288,6 +288,11 @@ void USceneStateTracker::OnAssetsLoaded()
     PendingPlan = FEnhancedScenePlan();
     UE_LOG(LogTemp, Warning, TEXT("✅ Plan execution complete"));
     UE_LOG(LogTemp, Warning, TEXT(""));
+    // ✅ FINALLY release the lock here, after the world is actually built
+    if (GenAISystem)
+    GenAISystem->ResetPipeline(); 
+    UE_LOG(LogTemp, Warning, TEXT("✅ Build Complete: Pipeline Unlocked."));
+    UE_LOG(LogTemp, Display, TEXT("🔓 GenAI: Pipeline Released. Ready for next command."));
 }
 
 
@@ -473,7 +478,20 @@ void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResul
             Req.Rotation = FRotator(0, Res.RotationYaw, 0);
             if (Res.Scale > 0.1f) Req.Scale = FVector(Res.Scale);
         }
-        
+        // 1. THE HEALER: Resolve Keyword -> Real Path
+        // We ask the indexer: "I have the word 'Wall', what is its actual file path?"
+        FString ResolvedPath = AssetIndexer->ResolveMeshToFullPathWithVariants(Req.AssetPath);
+
+        if (!ResolvedPath.IsEmpty())
+        {
+            // Update the request with the REAL path so SceneBuilder can use it later
+            Req.AssetPath = ResolvedPath; 
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Finalize: Could not find any mesh for keyword '%s'"), *Req.AssetPath);
+            continue; // Skip this asset, it doesn't exist in our database
+        }
         // B. Emergency Fallback
         // 1. If AI failed (404), use the Semantic Zone but add HEAVY JITTER
         if (Req.SpawnLocation.IsNearlyZero())

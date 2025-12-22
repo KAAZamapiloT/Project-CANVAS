@@ -43,7 +43,11 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 
 	UE_LOG(LogTemp, Warning, TEXT("🚀 GenAI START: Instance [%p] taking Authority. ID: %d"), this, MyActiveRequestID);
 
-	
+	if (!WorldContext)
+	{
+		ResetPipeline();
+		return;
+	}
 	UWorld* SafeWorld = WorldContext;
 	if (!SafeWorld)
 	{
@@ -54,6 +58,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 	if (!SafeWorld)
 	{
 		UE_LOG(LogTemp, Error, TEXT("GenAISystem: Cannot resolve a valid World Context!"));
+		ResetPipeline();
 		return;
 	}
 	// 1. Get the GameInstance and AssetIndexer
@@ -62,6 +67,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
     if (!GameInstance || !Tracker->AssetIndexer)
     {
         UE_LOG(LogTemp, Error, TEXT("GenAISystem: Cannot find GameInstance or AssetIndexer!"));
+    	ResetPipeline();
         return;
     }
 
@@ -69,6 +75,7 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
     if (!Tracker->AssetIndexer->IsScanComplete())
     {
         UE_LOG(LogTemp, Warning, TEXT("GenAISystem: Asset scan is not complete. Please wait."));
+    	ResetPipeline();
         return;
     }
 
@@ -132,15 +139,16 @@ void UGenAISystem::RequestSceneChange(FString UserPrompt,UWorld* WorldContext,US
 void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
 {
 
-	bIsGlobalPipelineBusy = false;
+	
 	if (!bWasSuccessful || !Response.IsValid())
     {
+		ResetPipeline();
         UE_LOG(LogTemp, Error, TEXT("Ollama request failed!"));
         return;
     }
 	
 
-	UE_LOG(LogTemp, Display, TEXT("🔓 GenAI: Pipeline Released. Ready for next command."));
+	
 
 	
 	FString ResponseString = Response->GetContentAsString();
@@ -627,7 +635,8 @@ FString UGenAISystem::ConstructMasterPrompt(
     FString Payload = FString::Printf(TEXT(
         "ROLE: You are the Senior Level Architect for a high-end Unreal Engine 5 project.\n"
         "OBJECTIVE: Review, validate, and integrate proposals from two/three junior specialists into a cohesive final scene plan.\n\n"
-        
+        "You are a Level Designer. You must select items from the 'Valid Static Meshes' list.\n"
+        "Put the name of the item into the 'AssetPath' field. I will resolve the path for you.\n"
         "═══════════════════════════════════════════════════════════════\n"
         "CLIENT ORIGINAL REQUEST\n"
         "═══════════════════════════════════════════════════════════════\n"
@@ -1477,4 +1486,18 @@ bool UGenAISystem::IsAuthorized()
 	if (MyActiveRequestID != GlobalSequenceNonce) return false;
 
 	return true;
+}
+
+void UGenAISystem::ResetPipeline()
+{
+	bIsGlobalPipelineBusy = false;
+	bIsMeshReady = false;
+	bIsTexReady = false;
+	bIsPaintingReady = false;
+	bIsIntentReady = false;
+    
+	// Clear the drafts to prevent data leaking into the next prompt
+	DraftMeshJson = "";
+	DraftTexJson = "";
+	DraftPaintingJson = "";
 }
