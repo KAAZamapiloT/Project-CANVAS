@@ -98,7 +98,7 @@ void USceneStateTracker::Initialize(FSubsystemCollectionBase& Collection)
             FString GeminiKey = KeyHandler.GetGeminiKey(); // Ensure API_KEY class has this!
             
             // Gemini uses key in URL. Leave APIKey param empty.
-            FString Endpoint = FString::Printf(TEXT("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s"), *GeminiKey);
+            FString Endpoint = FString::Printf(TEXT("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s"), *GeminiKey);
             
             LocationEngine->ConfigureLLMFallback(
                 Endpoint,
@@ -456,131 +456,135 @@ void USceneStateTracker::ResolveEnvironmentAssets(FEnhancedScenePlan& Plan)
 
 void USceneStateTracker::FinalizeSceneBuild(const TMap<FString, FResolutionResult>& AsyncResults)
 {
-    UE_LOG(LogTemp, Display, TEXT("🔄 Phase 2: Finalizing Scene Plan & Starting Load..."));
+    UE_LOG(LogTemp, Display, TEXT("🔄 Phase 2: Starting Intelligence Bridge (Async)..."));
 
-    // ---------------------------------------------------------
-    // STEP 1: APPLY AI RESULTS & FALLBACKS (MATH ONLY)
-    // ---------------------------------------------------------
+    // 1. DATA SAFETY: Create a local copy of the plan for the background task.
+    // This prevents "Data Races" if a user sends a new prompt while this is running.
+    FEnhancedScenePlan TaskPlan = PendingPlan; 
     bool bApiFailed = (AsyncResults.Num() == 0);
-    if (bApiFailed && PendingPlan.SpawnRequest.Num() > 0)
+
+    // ---------------------------------------------------------
+    // STEP A: BACKGROUND THREAD - HEAVY DATA RESOLUTION
+    // ---------------------------------------------------------
+    // We resolve strings, keywords, and material sets on a worker thread.
+    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, TaskPlan, AsyncResults, bApiFailed]() mutable
     {
-        UE_LOG(LogTemp, Error, TEXT("⚠️ Async Results Empty. Running Fallback Logic."));
-    }
-
-    // Iterate through requests to set locations (Pure Logic, No Loading)
-    for (FSpawnRequest& Req : PendingPlan.SpawnRequest)
-    {
-        // A. Apply AI Result
-        if (!bApiFailed && AsyncResults.Contains(Req.ObjectName))
+        // 1. Resolve Mesh Keywords to Real Paths
+        for (FSpawnRequest& Req : TaskPlan.SpawnRequest)
         {
-            const FResolutionResult& Res = AsyncResults[Req.ObjectName];
-            Req.SpawnLocation = Res.Location;
-            Req.Rotation = FRotator(0, Res.RotationYaw, 0);
-            if (Res.Scale > 0.1f) Req.Scale = FVector(Res.Scale);
-        }
-        // 1. THE HEALER: Resolve Keyword -> Real Path
-        // We ask the indexer: "I have the word 'Wall', what is its actual file path?"
-        FString ResolvedPath = AssetIndexer->ResolveMeshToFullPathWithVariants(Req.AssetPath);
-
-        if (!ResolvedPath.IsEmpty())
-        {
-            // Update the request with the REAL path so SceneBuilder can use it later
-            Req.AssetPath = ResolvedPath; 
-        }
-        else
-        {
-            UE_LOG(LogTemp, Error, TEXT("Finalize: Could not find any mesh for keyword '%s'"), *Req.AssetPath);
-            continue; // Skip this asset, it doesn't exist in our database
-        }
-        // B. Emergency Fallback
-        // 1. If AI failed (404), use the Semantic Zone but add HEAVY JITTER
-        if (Req.SpawnLocation.IsNearlyZero())
-        {
-            FSpawnLocation Zone = LocationEngine->FindValidSpawnLocation(Req.LocationName, Req.ClearanceRadius);
-            Req.SpawnLocation = Zone.WorldPosition;
-
-            // ✅ THE STACKING FIX: Add a random offset based on the object's size
-            float Jitter = FMath::Max(Req.ClearanceRadius, 200.0f);
-            Req.SpawnLocation.X += FMath::RandRange(-Jitter, Jitter);
-            Req.SpawnLocation.Y += FMath::RandRange(-Jitter, Jitter);
-            
-            // ✅ THE ROTATION FIX: Give everything a random yaw so they don't look like clones
-            Req.Rotation.Yaw = FMath::RandRange(0.f, 360.f);
+            FString ResolvedPath = AssetIndexer->ResolveMeshToFullPathWithVariants(Req.AssetPath);
+            if (!ResolvedPath.IsEmpty()) Req.AssetPath = ResolvedPath;
         }
 
-        // Mark location as used
-        LocationEngine->SetLocationOccupied(Req.LocationName, true);
-    }
-
-
-    // TRACK 2: PARTICLE LOCATIONS (New Code - Add this block)
-    for (FSpawnRequest& Req : PendingPlan.ParticleSpawns)
-    {
-        if (!bApiFailed && AsyncResults.Contains(Req.ObjectName))
+        // 2. Resolve Texture Keywords to Real Material Sets
+        for (FPropsModification& Prop : TaskPlan.Props)
         {
-            const FResolutionResult& Res = AsyncResults[Req.ObjectName];
-            Req.SpawnLocation = Res.Location;
-            // Particles usually ignore rotation/scale from AI, but you can apply if you want
+            FTextureSet ResolvedSet = AssetIndexer->ResolveTextureFromName(Prop.Texture.BaseColorPath);
+            if (!ResolvedSet.BaseColorPath.IsEmpty()) Prop.Texture = ResolvedSet;
         }
-        
-        // Fallback for Particles
-        if (Req.SpawnLocation.IsNearlyZero())
+
+        // ---------------------------------------------------------
+        // STEP B: GAME THREAD - PHYSICS & SPATIAL LOGIC
+        // ---------------------------------------------------------
+        // We jump back to the Game Thread because World/Physics queries are NOT thread-safe.
+        AsyncTask(ENamedThreads::GameThread, [this, TaskPlan, AsyncResults, bApiFailed]() mutable
         {
-            FSpawnLocation FallbackLoc = LocationEngine->FindValidSpawnLocation(Req.LocationName, Req.ClearanceRadius);
-            Req.SpawnLocation = FallbackLoc.WorldPosition;
-        }
-    }
+            // Iterate backwards so we can safely remove items converted to patterns
+            for (int32 i = TaskPlan.SpawnRequest.Num() - 1; i >= 0; i--)
+            {
+                FSpawnRequest& Req = TaskPlan.SpawnRequest[i];
+
+                if (!bApiFailed && AsyncResults.Contains(Req.ObjectName))
+                {
+                    const FResolutionResult& Res = AsyncResults[Req.ObjectName];
+
+                    // ✅ ALGORITHMIC DELEGATION: Check if AI chose a pattern (Circle, Grid, etc.)
+                    // PatternID: 1=Circle, 2=Grid, 3=Scatter
+                    if (Res.PatternID > 0)
+                    {
+                        // 1. Convert the AI's "Pattern Choice" into a Layout Command
+                        FPaintingCommand AIChosenPattern;
+                        AIChosenPattern.Tool = (Res.PatternID == 1) ? TEXT("CIRCLE") : (Res.PatternID == 2) ? TEXT("GRID") : TEXT("SCATTER");
+                        AIChosenPattern.TargetZone = Req.LocationName;
+                        AIChosenPattern.Style.MeshKeyword = Req.AssetPath; 
+                        AIChosenPattern.Settings.Add(TEXT("Radius"), Res.PatternRadius);
+                        AIChosenPattern.Settings.Add(TEXT("Count"), 8.0f); // Default for AI patterns
     
-    // ---------------------------------------------------------
-    // STEP 2: GATHER ASSETS (SOFT REFERENCES)
-    // ---------------------------------------------------------
-    TArray<FSoftObjectPath> AssetsToLoad;
-    for (const FSpawnRequest& Req : PendingPlan.SpawnRequest)
-    {
-        if (!Req.AssetPath.IsEmpty())
-        {
-            // Convert string path to Soft Object Path
-            AssetsToLoad.Add(FSoftObjectPath(Req.AssetPath));
-        }
-    }
-    if (!PendingPlan.Environment.PostProcessingName.IsEmpty())
-    {
-        AssetsToLoad.Add(FSoftObjectPath(PendingPlan.Environment.PostProcessingName));
-    }
+                        // 2. Add it to the plan
+                        TaskPlan.LayoutCommands.Add(AIChosenPattern);
+    
+                        // 3. Remove the single spawn so we don't have a duplicate at the center
+                        TaskPlan.SpawnRequest.RemoveAt(i); 
+                        continue;
+                    }
 
-    for (const FPropsModification& Prop : PendingPlan.Props)
-    {
-        auto AddIfValid = [&](const FString& Path) {
-            if (!Path.IsEmpty()) AssetsToLoad.Add(FSoftObjectPath(Path));
-        };
+                    // Apply AI Coordinates for standard single placement
+                    Req.SpawnLocation = Res.Location;
+                    Req.Rotation = FRotator(0, Res.RotationYaw, 0);
+                    if (Res.Scale > 0.1f) Req.Scale = FVector(Res.Scale);
+                }
+                
+                // ✅ PHYSICS FALLBACK: Safe here on Game Thread
+                if (Req.SpawnLocation.IsNearlyZero())
+                {
+                    FSpawnLocation Zone = LocationEngine->FindValidSpawnLocation(Req.LocationName, Req.ClearanceRadius);
+                    Req.SpawnLocation = Zone.WorldPosition;
 
-        AddIfValid(Prop.Texture.BaseColorPath);
-        AddIfValid(Prop.Texture.NormalPath);
-        AddIfValid(Prop.Texture.RoughnessPath);
-        AddIfValid(Prop.Texture.MetallicPath);
-        AddIfValid(Prop.Texture.AOPath);
-    }
-    // ---------------------------------------------------------
-    // STEP 3: REQUEST ASYNC LOAD
-    // ---------------------------------------------------------
-    if (AssetsToLoad.Num() > 0 && AssetIndexer)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("⏳ Requesting Async Load for %d Assets..."), AssetsToLoad.Num());
-        
-        // This is non-blocking. The game continues running.
-        // When finished, it calls OnAssetsLoaded().
-        AssetIndexer->RequestAsyncLoad(
-            AssetsToLoad, 
-            FStreamableDelegate::CreateUObject(this, &USceneStateTracker::OnAssetsLoaded)
-        );
-    }
-    else
-    {
-        // If there's nothing to load (or Indexer is missing), build immediately
-        OnAssetsLoaded();
-    }
+                    // Add Jitter/Rotation to prevent stacking
+                    float Jitter = FMath::Max(Req.ClearanceRadius, 200.0f);
+                    Req.SpawnLocation.X += FMath::RandRange(-Jitter, Jitter);
+                    Req.SpawnLocation.Y += FMath::RandRange(-Jitter, Jitter);
+                    Req.Rotation.Yaw = FMath::RandRange(0.f, 360.f);
+                }
+
+                LocationEngine->SetLocationOccupied(Req.LocationName, true);
+            }
+
+            // Calculate the procedural locations for the new LayoutCommands
+            ResolveProceduralLayouts(TaskPlan);
+
+            // ---------------------------------------------------------
+            // STEP C: ASSET GATHERING & FINAL LOAD
+            // ---------------------------------------------------------
+            TArray<FSoftObjectPath> AssetsToLoad;
+            
+            // Gather Meshes
+            for (const FSpawnRequest& Req : TaskPlan.SpawnRequest)
+            {
+                if (Req.AssetPath.StartsWith(TEXT("/"))) AssetsToLoad.Add(FSoftObjectPath(Req.AssetPath));
+            }
+
+            // Gather Layout Mesh Paths
+            for (const FPaintingCommand& Cmd : TaskPlan.LayoutCommands)
+            {
+                if (Cmd.ResolvedMeshPath.StartsWith(TEXT("/"))) AssetsToLoad.Add(FSoftObjectPath(Cmd.ResolvedMeshPath));
+            }
+
+            // Gather Texture Sets
+            for (const FPropsModification& Prop : TaskPlan.Props)
+            {
+                auto AddIfValid = [&](const FString& Path) { if (Path.StartsWith(TEXT("/"))) AssetsToLoad.Add(FSoftObjectPath(Path)); };
+                AddIfValid(Prop.Texture.BaseColorPath);
+                AddIfValid(Prop.Texture.NormalPath);
+                AddIfValid(Prop.Texture.RoughnessPath);
+            }
+
+            // Finalize global state and trigger the async loader
+            PendingPlan = TaskPlan;
+
+            if (AssetsToLoad.Num() > 0 && AssetIndexer)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("⏳ Phase 2 Complete. Loading %d Assets..."), AssetsToLoad.Num());
+                AssetIndexer->RequestAsyncLoad(AssetsToLoad, 
+                    FStreamableDelegate::CreateUObject(this, &USceneStateTracker::OnAssetsLoaded));
+            }
+            else
+            {
+                OnAssetsLoaded();
+            }
+        });
+    });
 }
-
 
 void USceneStateTracker::OnActorSpawned(AActor* NewActor, const FString& ObjectName)
 {

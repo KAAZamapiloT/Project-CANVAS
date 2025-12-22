@@ -27,6 +27,14 @@ struct FResolutionResult
 
     UPROPERTY()
     float Scale = 1.0f;
+
+    // ✅ NEW: Layout Pattern Support
+    // 0 = Single, 1 = Circle, 2 = Grid, 3 = Scatter
+    UPROPERTY()
+    int32 PatternID = 0;
+
+    UPROPERTY()
+    float PatternRadius = 0.0f;
 };
 
 typedef TMap<FString, FResolutionResult> FLocationMap;

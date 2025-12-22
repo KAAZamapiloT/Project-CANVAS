@@ -76,6 +76,16 @@ void USceneBuilder::BuildScene(const FEnhancedScenePlan& Plan, UWorld* WorldCont
     {
         UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Skipping props (bModifyProps = false)"));
     }
+    if (Plan.LayoutCommands.Num()>0)
+    {
+        UE_LOG(LogTemp, Display, TEXT("SceneBuilder: Applying layout"));
+        // ✅ FIX: Call your layout execution function
+        for (const FPaintingCommand& Cmd : Plan.LayoutCommands)
+        {
+            ExecuteLayoutCommand(Cmd, WorldContext);
+        }
+        
+    }
     if (Plan.bSpawnActors)
     {
         if (Plan.SpawnRequest.Num()>0)

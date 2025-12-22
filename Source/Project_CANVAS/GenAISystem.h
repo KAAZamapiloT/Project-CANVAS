@@ -152,4 +152,5 @@ private:
 	bool IsAuthorized();
 public:
    void ResetPipeline();
-}
+	
+};
