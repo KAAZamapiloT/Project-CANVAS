@@ -212,8 +212,23 @@ void ULocationResolverLLM::ResolveBatchLocationsAsync(
                             
                             double Scale = 1.0;
                             if (VecObj->TryGetNumberField(TEXT("scale"), Scale)) Item.Scale = (float)Scale;
-
+                         
                             Results.Add(Elem.Key, Item);
+                            // ✅ ADD THESE LINES to bridge to your Struct
+ double PatternVal = 0;
+ if (VecObj->TryGetNumberField(TEXT("pattern"), PatternVal)) {
+     Item.PatternID = static_cast<int32>(PatternVal);
+ }
+
+ double RadiusVal = 0;
+ if (VecObj->TryGetNumberField(TEXT("radius"), RadiusVal)) {
+     Item.PatternRadius = static_cast<float>(RadiusVal);
+ }
+
+ double ScaleVal = 1.0;
+ if (VecObj->TryGetNumberField(TEXT("scale"), ScaleVal)) {
+     Item.Scale = static_cast<float>(ScaleVal);
+ }
                         }
                     }
                 }
@@ -286,30 +301,29 @@ FString ULocationResolverLLM::BuildBatchPrompt(const TArray<FSpawnRequest>& Requ
     FString ItemList = "";
     for (const FSpawnRequest& Req : Requests)
     {
-        ItemList += FString::Printf(TEXT("- ID: \"%s\", Preference: \"%s\", Radius: %.0f\n"), 
+        ItemList += FString::Printf(TEXT("- ID: \"%s\", PreferredZone: \"%s\", MinClearance: %.0f\n"), 
             *Req.ObjectName, *Req.LocationName, Req.ClearanceRadius);
     }
 
     return FString::Printf(TEXT(
-        "Layout Task. Assign valid world coordinates (x,y,z), rotation (yaw), and scale.\n"
-        "SCENE CONTEXT:\n%s\n\n"
+        "ROLE: Senior Spatial Engineer\n"
+        "CONTEXT:\n%s\n\n"
+        "TASK: Assign coordinates for these objects. Use 'pattern' to define group logic.\n"
         "OBJECTS TO PLACE:\n%s\n"
-        "Instead of random coordinates, use 'LocationOffset' to define a Layout Pattern ID:\n"
-        "   - [0, 0, 0] = Single Center Item\n"
-        "   - [1, radius, count] = Circle Formation\n"
-        "   - [2, width, depth] = Grid Formation\n"
-        "   - [3, distance, 0] = Scatter Randomly in Zone (Clutter)\n"
+        "PATTERN DEFINITIONS:\n"
+        "   - pattern 0: Single Item (Use x,y,z as exact location)\n"
+        "   - pattern 1: Circle (Use x,y,z as center, 'radius' is circle size)\n"
+        "   - pattern 2: Grid (Use x,y,z as center, 'radius' is spacing)\n"
+        "   - pattern 3: Scatter (Use x,y,z as center, 'radius' is spread)\n\n"
         "RULES:\n"
-        "1. Respect Bounds. Avoid overlaps.\n"
-        "2. Scale: 1.0 is standard. 0.5 is half size.\n"
-        "3. RETURN VALID JSON MAP:\n"
+        "1. Avoid the DANGER ZONE provided in the context.\n"
+        "2. RETURN VALID JSON MAP:\n"
         "{\n"
-        "  \"ObjID\": { \"x\": 100, \"y\": 200, \"z\": 0, \"yaw\": 90, \"scale\": 1.0 },\n"
-        "  \"ObjID_2\": { \"x\": -500, \"y\": 50, \"z\": 0, \"yaw\": 0, \"scale\": 0.5 }\n"
+        "  \"ObjID\": { \"x\": 100, \"y\": 200, \"z\": 0, \"yaw\": 90, \"pattern\": 0, \"radius\": 0 },\n"
+        "  \"ObjID_2\": { \"x\": -500, \"y\": 500, \"z\": 0, \"yaw\": 0, \"pattern\": 1, \"radius\": 400 }\n"
         "}"), 
         *SceneContext, *ItemList);
 }
-
 bool ULocationResolverLLM::ParseTransform(const FString& JsonResponse, FTransform& OutTransform)
 {
     // Minimal JSON parse logic for single Transform...

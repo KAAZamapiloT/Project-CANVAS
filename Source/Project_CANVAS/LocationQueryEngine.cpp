@@ -2046,34 +2046,60 @@ void ULocationQueryEngine::RenameLocation(const FString& OldName, const FString&
 
 FString ULocationQueryEngine::GetLocationContextForLLM() const
 {
-    FString Context = TEXT("=== AVAILABLE SPAWN LOCATIONS ===\n\n");
+    FBox Bounds = GetPlayableAreaBounds();
     
-    if (DiscoveredLocations.Num() > 0)
+    // 1. Fetch Fighter Positions
+    FVector PlayerPos = FVector::ZeroVector;
+    FVector EnemyPos = FVector::ZeroVector;
+
+    if (APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
     {
-        Context += TEXT("[Named Locations]\n");
-        for (const FSpawnLocation& Loc : DiscoveredLocations)
-        {
-            FString OccupiedStatus = Loc.bIsOccupied ? TEXT(" [OCCUPIED]") : TEXT("");
-            Context += FString::Printf(TEXT("  - \"%s\": %s%s\n"), 
-                *Loc.LocationName, *Loc.Description, *OccupiedStatus);
-        }
-        Context += TEXT("\n");
+        PlayerPos = PlayerPawn->GetActorLocation();
     }
+
+    // Finding the enemy (assuming tag "Enemy" or class ACharacter)
+    TArray<AActor*> Enemies;
+    UGameplayStatics::GetAllActorsWithTag(GetWorld(), TEXT("Enemy"), Enemies);
+    if (Enemies.Num() > 0)
+    {
+        EnemyPos = Enemies[0]->GetActorLocation();
+    }
+
+    // 2. Calculate the Combat Lane (Dynamic)
+    // "Between" fighters on X, and a "20m thick" (2000 units) lane on Y
+    float LaneMinX = FMath::Min(PlayerPos.X, EnemyPos.X) - 500.0f; // Add buffer
+    float LaneMaxX = FMath::Max(PlayerPos.X, EnemyPos.X) + 500.0f;
     
-    Context += TEXT("[Player-Relative]\n");
-    Context += TEXT("  - \"PLAYER_FRONT\", \"PLAYER_BACK\", \"PLAYER_LEFT\", \"PLAYER_RIGHT\"\n");
-    Context += TEXT("  - \"PLAYER_POSITION\", \"NEAR_PLAYER\"\n\n");
-    
-    Context += TEXT("[Actor Tags]\n");
-    Context += TEXT("  - \"NEAR:TagName\" for random actor with tag\n");
-    Context += TEXT("  - \"CLOSEST:TagName\" for nearest actor to player\n\n");
-    
-    Context += TEXT("[Custom Coordinates]\n");
-    Context += TEXT("  - Format: \"CUSTOM:[X,Y,Z]\"\n\n");
-    
+    // 20m thickness = 2000 Unreal Units. 
+    // We center it on the average Y position of the fighters.
+    float CenterY = (PlayerPos.Y + EnemyPos.Y) / 2.0f;
+    float LaneMinY = CenterY - 1000.0f; // 10m back
+    float LaneMaxY = CenterY + 1000.0f; // 10m forward
+
+    // 3. Construct the Numerical Blueprint
+    FString Context = FString::Printf(TEXT(
+        "ARENA BLUEPRINT (STATIC BOUNDS):\n"
+        "- Boundary Min: [X:%.0f, Y:%.0f, Z:%.0f]\n"
+        "- Boundary Max: [X:%.0f, Y:%.0f, Z:%.0f]\n\n"
+        "LIVE COMBAT CONTEXT (CRITICAL):\n"
+        "- Player Location: [%.0f, %.0f, %.0f]\n"
+        "- Enemy Location: [%.0f, %.0f, %.0f]\n"
+        "- DANGER ZONE (Combat Lane): X[%.0f to %.0f] and Y[%.0f to %.0f]\n"
+        "  RULE: DO NOT place large 'Solid' or 'Road' objects inside the DANGER ZONE.\n\n"),
+        Bounds.Min.X, Bounds.Min.Y, Bounds.Min.Z, Bounds.Max.X, Bounds.Max.Y, Bounds.Max.Z,
+        PlayerPos.X, PlayerPos.Y, PlayerPos.Z,
+        EnemyPos.X, EnemyPos.Y, EnemyPos.Z,
+        LaneMinX, LaneMaxX, LaneMinY, LaneMaxY);
+
+    Context += "NAMED LANDMARKS (Anchors):\n";
+    for (const auto& Pair : LocationDatabase)
+    {
+        Context += FString::Printf(TEXT("- '%s' is located at [%.0f, %.0f, %.0f]\n"),
+            *Pair.Key, Pair.Value.WorldPosition.X, Pair.Value.WorldPosition.Y, Pair.Value.WorldPosition.Z);
+    }
+
     return Context;
 }
-
 // ========================================
 // INTERNAL HELPERS
 // ========================================

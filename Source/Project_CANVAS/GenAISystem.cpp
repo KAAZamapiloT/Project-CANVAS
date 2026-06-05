@@ -143,7 +143,7 @@ void UGenAISystem::OnLLMResponseReceived(FHttpRequestPtr Request, FHttpResponseP
 	if (!bWasSuccessful || !Response.IsValid())
     {
 		ResetPipeline();
-        UE_LOG(LogTemp, Error, TEXT("Ollama request failed!"));
+        UE_LOG(LogTemp, Error, TEXT("GenAI Sytem::Ollama request failed!"));
         return;
     }
 	
