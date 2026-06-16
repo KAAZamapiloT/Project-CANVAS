@@ -9,6 +9,11 @@
   <img src="https://img.shields.io/badge/Status-Prototype-orange" />
 </p>
 
+
+## 🎥 Demo
+
+[![Watch Demo](https://img.shields.io/badge/Watch-Demo-red?logo=youtube)]([YOUR_YOUTUBE_LINK_HERE](https://youtu.be/33D2Y9a3EZM?si=KEKinwYB2p0a-5yy))
+
 ---
 
 <p align="center"><strong>🧐 A Dual-Pipeline Architecture for Real-Time Scene Generation & Context-Aware Combat Intelligence.</strong></p>
