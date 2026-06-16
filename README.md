@@ -12,7 +12,7 @@
 
 ## 🎥 Demo
 
-[![Watch Demo](https://img.shields.io/badge/Watch-Demo-red?logo=youtube)]((https://youtu.be/33D2Y9a3EZM?si=KEKinwYB2p0a-5yy))
+[![Watch Demo](https://img.shields.io/badge/Watch-Demo-red?logo=youtube)](https://youtu.be/33D2Y9a3EZM?si=KEKinwYB2p0a-5yy)
 
 ---
 
